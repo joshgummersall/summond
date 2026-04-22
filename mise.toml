@@ -14,4 +14,8 @@ run = "go test ./..."
 
 [tasks.build]
 description = "Build the CLI"
-run = "go build -o ./summond ./cmd/summond"
+run = "go build -o ./bin/summond ./cmd/summond"
+
+[tasks.install]
+description = "Install the CLI"
+run = "go install ./cmd/summond"

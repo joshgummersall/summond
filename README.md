@@ -1,10 +1,11 @@
 # summond
 
-A small Go CLI scaffold managed with `mise`.
+A macOS-focused CLI for managing friendly `launchd` jobs with native LaunchAgents and LaunchDaemons.
 
 ## Prerequisites
 
 - `mise` installed
+- macOS
 
 ## Setup
 
@@ -12,13 +13,86 @@ A small Go CLI scaffold managed with `mise`.
 mise install
 ```
 
-## Common commands
+## Getting started
 
 ```sh
-mise run fmt
-mise run test
-mise run build
-./bin/summond version
-./bin/summond hello world
+mise test
+mise install
+summond version
+summond init
 ```
 
+## Examples
+
+Bootstrap the default config and log rotation:
+
+```sh
+summond init
+```
+
+This creates `~/.config/summond/summond.toml`, generates a `newsyslog` snippet for Summond-managed logs, and will ask to retry with `sudo` if the system install step needs elevated privileges.
+
+Apply the generated config:
+
+```sh
+summond apply -f ~/.config/summond/summond.toml
+```
+
+Create an hourly user job directly:
+
+```sh
+summond add cleanup \
+  --command /bin/echo \
+  --schedule hourly \
+  --minute 15 \
+  "hello from summond"
+```
+
+Create a daily shell-based job:
+
+```sh
+summond add rotate-logs \
+  --shell 'find /tmp -type f -mtime +7 -delete' \
+  --schedule daily \
+  --hour 3 \
+  --minute 30
+```
+
+Apply jobs from TOML:
+
+```toml
+[jobs.cleanup]
+command = "/bin/echo"
+args = ["cleanup"]
+target = "agent"
+schedule = "daily"
+hour = 3
+minute = 45
+enabled = true
+
+[jobs.cleanup.env]
+MODE = "nightly"
+```
+
+```sh
+summond apply -f summond.toml
+```
+
+## Logs
+
+Summond writes stdout and stderr to managed log files under `~/Library/Application Support/summond/logs/` by default. `summond init` scaffolds `newsyslog` configuration so those files can be rotated using the native macOS mechanism.
+
+```sh
+summond logs cleanup
+summond logs --follow cleanup
+```
+
+## Supported schedules
+
+- `hourly` with `--minute`
+- `daily` with `--hour` and `--minute`
+- `weekly` with `--weekday`, `--hour`, and `--minute`
+- `login` for LaunchAgents
+- `boot` for LaunchDaemons
+- `interval` with `--interval-minutes`
+- `calendar` with `--month`, `--day`, `--weekday`, `--hour`, and `--minute`
