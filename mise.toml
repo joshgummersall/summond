@@ -1,0 +1,17 @@
+[tools]
+go = "1.24.2"
+
+[env]
+_.file = ".env"
+
+[tasks.fmt]
+description = "Format Go code"
+run = "gofmt -w ./cmd ./internal"
+
+[tasks.test]
+description = "Run Go tests"
+run = "go test ./..."
+
+[tasks.build]
+description = "Build the CLI"
+run = "go build -o ./summond ./cmd/summond"
