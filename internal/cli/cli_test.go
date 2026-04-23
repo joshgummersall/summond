@@ -1164,8 +1164,8 @@ func TestUninstallRemovesManagedArtifacts(t *testing.T) {
 	if _, err := os.Stat(app.store.Paths().Home); !os.IsNotExist(err) {
 		t.Fatalf("expected managed state to be removed, stat err = %v", err)
 	}
-	if _, err := os.Stat("summond.toml"); !os.IsNotExist(err) {
-		t.Fatalf("expected cwd config removed, stat err = %v", err)
+	if _, err := os.Stat("summond.toml"); err != nil {
+		t.Fatalf("expected cwd config preserved, stat err = %v", err)
 	}
 }
 
@@ -1327,13 +1327,31 @@ func (f *fakeBootstrapInstaller) RemoveWithSudo(path string) error {
 }
 
 type fakePrivilegedOperator struct {
-	removed []string
-	bootout []string
-	err     error
+	removed      []string
+	created      []string
+	installed    [][2]string
+	bootstrapped []string
+	bootout      []string
+	err          error
 }
 
-func (f *fakePrivilegedOperator) RemoveFileWithSudo(path string) error {
+func (f *fakePrivilegedOperator) CreateDirWithSudo(path string, mode os.FileMode) error {
+	f.created = append(f.created, path)
+	return f.err
+}
+
+func (f *fakePrivilegedOperator) InstallFileWithSudo(src string, dst string, mode os.FileMode) error {
+	f.installed = append(f.installed, [2]string{src, dst})
+	return f.err
+}
+
+func (f *fakePrivilegedOperator) RemovePathWithSudo(path string) error {
 	f.removed = append(f.removed, path)
+	return f.err
+}
+
+func (f *fakePrivilegedOperator) BootstrapDaemonWithSudo(plistPath string) error {
+	f.bootstrapped = append(f.bootstrapped, plistPath)
 	return f.err
 }
 

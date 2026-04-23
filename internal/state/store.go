@@ -23,6 +23,11 @@ type Paths struct {
 	NewsyslogDir string
 }
 
+type PathSet struct {
+	Agent  Paths
+	Daemon Paths
+}
+
 type Store struct {
 	paths Paths
 }
@@ -32,14 +37,26 @@ func NewStore(paths Paths) *Store {
 }
 
 func DiscoverPaths() (Paths, error) {
+	set, err := DiscoverPathSet()
+	if err != nil {
+		return Paths{}, err
+	}
+	return set.Agent, nil
+}
+
+func DiscoverPathSet() (PathSet, error) {
 	current, err := user.Current()
 	if err != nil {
-		return Paths{}, fmt.Errorf("resolve user home: %w", err)
+		return PathSet{}, fmt.Errorf("resolve user home: %w", err)
 	}
 
-	home := os.Getenv("SUMMOND_HOME")
-	if home == "" {
-		home = filepath.Join(current.HomeDir, "Library", "Application Support", "summond")
+	agentHome := os.Getenv("SUMMOND_HOME")
+	if agentHome == "" {
+		agentHome = filepath.Join(current.HomeDir, "Library", "Application Support", "summond")
+	}
+	daemonHome := os.Getenv("SUMMOND_DAEMON_HOME")
+	if daemonHome == "" {
+		daemonHome = filepath.Join(string(filepath.Separator), "Library", "Application Support", "summond")
 	}
 	agentsDir := os.Getenv("SUMMOND_LAUNCH_AGENTS_DIR")
 	if agentsDir == "" {
@@ -53,36 +70,36 @@ func DiscoverPaths() (Paths, error) {
 	if newsyslogDir == "" {
 		newsyslogDir = "/etc/newsyslog.d"
 	}
-	return Paths{
-		Home:         home,
+	common := Paths{
 		AgentsDir:    agentsDir,
 		DaemonsDir:   daemonsDir,
 		NewsyslogDir: newsyslogDir,
+	}
+	return PathSet{
+		Agent: Paths{
+			Home:         agentHome,
+			AgentsDir:    common.AgentsDir,
+			DaemonsDir:   common.DaemonsDir,
+			NewsyslogDir: common.NewsyslogDir,
+		},
+		Daemon: Paths{
+			Home:         daemonHome,
+			AgentsDir:    common.AgentsDir,
+			DaemonsDir:   common.DaemonsDir,
+			NewsyslogDir: common.NewsyslogDir,
+		},
 	}, nil
 }
 
 func (s *Store) Install(spec job.Spec) (job.Spec, error) {
-	if err := spec.Normalize(); err != nil {
+	spec, content, err := s.PrepareInstall(spec)
+	if err != nil {
 		return job.Spec{}, err
 	}
-	spec.StdoutPath = defaultIfEmpty(spec.StdoutPath, s.logPath(spec.Name, "out"))
-	spec.StderrPath = defaultIfEmpty(spec.StderrPath, s.logPath(spec.Name, "err"))
-	spec.PlistPath = s.plistInstallPath(spec)
-	spec.RuntimeBinaryPath = defaultIfEmpty(spec.RuntimeBinaryPath, s.runtimeBinaryPath())
-	checksum, err := spec.SpecChecksum()
-	if err != nil {
-		return job.Spec{}, fmt.Errorf("compute checksum: %w", err)
-	}
-	spec.Checksum = checksum
-
 	if err := s.ensureDirs(spec); err != nil {
 		return job.Spec{}, err
 	}
 	if err := s.ensureLogFiles(spec); err != nil {
-		return job.Spec{}, err
-	}
-	content, err := plist.Render(spec)
-	if err != nil {
 		return job.Spec{}, err
 	}
 	if err := os.WriteFile(spec.PlistPath, content, 0o644); err != nil {
@@ -93,6 +110,26 @@ func (s *Store) Install(spec job.Spec) (job.Spec, error) {
 		return job.Spec{}, err
 	}
 	return spec, nil
+}
+
+func (s *Store) PrepareInstall(spec job.Spec) (job.Spec, []byte, error) {
+	if err := spec.Normalize(); err != nil {
+		return job.Spec{}, nil, err
+	}
+	spec.StdoutPath = defaultIfEmpty(spec.StdoutPath, s.logPath(spec.Name, "out"))
+	spec.StderrPath = defaultIfEmpty(spec.StderrPath, s.logPath(spec.Name, "err"))
+	spec.PlistPath = s.plistInstallPath(spec)
+	spec.RuntimeBinaryPath = defaultIfEmpty(spec.RuntimeBinaryPath, s.runtimeBinaryPath())
+	checksum, err := spec.SpecChecksum()
+	if err != nil {
+		return job.Spec{}, nil, fmt.Errorf("compute checksum: %w", err)
+	}
+	spec.Checksum = checksum
+	content, err := plist.Render(spec)
+	if err != nil {
+		return job.Spec{}, nil, err
+	}
+	return spec, content, nil
 }
 
 func (s *Store) Remove(name string) (job.Spec, error) {
@@ -150,6 +187,10 @@ func (s *Store) List() ([]job.Spec, error) {
 
 func (s *Store) JobsFilePath() string {
 	return s.jobsDir()
+}
+
+func (s *Store) MetadataPath(name string) string {
+	return s.metadataPath(name)
 }
 
 func (s *Store) Paths() Paths {

@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -39,6 +40,7 @@ type App struct {
 	stdout       io.Writer
 	stderr       io.Writer
 	store        *state.Store
+	daemonStore  *state.Store
 	runner       launchd.Runner
 	boot         *bootstrap.Manager
 	priv         privilegedOperator
@@ -47,31 +49,40 @@ type App struct {
 }
 
 type privilegedOperator interface {
-	RemoveFileWithSudo(path string) error
+	CreateDirWithSudo(path string, mode os.FileMode) error
+	InstallFileWithSudo(src string, dst string, mode os.FileMode) error
+	RemovePathWithSudo(path string) error
+	BootstrapDaemonWithSudo(plistPath string) error
 	BootoutDaemonWithSudo(plistPath string) error
 }
 
 type osPrivilegedOperator struct{}
 
 func Run(args []string, stdout io.Writer) error {
-	paths, err := state.DiscoverPaths()
+	paths, err := state.DiscoverPathSet()
 	if err != nil {
 		return err
 	}
-	app := &App{
-		stdin:  os.Stdin,
-		stdout: stdout,
-		stderr: os.Stderr,
-		store:  state.NewStore(paths),
-		runner: launchd.LaunchCtl{},
-		boot:   bootstrap.NewManager(paths, bootstrap.OSInstaller{}),
-		priv:   osPrivilegedOperator{},
-	}
+	app := NewAppWithStores(
+		os.Stdin,
+		stdout,
+		state.NewStore(paths.Agent),
+		state.NewStore(paths.Daemon),
+		launchd.LaunchCtl{},
+		bootstrap.NewManagerWithDaemonHome(paths.Agent, paths.Daemon, bootstrap.OSInstaller{}),
+	)
+	app.stderr = os.Stderr
 	return app.Run(args)
 }
 
 func NewApp(stdin io.Reader, stdout io.Writer, store *state.Store, runner launchd.Runner, boot *bootstrap.Manager) *App {
-	return &App{stdin: stdin, stdout: stdout, stderr: io.Discard, store: store, runner: runner, boot: boot, priv: osPrivilegedOperator{}}
+	daemonPaths := store.Paths()
+	daemonPaths.Home = daemonPaths.Home + "-daemon"
+	return NewAppWithStores(stdin, stdout, store, state.NewStore(daemonPaths), runner, boot)
+}
+
+func NewAppWithStores(stdin io.Reader, stdout io.Writer, store *state.Store, daemonStore *state.Store, runner launchd.Runner, boot *bootstrap.Manager) *App {
+	return &App{stdin: stdin, stdout: stdout, stderr: io.Discard, store: store, daemonStore: daemonStore, runner: runner, boot: boot, priv: osPrivilegedOperator{}}
 }
 
 func (a *App) Run(args []string) error {
@@ -201,11 +212,11 @@ func (a *App) runUninstall(args []string) error {
 	if len(fs.Args()) != 0 {
 		return errors.New("uninstall does not accept positional arguments")
 	}
-	specs, err := a.store.List()
+	managedSpecs, err := a.listManagedJobs()
 	if err != nil {
 		return err
 	}
-	if err := a.printUninstallPlan(specs); err != nil {
+	if err := a.printUninstallPlan(managedSpecs); err != nil {
 		return err
 	}
 	approved, err := a.confirmWithDefault("Proceed with uninstall? [y/N]: ", false)
@@ -216,10 +227,12 @@ func (a *App) runUninstall(args []string) error {
 		_, err = fmt.Fprintln(a.stdout, "uninstall cancelled")
 		return err
 	}
-	a.logger.Debug("loaded managed jobs", "count", len(specs))
+	a.logger.Debug("loaded managed jobs", "count", len(managedSpecs))
 	var sudoPlists []string
+	var sudoMetadata []string
 	removedJobs := 0
-	for _, spec := range specs {
+	for _, managed := range managedSpecs {
+		spec := managed.spec
 		if err := a.runner.Bootout(spec); err != nil && spec.Target == job.TargetDaemon {
 			sudoPlists = append(sudoPlists, spec.PlistPath)
 		}
@@ -227,6 +240,13 @@ func (a *App) runUninstall(args []string) error {
 			if errors.Is(err, os.ErrPermission) && spec.Target == job.TargetDaemon {
 				sudoPlists = appendIfMissing(sudoPlists, spec.PlistPath)
 			} else {
+				return err
+			}
+		}
+		if _, err := managed.store.Remove(spec.Name); err != nil {
+			if spec.Target == job.TargetDaemon && errors.Is(err, os.ErrPermission) {
+				sudoMetadata = appendIfMissing(sudoMetadata, managed.store.MetadataPath(spec.Name))
+			} else if !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 		}
@@ -248,8 +268,16 @@ func (a *App) runUninstall(args []string) error {
 	if err := os.RemoveAll(a.store.Paths().Home); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	needsSudoDaemonHome := false
+	if err := os.RemoveAll(a.daemonStore.Paths().Home); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrPermission) {
+			needsSudoDaemonHome = true
+		} else {
+			return err
+		}
+	}
 
-	if len(sudoPlists) > 0 || needsSudoNewsyslog {
+	if len(sudoPlists) > 0 || len(sudoMetadata) > 0 || needsSudoNewsyslog || needsSudoDaemonHome {
 		approved, err := a.confirmWithDefault("some system-owned files require sudo to remove. Retry with sudo? [Y/n]: ", true)
 		if err != nil {
 			return err
@@ -257,7 +285,17 @@ func (a *App) runUninstall(args []string) error {
 		if approved {
 			for _, plistPath := range sudoPlists {
 				_ = a.priv.BootoutDaemonWithSudo(plistPath)
-				if err := a.priv.RemoveFileWithSudo(plistPath); err != nil {
+				if err := a.priv.RemovePathWithSudo(plistPath); err != nil {
+					return err
+				}
+			}
+			for _, metadataPath := range sudoMetadata {
+				if err := a.priv.RemovePathWithSudo(metadataPath); err != nil {
+					return err
+				}
+			}
+			if needsSudoDaemonHome {
+				if err := a.priv.RemovePathWithSudo(a.daemonStore.Paths().Home); err != nil {
 					return err
 				}
 			}
@@ -273,7 +311,7 @@ func (a *App) runUninstall(args []string) error {
 	if err := a.printUninstallSummary(uninstallResult, removedJobs, needsSudoNewsyslog); err != nil {
 		return err
 	}
-	if len(sudoPlists) > 0 && !uninstallResult.UsedSudo {
+	if (len(sudoPlists) > 0 || len(sudoMetadata) > 0 || needsSudoDaemonHome) && !uninstallResult.UsedSudo {
 		return a.printUninstallManual(uninstallResult, sudoPlists)
 	}
 	a.logger.Info("uninstall completed", "removed_jobs", removedJobs)
@@ -308,10 +346,6 @@ func (a *App) runApply(args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve current executable: %w", err)
 	}
-	runtimePath, err := a.store.PrepareRuntimeBinary(runtimeSource)
-	if err != nil {
-		return err
-	}
 	specs, err := config.LoadFile(filePath)
 	if err != nil {
 		return err
@@ -322,40 +356,32 @@ func (a *App) runApply(args []string) error {
 		return err
 	}
 	var runtimeWarnings []string
+	agentRuntimePath, err := a.store.PrepareRuntimeBinary(runtimeSource)
+	if err != nil {
+		return err
+	}
+	daemonRuntimePath := a.daemonStore.RuntimeBinaryPath()
 	for _, spec := range specs {
-		spec.RuntimeBinaryPath = runtimePath
-		a.logger.Debug("reconciling job", "name", spec.Name, "trigger", spec.Trigger, "schedule", spec.Schedule.Kind)
-		installed, err := a.store.Install(spec)
-		if err != nil {
-			return err
+		if spec.Target == job.TargetDaemon {
+			spec.RuntimeBinaryPath = daemonRuntimePath
+			installedSpec, applyErr := a.applyDaemonSpec(spec, runtimeSource)
+			if applyErr != nil {
+				return applyErr
+			}
+			if warning := a.reconcileDaemonRuntime(installedSpec); warning != "" {
+				runtimeWarnings = append(runtimeWarnings, warning)
+			}
+			continue
 		}
-		if installed.Enabled {
-			if loaded, err := a.isLoaded(installed); err != nil {
-				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: load-state check failed: %v", installed.Name, err))
-				a.logger.Debug("load-state check failed", "name", installed.Name, "error", err)
-			} else if loaded {
-				a.logger.Debug("job already loaded, bootout before bootstrap", "name", installed.Name)
-				if err := a.runner.Bootout(installed); err != nil {
-					runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: bootout before bootstrap failed: %v", installed.Name, err))
-					a.logger.Debug("bootout before bootstrap failed", "name", installed.Name, "error", err)
-				}
-			}
-			if err := a.runner.Bootstrap(installed); err != nil {
-				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: bootstrap failed: %v", installed.Name, err))
-				a.logger.Debug("bootstrap failed", "name", installed.Name, "error", err)
-				continue
-			}
-			if err := a.verifyLoadedJob(installed); err != nil {
-				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: loaded job verification failed: %v", installed.Name, err))
-				a.logger.Debug("loaded job verification failed", "name", installed.Name, "error", err)
-			}
-		} else {
-			a.logger.Debug("job disabled, bootout", "name", installed.Name)
-			if err := a.runner.Bootout(installed); err != nil {
-				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: bootout failed: %v", installed.Name, err))
-				a.logger.Debug("bootout failed", "name", installed.Name, "error", err)
-			}
+		spec.RuntimeBinaryPath = agentRuntimePath
+		installedSpec, warning, applyErr := a.applySpec(a.store, spec)
+		if applyErr != nil {
+			return applyErr
 		}
+		if warning != "" {
+			runtimeWarnings = append(runtimeWarnings, warning)
+		}
+		_ = installedSpec
 	}
 	if _, err := fmt.Fprintf(a.stdout, "applied %d job(s)\n", len(specs)); err != nil {
 		return err
@@ -367,8 +393,8 @@ func (a *App) runApply(args []string) error {
 	}
 	if len(orphanedSpecs) > 0 {
 		names := make([]string, 0, len(orphanedSpecs))
-		for _, spec := range orphanedSpecs {
-			names = append(names, spec.Name)
+		for _, managed := range orphanedSpecs {
+			names = append(names, managed.spec.Name)
 		}
 		if _, err := fmt.Fprintf(a.stdout, "warning: orphaned managed jobs not present in %s: %s\n", filePath, strings.Join(names, ", ")); err != nil {
 			return err
@@ -423,8 +449,8 @@ func (a *App) runPrune(args []string) error {
 	if _, err := fmt.Fprintln(a.stdout, "jobs to prune:"); err != nil {
 		return err
 	}
-	for _, spec := range pruneSpecs {
-		if _, err := fmt.Fprintf(a.stdout, "- %s\n", spec.Name); err != nil {
+	for _, managed := range pruneSpecs {
+		if _, err := fmt.Fprintf(a.stdout, "- %s\n", managed.spec.Name); err != nil {
 			return err
 		}
 	}
@@ -440,9 +466,22 @@ func (a *App) runPrune(args []string) error {
 		}
 	}
 
-	for _, spec := range pruneSpecs {
+	for _, managed := range pruneSpecs {
+		spec := managed.spec
 		_ = a.runner.Bootout(spec)
-		if _, err := a.store.Remove(spec.Name); err != nil {
+		if _, err := managed.store.Remove(spec.Name); err != nil {
+			if spec.Target == job.TargetDaemon && errors.Is(err, os.ErrPermission) {
+				approved, promptErr := a.confirmWithDefault("removing daemon jobs requires sudo. Retry with sudo? [Y/n]: ", true)
+				if promptErr != nil {
+					return promptErr
+				}
+				if approved {
+					if err := a.removeDaemonSpecWithSudo(spec); err != nil {
+						return err
+					}
+					continue
+				}
+			}
 			return err
 		}
 	}
@@ -500,11 +539,11 @@ func (a *App) runList(args []string) error {
 	if len(args) != 0 {
 		return errors.New("list does not accept arguments")
 	}
-	specs, err := a.store.List()
+	managedSpecs, err := a.listManagedJobs()
 	if err != nil {
 		return err
 	}
-	if len(specs) == 0 {
+	if len(managedSpecs) == 0 {
 		_, err = fmt.Fprintln(a.stdout, "no managed jobs")
 		return err
 	}
@@ -512,7 +551,8 @@ func (a *App) runList(args []string) error {
 	if _, err := fmt.Fprintln(writer, "NAME\tTARGET\tSCHEDULE\tENABLED\tSTATUS"); err != nil {
 		return err
 	}
-	for _, spec := range specs {
+	for _, managed := range managedSpecs {
+		spec := managed.spec
 		_, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%t\t%s\n", spec.Name, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled, describeLastRunStatus(spec))
 		if err != nil {
 			return err
@@ -530,10 +570,11 @@ func (a *App) runInspect(args []string) error {
 	if len(args) != 1 {
 		return errors.New("inspect requires a job name")
 	}
-	spec, err := a.store.Load(args[0])
+	managed, err := a.loadManagedSpec(args[0])
 	if err != nil {
 		return err
 	}
+	spec := managed.spec
 	_, err = fmt.Fprintf(a.stdout, "name: %s\nlabel: %s\ntarget: %s\ntrigger: %s\nenabled: %t\nplist: %s\nstdout: %s\nstderr: %s\nruntime: %s\nstatus: %s\nruns: %d (success=%d failure=%d)\n",
 		spec.Name, spec.Label, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled, spec.PlistPath, spec.StdoutPath, spec.StderrPath, spec.RuntimeBinaryPath, describeLastRunStatus(spec), spec.RunCount, spec.SuccessCount, spec.FailureCount)
 	if err != nil {
@@ -577,12 +618,13 @@ func (a *App) runExec(args []string) error {
 	if len(args) != 1 {
 		return errors.New("exec requires a job name")
 	}
-	spec, err := a.store.Load(args[0])
+	managed, err := a.loadManagedSpec(args[0])
 	if err != nil {
 		return err
 	}
+	spec := managed.spec
 	startedAt := time.Now()
-	if err := a.store.RecordExecutionStart(spec.Name, startedAt); err != nil {
+	if err := managed.store.RecordExecutionStart(spec.Name, startedAt); err != nil {
 		return err
 	}
 	record := job.ExecutionRecord{StartedAt: startedAt}
@@ -593,7 +635,7 @@ func (a *App) runExec(args []string) error {
 	if runErr != nil {
 		record.Error = runErr.Error()
 	}
-	if err := a.store.RecordExecutionFinish(spec.Name, record); err != nil {
+	if err := managed.store.RecordExecutionFinish(spec.Name, record); err != nil {
 		return err
 	}
 	if runErr != nil {
@@ -608,13 +650,28 @@ func (a *App) runRemove(args []string) error {
 		printCommandUsage(a.stdout, "remove")
 		return nil
 	}
-	spec, err := a.requireSingleSpec(args, "remove")
+	managed, err := a.requireSingleSpec(args, "remove")
 	if err != nil {
 		return err
 	}
+	spec := managed.spec
 	_ = a.runner.Bootout(spec)
-	if _, err := a.store.Remove(spec.Name); err != nil {
-		return err
+	if _, err := managed.store.Remove(spec.Name); err != nil {
+		if spec.Target == job.TargetDaemon && errors.Is(err, os.ErrPermission) {
+			approved, promptErr := a.confirmWithDefault("removing daemon jobs requires sudo. Retry with sudo? [Y/n]: ", true)
+			if promptErr != nil {
+				return promptErr
+			}
+			if approved {
+				if err := a.removeDaemonSpecWithSudo(spec); err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
+		} else {
+			return err
+		}
 	}
 	_, err = fmt.Fprintf(a.stdout, "removed %s\n", spec.Name)
 	return err
@@ -642,10 +699,11 @@ func (a *App) runLogs(args []string) error {
 	if *lineCount < 0 {
 		return errors.New("logs requires -n >= 0")
 	}
-	spec, err := a.store.Load(fs.Args()[0])
+	managed, err := a.loadManagedSpec(fs.Args()[0])
 	if err != nil {
 		return err
 	}
+	spec := managed.spec
 	targets := []logTailTarget{}
 	if spec.StdoutPath != "" {
 		targets = append(targets, logTailTarget{path: spec.StdoutPath, output: a.stdout, name: "stdout"})
@@ -715,11 +773,11 @@ func isHelpArg(args []string) bool {
 	return len(args) == 1 && (args[0] == "-h" || args[0] == "--help")
 }
 
-func (a *App) requireSingleSpec(args []string, name string) (job.Spec, error) {
+func (a *App) requireSingleSpec(args []string, name string) (managedSpec, error) {
 	if len(args) != 1 {
-		return job.Spec{}, fmt.Errorf("%s requires a job name", name)
+		return managedSpec{}, fmt.Errorf("%s requires a job name", name)
 	}
-	return a.store.Load(args[0])
+	return a.loadManagedSpec(args[0])
 }
 
 func printUsage(stdout io.Writer) {
@@ -834,19 +892,78 @@ func optionalConfigPath(args []string, command string) (string, error) {
 	}
 }
 
-func (a *App) orphanedManagedJobs(desiredSpecs []job.Spec) ([]job.Spec, error) {
+type managedSpec struct {
+	spec  job.Spec
+	store *state.Store
+}
+
+func (a *App) storeForTarget(target job.Target) *state.Store {
+	if target == job.TargetDaemon {
+		return a.daemonStore
+	}
+	return a.store
+}
+
+func (a *App) listManagedJobs() ([]managedSpec, error) {
+	specs := []managedSpec{}
+	agentSpecs, err := a.store.List()
+	if err != nil {
+		return nil, err
+	}
+	for _, spec := range agentSpecs {
+		specs = append(specs, managedSpec{spec: spec, store: a.store})
+	}
+	daemonSpecs, err := a.daemonStore.List()
+	if err != nil {
+		return nil, err
+	}
+	for _, spec := range daemonSpecs {
+		specs = append(specs, managedSpec{spec: spec, store: a.daemonStore})
+	}
+	sort.Slice(specs, func(i, j int) bool {
+		if specs[i].spec.Name == specs[j].spec.Name {
+			return specs[i].spec.Target < specs[j].spec.Target
+		}
+		return specs[i].spec.Name < specs[j].spec.Name
+	})
+	return specs, nil
+}
+
+func (a *App) loadManagedSpec(name string) (managedSpec, error) {
+	var matches []managedSpec
+	if spec, err := a.store.Load(name); err == nil {
+		matches = append(matches, managedSpec{spec: spec, store: a.store})
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return managedSpec{}, err
+	}
+	if spec, err := a.daemonStore.Load(name); err == nil {
+		matches = append(matches, managedSpec{spec: spec, store: a.daemonStore})
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return managedSpec{}, err
+	}
+	switch len(matches) {
+	case 0:
+		return managedSpec{}, fmt.Errorf("read job metadata: %w", os.ErrNotExist)
+	case 1:
+		return matches[0], nil
+	default:
+		return managedSpec{}, fmt.Errorf("duplicate managed job name %q across targets", name)
+	}
+}
+
+func (a *App) orphanedManagedJobs(desiredSpecs []job.Spec) ([]managedSpec, error) {
 	desired := make(map[string]struct{}, len(desiredSpecs))
 	for _, spec := range desiredSpecs {
 		desired[spec.Name] = struct{}{}
 	}
-	existingSpecs, err := a.store.List()
+	existingSpecs, err := a.listManagedJobs()
 	if err != nil {
 		return nil, err
 	}
-	var orphaned []job.Spec
-	for _, spec := range existingSpecs {
-		if _, ok := desired[spec.Name]; !ok {
-			orphaned = append(orphaned, spec)
+	var orphaned []managedSpec
+	for _, managed := range existingSpecs {
+		if _, ok := desired[managed.spec.Name]; !ok {
+			orphaned = append(orphaned, managed)
 		}
 	}
 	return orphaned, nil
@@ -886,6 +1003,159 @@ func (a *App) executeSpec(spec job.Spec) (int, error) {
 		return 1, err
 	}
 	return 0, nil
+}
+
+func (a *App) applySpec(store *state.Store, spec job.Spec) (job.Spec, string, error) {
+	a.logger.Debug("reconciling job", "name", spec.Name, "target", spec.Target, "trigger", spec.Trigger, "schedule", spec.Schedule.Kind)
+	installed, err := store.Install(spec)
+	if err != nil {
+		return job.Spec{}, "", err
+	}
+	if installed.Enabled {
+		if loaded, err := a.isLoaded(installed); err != nil {
+			a.logger.Debug("load-state check failed", "name", installed.Name, "error", err)
+			return installed, fmt.Sprintf("%s: load-state check failed: %v", installed.Name, err), nil
+		} else if loaded {
+			a.logger.Debug("job already loaded, bootout before bootstrap", "name", installed.Name)
+			if err := a.runner.Bootout(installed); err != nil {
+				a.logger.Debug("bootout before bootstrap failed", "name", installed.Name, "error", err)
+				return installed, fmt.Sprintf("%s: bootout before bootstrap failed: %v", installed.Name, err), nil
+			}
+		}
+		if err := a.runner.Bootstrap(installed); err != nil {
+			a.logger.Debug("bootstrap failed", "name", installed.Name, "error", err)
+			return installed, fmt.Sprintf("%s: bootstrap failed: %v", installed.Name, err), nil
+		}
+		if err := a.verifyLoadedJob(installed); err != nil {
+			a.logger.Debug("loaded job verification failed", "name", installed.Name, "error", err)
+			return installed, fmt.Sprintf("%s: loaded job verification failed: %v", installed.Name, err), nil
+		}
+		return installed, "", nil
+	}
+	a.logger.Debug("job disabled, bootout", "name", installed.Name)
+	if err := a.runner.Bootout(installed); err != nil {
+		a.logger.Debug("bootout failed", "name", installed.Name, "error", err)
+		return installed, fmt.Sprintf("%s: bootout failed: %v", installed.Name, err), nil
+	}
+	return installed, "", nil
+}
+
+func (a *App) applyDaemonSpec(spec job.Spec, runtimeSource string) (job.Spec, error) {
+	installed, err := a.daemonStore.Install(spec)
+	if err == nil {
+		return installed, nil
+	}
+	if !errors.Is(err, os.ErrPermission) {
+		return job.Spec{}, err
+	}
+	approved, promptErr := a.confirmWithDefault("applying daemon jobs requires sudo. Retry with sudo? [Y/n]: ", true)
+	if promptErr != nil {
+		return job.Spec{}, promptErr
+	}
+	if !approved {
+		return job.Spec{}, err
+	}
+	return a.installDaemonSpecWithSudo(spec, runtimeSource)
+}
+
+func (a *App) installDaemonSpecWithSudo(spec job.Spec, runtimeSource string) (job.Spec, error) {
+	installed, plistContent, err := a.daemonStore.PrepareInstall(spec)
+	if err != nil {
+		return job.Spec{}, err
+	}
+	if existing, loadErr := a.daemonStore.Load(installed.Name); loadErr == nil {
+		preserveRuntimeFields(&installed, existing)
+	}
+	metadata, err := json.MarshalIndent(installed, "", "  ")
+	if err != nil {
+		return job.Spec{}, fmt.Errorf("encode job metadata: %w", err)
+	}
+	tempDir, err := os.MkdirTemp("", "summond-daemon-*")
+	if err != nil {
+		return job.Spec{}, err
+	}
+	defer os.RemoveAll(tempDir)
+	plistPath := filepath.Join(tempDir, installed.Name+".plist")
+	if err := os.WriteFile(plistPath, plistContent, 0o644); err != nil {
+		return job.Spec{}, err
+	}
+	metadataPath := filepath.Join(tempDir, installed.Name+".json")
+	if err := os.WriteFile(metadataPath, metadata, 0o644); err != nil {
+		return job.Spec{}, err
+	}
+	for _, dir := range daemonRequiredDirs(a.daemonStore, installed) {
+		if err := a.priv.CreateDirWithSudo(dir, 0o755); err != nil {
+			return job.Spec{}, err
+		}
+	}
+	if err := a.priv.InstallFileWithSudo(runtimeSource, installed.RuntimeBinaryPath, 0o755); err != nil {
+		return job.Spec{}, err
+	}
+	if err := a.priv.InstallFileWithSudo(plistPath, installed.PlistPath, 0o644); err != nil {
+		return job.Spec{}, err
+	}
+	if err := a.priv.InstallFileWithSudo(metadataPath, a.daemonStore.MetadataPath(installed.Name), 0o644); err != nil {
+		return job.Spec{}, err
+	}
+	return installed, nil
+}
+
+func daemonRequiredDirs(store *state.Store, spec job.Spec) []string {
+	dirs := []string{
+		store.Paths().Home,
+		store.JobsFilePath(),
+		store.LogsDir(),
+		filepath.Dir(store.RuntimeBinaryPath()),
+		filepath.Dir(spec.PlistPath),
+	}
+	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
+		if path != "" {
+			dirs = append(dirs, filepath.Dir(path))
+		}
+	}
+	seen := map[string]struct{}{}
+	var unique []string
+	for _, dir := range dirs {
+		if _, ok := seen[dir]; ok {
+			continue
+		}
+		seen[dir] = struct{}{}
+		unique = append(unique, dir)
+	}
+	return unique
+}
+
+func (a *App) reconcileDaemonRuntime(spec job.Spec) string {
+	if spec.Enabled {
+		_ = a.priv.BootoutDaemonWithSudo(spec.PlistPath)
+		if err := a.priv.BootstrapDaemonWithSudo(spec.PlistPath); err != nil {
+			return fmt.Sprintf("%s: bootstrap failed: %v", spec.Name, err)
+		}
+		return ""
+	}
+	if err := a.priv.BootoutDaemonWithSudo(spec.PlistPath); err != nil {
+		return fmt.Sprintf("%s: bootout failed: %v", spec.Name, err)
+	}
+	return ""
+}
+
+func (a *App) removeDaemonSpecWithSudo(spec job.Spec) error {
+	_ = a.priv.BootoutDaemonWithSudo(spec.PlistPath)
+	if err := a.priv.RemovePathWithSudo(spec.PlistPath); err != nil {
+		return err
+	}
+	return a.priv.RemovePathWithSudo(a.daemonStore.MetadataPath(spec.Name))
+}
+
+func preserveRuntimeFields(dst *job.Spec, src job.Spec) {
+	dst.LastStartedAt = src.LastStartedAt
+	dst.LastFinishedAt = src.LastFinishedAt
+	dst.LastExitCode = src.LastExitCode
+	dst.LastError = src.LastError
+	dst.RunCount = src.RunCount
+	dst.SuccessCount = src.SuccessCount
+	dst.FailureCount = src.FailureCount
+	dst.RecentRuns = src.RecentRuns
 }
 
 func describeSchedule(schedule job.Schedule) string {
@@ -1114,6 +1384,12 @@ func (a *App) printInstallPlan(opts bootstrap.Options) error {
 	if _, err := fmt.Fprintf(a.stdout, "- %s install marker: %s\n", installMarkerAction, installMarkerPath); err != nil {
 		return err
 	}
+	if _, err := fmt.Fprintf(a.stdout, "- manage agent state under: %s\n", a.store.Paths().Home); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- manage daemon state under: %s\n", a.daemonStore.Paths().Home); err != nil {
+		return err
+	}
 	if opts.SkipNewsyslog {
 		if _, err := fmt.Fprintln(a.stdout, "- skip newsyslog generation and system install"); err != nil {
 			return err
@@ -1142,15 +1418,12 @@ func (a *App) printInstallPlan(opts bootstrap.Options) error {
 	return nil
 }
 
-func (a *App) printUninstallPlan(specs []job.Spec) error {
-	configPath, err := resolveCurrentConfigPath()
-	if err != nil {
-		return err
-	}
+func (a *App) printUninstallPlan(specs []managedSpec) error {
 	if _, err := fmt.Fprintln(a.stdout, "uninstall will:"); err != nil {
 		return err
 	}
-	for _, spec := range specs {
+	for _, managed := range specs {
+		spec := managed.spec
 		if _, err := fmt.Fprintf(a.stdout, "- boot out managed job: %s (%s)\n", spec.Name, spec.PlistPath); err != nil {
 			return err
 		}
@@ -1158,16 +1431,16 @@ func (a *App) printUninstallPlan(specs []job.Spec) error {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(a.stdout, "- remove starter config: %s\n", configPath); err != nil {
-		return err
-	}
 	if _, err := fmt.Fprintf(a.stdout, "- remove generated newsyslog config: %s\n", a.boot.GeneratedNewsyslogPath()); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(a.stdout, "- remove system newsyslog config: %s\n", a.boot.SystemNewsyslogPath()); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(a.stdout, "- remove managed state directory: %s\n", a.store.Paths().Home); err != nil {
+	if _, err := fmt.Fprintf(a.stdout, "- remove managed agent state directory: %s\n", a.store.Paths().Home); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- remove managed daemon state directory: %s\n", a.daemonStore.Paths().Home); err != nil {
 		return err
 	}
 	return nil
@@ -1195,8 +1468,32 @@ func describeInstallAction(path string, overwrite bool) (string, error) {
 	return "", err
 }
 
-func (osPrivilegedOperator) RemoveFileWithSudo(path string) error {
-	cmd := exec.Command("sudo", "rm", "-f", path)
+func (osPrivilegedOperator) CreateDirWithSudo(path string, mode os.FileMode) error {
+	cmd := exec.Command("sudo", "install", "-d", "-m", fmt.Sprintf("%04o", mode.Perm()), path)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
+}
+
+func (osPrivilegedOperator) InstallFileWithSudo(src string, dst string, mode os.FileMode) error {
+	cmd := exec.Command("sudo", "install", "-m", fmt.Sprintf("%04o", mode.Perm()), src, dst)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
+}
+
+func (osPrivilegedOperator) RemovePathWithSudo(path string) error {
+	cmd := exec.Command("sudo", "rm", "-rf", path)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
+}
+
+func (osPrivilegedOperator) BootstrapDaemonWithSudo(plistPath string) error {
+	cmd := exec.Command("sudo", "launchctl", "bootstrap", "system", plistPath)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin

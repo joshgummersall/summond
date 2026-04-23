@@ -65,12 +65,17 @@ func (e *PermissionError) Unwrap() error {
 }
 
 type Manager struct {
-	paths     state.Paths
-	installer Installer
+	paths      state.Paths
+	daemonHome string
+	installer  Installer
 }
 
 func NewManager(paths state.Paths, installer Installer) *Manager {
-	return &Manager{paths: paths, installer: installer}
+	return &Manager{paths: paths, daemonHome: paths.Home, installer: installer}
+}
+
+func NewManagerWithDaemonHome(paths state.Paths, daemonPaths state.Paths, installer Installer) *Manager {
+	return &Manager{paths: paths, daemonHome: daemonPaths.Home, installer: installer}
 }
 
 func (m *Manager) Install(opts Options) (Result, error) {
@@ -98,7 +103,7 @@ func (m *Manager) Install(opts Options) (Result, error) {
 		return result, nil
 	}
 
-	newsyslogStatus, err := writeFile(result.NewsyslogGeneratedPath, []byte(renderNewsyslog(m.paths.Home)), opts.Overwrite)
+	newsyslogStatus, err := writeFile(result.NewsyslogGeneratedPath, []byte(renderNewsyslog(m.paths.Home, m.daemonHome)), opts.Overwrite)
 	if err != nil {
 		return result, err
 	}
@@ -128,23 +133,12 @@ func (m *Manager) InstallNewsyslogWithSudo(result *Result) error {
 }
 
 func (m *Manager) Uninstall() (UninstallResult, error) {
-	configPath, err := currentConfigPath()
-	if err != nil {
-		return UninstallResult{}, err
-	}
 	result := UninstallResult{
-		ConfigPath:             configPath,
 		NewsyslogGeneratedPath: m.GeneratedNewsyslogPath(),
 		NewsyslogInstallPath:   m.SystemNewsyslogPath(),
 	}
 
-	status, err := removePath(configPath)
-	if err != nil {
-		return result, err
-	}
-	result.ConfigStatus = status
-
-	status, err = removePath(result.NewsyslogGeneratedPath)
+	status, err := removePath(result.NewsyslogGeneratedPath)
 	if err != nil {
 		return result, err
 	}
@@ -338,7 +332,16 @@ func renderConfig() string {
 `) + "\n"
 }
 
-func renderNewsyslog(stateHome string) string {
-	pattern := filepath.Join(stateHome, "logs", "*.log")
-	return fmt.Sprintf("%s  644  7  *  @T00  Z\n", pattern)
+func renderNewsyslog(agentHome string, daemonHome string) string {
+	patterns := []string{
+		filepath.Join(agentHome, "logs", "*.log"),
+	}
+	if daemonHome != "" && daemonHome != agentHome {
+		patterns = append(patterns, filepath.Join(daemonHome, "logs", "*.log"))
+	}
+	lines := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		lines = append(lines, fmt.Sprintf("%s  644  7  *  @T00  Z", pattern))
+	}
+	return strings.Join(lines, "\n") + "\n"
 }

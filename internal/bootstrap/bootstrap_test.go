@@ -139,8 +139,8 @@ func TestRenderConfigContainsTemplates(t *testing.T) {
 }
 
 func TestRenderNewsyslogPointsAtManagedLogs(t *testing.T) {
-	text := renderNewsyslog(filepath.Join("/tmp", "summond"))
-	if !strings.Contains(text, "/tmp/summond/logs/*.log") {
+	text := renderNewsyslog(filepath.Join("/tmp", "summond-agent"), filepath.Join("/tmp", "summond-daemon"))
+	if !strings.Contains(text, "/tmp/summond-agent/logs/*.log") || !strings.Contains(text, "/tmp/summond-daemon/logs/*.log") {
 		t.Fatalf("unexpected newsyslog content: %q", text)
 	}
 }
@@ -206,7 +206,7 @@ func TestUninstallRemovesFilesAndInstalledConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Uninstall() error = %v", err)
 	}
-	if result.ConfigStatus != "removed" {
+	if result.ConfigStatus != "" {
 		t.Fatalf("ConfigStatus = %q", result.ConfigStatus)
 	}
 	if result.NewsyslogGenerateStatus != "absent" {
@@ -258,10 +258,10 @@ func TestInstallAndUninstallUseCurrentWorkingDirectoryForConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Uninstall() error = %v", err)
 	}
-	if uninstallResult.ConfigPath != filepath.Join(wd, "summond.toml") {
+	if uninstallResult.ConfigPath != "" {
 		t.Fatalf("ConfigPath = %q", uninstallResult.ConfigPath)
 	}
-	if _, err := os.Stat(filepath.Join(wd, "summond.toml")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected config removed, stat err = %v", err)
+	if _, err := os.Stat(filepath.Join(wd, "summond.toml")); err != nil {
+		t.Fatalf("expected config preserved, stat err = %v", err)
 	}
 }
