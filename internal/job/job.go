@@ -48,25 +48,28 @@ type Schedule struct {
 }
 
 type Spec struct {
-	Name         string            `json:"name"`
-	Label        string            `json:"label"`
-	Target       Target            `json:"target"`
-	Command      string            `json:"command,omitempty"`
-	Args         []string          `json:"args,omitempty"`
-	ShellCommand string            `json:"shell_command,omitempty"`
-	WorkingDir   string            `json:"working_dir,omitempty"`
-	Environment  map[string]string `json:"environment,omitempty"`
-	Schedule     Schedule          `json:"schedule"`
-	Trigger      TriggerKind       `json:"trigger,omitempty"`
-	WatchPaths   []string          `json:"watch_paths,omitempty"`
-	Enabled      bool              `json:"enabled"`
-	StdoutPath   string            `json:"stdout_path,omitempty"`
-	StderrPath   string            `json:"stderr_path,omitempty"`
-	PlistPath    string            `json:"plist_path,omitempty"`
-	Checksum     string            `json:"checksum,omitempty"`
+	Name                    string            `json:"name"`
+	Label                   string            `json:"label"`
+	Target                  Target            `json:"target"`
+	Command                 string            `json:"command,omitempty"`
+	Args                    []string          `json:"args,omitempty"`
+	ShellCommand            string            `json:"shell_command,omitempty"`
+	WorkingDir              string            `json:"working_dir,omitempty"`
+	Environment             map[string]string `json:"environment,omitempty"`
+	Schedule                Schedule          `json:"schedule"`
+	Trigger                 TriggerKind       `json:"trigger,omitempty"`
+	WatchPaths              []string          `json:"watch_paths,omitempty"`
+	ThrottleIntervalSeconds int               `json:"throttle_interval_seconds,omitempty"`
+	Enabled                 bool              `json:"enabled"`
+	StdoutPath              string            `json:"stdout_path,omitempty"`
+	StderrPath              string            `json:"stderr_path,omitempty"`
+	PlistPath               string            `json:"plist_path,omitempty"`
+	Checksum                string            `json:"checksum,omitempty"`
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-z0-9.-]+`)
+
+const DefaultPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 func (s *Spec) Normalize() error {
 	s.Name = strings.TrimSpace(s.Name)
@@ -97,6 +100,9 @@ func (s *Spec) Normalize() error {
 	if s.Environment == nil {
 		s.Environment = map[string]string{}
 	}
+	if _, ok := s.Environment["PATH"]; !ok {
+		s.Environment["PATH"] = DefaultPath
+	}
 	if err := s.normalizeTrigger(); err != nil {
 		return err
 	}
@@ -117,6 +123,12 @@ func (s *Spec) Normalize() error {
 	}
 	if s.Trigger != "" && len(s.WatchPaths) == 0 {
 		return errors.New("trigger requires watch_paths")
+	}
+	if s.Trigger == TriggerOnChange && s.ThrottleIntervalSeconds == 0 {
+		s.ThrottleIntervalSeconds = 2
+	}
+	if s.ThrottleIntervalSeconds < 0 {
+		return errors.New("throttle_interval_seconds must be >= 0")
 	}
 	if s.Trigger == "" && s.Schedule.Kind == "" {
 		return errors.New("either schedule or trigger is required")
@@ -225,21 +237,22 @@ func (s Spec) SpecChecksum() (string, error) {
 		Value string `json:"value"`
 	}
 	type checksumSpec struct {
-		Name         string      `json:"name"`
-		Label        string      `json:"label"`
-		Target       Target      `json:"target"`
-		Command      string      `json:"command,omitempty"`
-		Args         []string    `json:"args,omitempty"`
-		ShellCommand string      `json:"shell_command,omitempty"`
-		WorkingDir   string      `json:"working_dir,omitempty"`
-		Environment  []envPair   `json:"environment,omitempty"`
-		Schedule     Schedule    `json:"schedule"`
-		Trigger      TriggerKind `json:"trigger,omitempty"`
-		WatchPaths   []string    `json:"watch_paths,omitempty"`
-		Enabled      bool        `json:"enabled"`
-		StdoutPath   string      `json:"stdout_path,omitempty"`
-		StderrPath   string      `json:"stderr_path,omitempty"`
-		PlistPath    string      `json:"plist_path,omitempty"`
+		Name                    string      `json:"name"`
+		Label                   string      `json:"label"`
+		Target                  Target      `json:"target"`
+		Command                 string      `json:"command,omitempty"`
+		Args                    []string    `json:"args,omitempty"`
+		ShellCommand            string      `json:"shell_command,omitempty"`
+		WorkingDir              string      `json:"working_dir,omitempty"`
+		Environment             []envPair   `json:"environment,omitempty"`
+		Schedule                Schedule    `json:"schedule"`
+		Trigger                 TriggerKind `json:"trigger,omitempty"`
+		WatchPaths              []string    `json:"watch_paths,omitempty"`
+		ThrottleIntervalSeconds int         `json:"throttle_interval_seconds,omitempty"`
+		Enabled                 bool        `json:"enabled"`
+		StdoutPath              string      `json:"stdout_path,omitempty"`
+		StderrPath              string      `json:"stderr_path,omitempty"`
+		PlistPath               string      `json:"plist_path,omitempty"`
 	}
 
 	keys := make([]string, 0, len(s.Environment))
@@ -253,21 +266,22 @@ func (s Spec) SpecChecksum() (string, error) {
 	}
 
 	payload, err := json.Marshal(checksumSpec{
-		Name:         s.Name,
-		Label:        s.Label,
-		Target:       s.Target,
-		Command:      s.Command,
-		Args:         s.Args,
-		ShellCommand: s.ShellCommand,
-		WorkingDir:   s.WorkingDir,
-		Environment:  env,
-		Schedule:     s.Schedule,
-		Trigger:      s.Trigger,
-		WatchPaths:   s.WatchPaths,
-		Enabled:      s.Enabled,
-		StdoutPath:   s.StdoutPath,
-		StderrPath:   s.StderrPath,
-		PlistPath:    s.PlistPath,
+		Name:                    s.Name,
+		Label:                   s.Label,
+		Target:                  s.Target,
+		Command:                 s.Command,
+		Args:                    s.Args,
+		ShellCommand:            s.ShellCommand,
+		WorkingDir:              s.WorkingDir,
+		Environment:             env,
+		Schedule:                s.Schedule,
+		Trigger:                 s.Trigger,
+		WatchPaths:              s.WatchPaths,
+		ThrottleIntervalSeconds: s.ThrottleIntervalSeconds,
+		Enabled:                 s.Enabled,
+		StdoutPath:              s.StdoutPath,
+		StderrPath:              s.StderrPath,
+		PlistPath:               s.PlistPath,
 	})
 	if err != nil {
 		return "", err

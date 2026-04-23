@@ -34,6 +34,9 @@ func TestNormalizeHourly(t *testing.T) {
 	if spec.Label == "" {
 		t.Fatal("expected label")
 	}
+	if got, want := spec.Environment["PATH"], DefaultPath; got != want {
+		t.Fatalf("PATH = %q, want %q", got, want)
+	}
 }
 
 func TestSpecChecksumStableAcrossMapOrder(t *testing.T) {
@@ -85,5 +88,32 @@ func TestNormalizeOnChangeTriggerWithoutSchedule(t *testing.T) {
 	}
 	if err := spec.Normalize(); err != nil {
 		t.Fatalf("Normalize() error = %v", err)
+	}
+	if got, want := spec.ThrottleIntervalSeconds, 2; got != want {
+		t.Fatalf("ThrottleIntervalSeconds = %d, want %d", got, want)
+	}
+}
+
+func TestNormalizeRespectsExplicitPathAndThrottle(t *testing.T) {
+	spec := Spec{
+		Name:    "watcher",
+		Target:  TargetAgent,
+		Command: "/bin/echo",
+		Environment: map[string]string{
+			"PATH": "/custom/bin",
+		},
+		Trigger:                 TriggerOnChange,
+		WatchPaths:              []string{"/tmp/watch.txt"},
+		ThrottleIntervalSeconds: 10,
+		Enabled:                 true,
+	}
+	if err := spec.Normalize(); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	if got, want := spec.Environment["PATH"], "/custom/bin"; got != want {
+		t.Fatalf("PATH = %q, want %q", got, want)
+	}
+	if got, want := spec.ThrottleIntervalSeconds, 10; got != want {
+		t.Fatalf("ThrottleIntervalSeconds = %d, want %d", got, want)
 	}
 }

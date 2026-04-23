@@ -1,5 +1,5 @@
 [jobs.hello-world]
-command = "/opt/homebrew/bin/bat"
+command = "bat"
 args = ["README.md"]
 target = "agent"
 trigger = "on_change"

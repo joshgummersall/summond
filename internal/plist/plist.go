@@ -25,6 +25,9 @@ func Render(spec job.Spec) ([]byte, error) {
 	if spec.Checksum != "" {
 		writeString(&buf, checksumKey, spec.Checksum)
 	}
+	if spec.Target == job.TargetAgent {
+		writeString(&buf, "LimitLoadToSessionType", "Aqua")
+	}
 	writeBool(&buf, "RunAtLoad", runAtLoad(spec.Schedule))
 	if spec.WorkingDir != "" {
 		writeString(&buf, "WorkingDirectory", spec.WorkingDir)
@@ -46,6 +49,9 @@ func Render(spec job.Spec) ([]byte, error) {
 	writeSchedule(&buf, spec.Schedule)
 	if len(spec.WatchPaths) > 0 {
 		writeStringArray(&buf, "WatchPaths", spec.WatchPaths)
+	}
+	if spec.ThrottleIntervalSeconds > 0 {
+		writeInteger(&buf, "ThrottleInterval", spec.ThrottleIntervalSeconds)
 	}
 	if spec.StdoutPath != "" {
 		writeString(&buf, "StandardOutPath", spec.StdoutPath)

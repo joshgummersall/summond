@@ -27,6 +27,11 @@ func TestRenderIntervalPlist(t *testing.T) {
 	for _, needle := range []string{
 		"<key>SummondSpecChecksum</key>",
 		"<string>checksum-123</string>",
+		"<key>LimitLoadToSessionType</key>",
+		"<string>Aqua</string>",
+		"<key>EnvironmentVariables</key>",
+		"<key>PATH</key>",
+		"<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
 		"<key>StartInterval</key>",
 		"<integer>1800</integer>",
 		"<string>/bin/echo</string>",
@@ -53,13 +58,37 @@ func TestRenderOnChangePlist(t *testing.T) {
 	}
 	text := string(data)
 	for _, needle := range []string{
+		"<key>LimitLoadToSessionType</key>",
+		"<string>Aqua</string>",
 		"<key>WatchPaths</key>",
 		"<string>/tmp/watch.txt</string>",
+		"<key>ThrottleInterval</key>",
+		"<integer>2</integer>",
 		"<string>/bin/echo</string>",
 		"<string>watch</string>",
 	} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("plist missing %q: %s", needle, text)
 		}
+	}
+}
+
+func TestRenderDaemonPlistDoesNotSetAquaSessionLimit(t *testing.T) {
+	data, err := Render(job.Spec{
+		Name:    "daemon-job",
+		Target:  job.TargetDaemon,
+		Command: "/bin/echo",
+		Args:    []string{"daemon"},
+		Schedule: job.Schedule{
+			Kind: job.ScheduleBoot,
+		},
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(data)
+	if strings.Contains(text, "LimitLoadToSessionType") {
+		t.Fatalf("unexpected LimitLoadToSessionType in daemon plist: %s", text)
 	}
 }

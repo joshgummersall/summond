@@ -201,6 +201,12 @@ func applyField(spec *job.Spec, key, raw string) error {
 			return err
 		}
 		spec.WatchPaths = value
+	case "throttle_interval_seconds":
+		value, err := parseInt(raw)
+		if err != nil {
+			return err
+		}
+		spec.ThrottleIntervalSeconds = value
 	default:
 		return fmt.Errorf("unsupported key %q", key)
 	}
