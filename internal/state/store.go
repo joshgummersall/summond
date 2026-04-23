@@ -50,40 +50,20 @@ func DiscoverPathSet() (PathSet, error) {
 		return PathSet{}, fmt.Errorf("resolve user home: %w", err)
 	}
 
-	agentHome := os.Getenv("SUMMOND_HOME")
-	if agentHome == "" {
-		agentHome = filepath.Join(current.HomeDir, "Library", "Application Support", "summond")
-	}
-	daemonHome := os.Getenv("SUMMOND_DAEMON_HOME")
-	if daemonHome == "" {
-		daemonHome = filepath.Join(string(filepath.Separator), "Library", "Application Support", "summond")
-	}
-	agentsDir := os.Getenv("SUMMOND_LAUNCH_AGENTS_DIR")
-	if agentsDir == "" {
-		agentsDir = filepath.Join(current.HomeDir, "Library", "LaunchAgents")
-	}
-	daemonsDir := os.Getenv("SUMMOND_LAUNCH_DAEMONS_DIR")
-	if daemonsDir == "" {
-		daemonsDir = "/Library/LaunchDaemons"
-	}
-	newsyslogDir := os.Getenv("SUMMOND_NEWSYSLOG_DIR")
-	if newsyslogDir == "" {
-		newsyslogDir = "/etc/newsyslog.d"
-	}
 	common := Paths{
-		AgentsDir:    agentsDir,
-		DaemonsDir:   daemonsDir,
-		NewsyslogDir: newsyslogDir,
+		AgentsDir:    filepath.Join(current.HomeDir, "Library", "LaunchAgents"),
+		DaemonsDir:   "/Library/LaunchDaemons",
+		NewsyslogDir: "/etc/newsyslog.d",
 	}
 	return PathSet{
 		Agent: Paths{
-			Home:         agentHome,
+			Home:         filepath.Join(current.HomeDir, "Library", "Application Support", "summond"),
 			AgentsDir:    common.AgentsDir,
 			DaemonsDir:   common.DaemonsDir,
 			NewsyslogDir: common.NewsyslogDir,
 		},
 		Daemon: Paths{
-			Home:         daemonHome,
+			Home:         filepath.Join(string(filepath.Separator), "Library", "Application Support", "summond"),
 			AgentsDir:    common.AgentsDir,
 			DaemonsDir:   common.DaemonsDir,
 			NewsyslogDir: common.NewsyslogDir,

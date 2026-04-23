@@ -2,12 +2,41 @@ package state
 
 import (
 	"os"
+	"os/user"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/standardlabs/summond/internal/job"
 )
+
+func TestDiscoverPathSetUsesFixedPlatformPaths(t *testing.T) {
+	current, err := user.Current()
+	if err != nil {
+		t.Fatalf("Current() error = %v", err)
+	}
+
+	paths, err := DiscoverPathSet()
+	if err != nil {
+		t.Fatalf("DiscoverPathSet() error = %v", err)
+	}
+
+	if paths.Agent.Home != filepath.Join(current.HomeDir, "Library", "Application Support", "summond") {
+		t.Fatalf("Agent.Home = %q", paths.Agent.Home)
+	}
+	if paths.Agent.AgentsDir != filepath.Join(current.HomeDir, "Library", "LaunchAgents") {
+		t.Fatalf("Agent.AgentsDir = %q", paths.Agent.AgentsDir)
+	}
+	if paths.Daemon.Home != "/Library/Application Support/summond" {
+		t.Fatalf("Daemon.Home = %q", paths.Daemon.Home)
+	}
+	if paths.Daemon.DaemonsDir != "/Library/LaunchDaemons" {
+		t.Fatalf("Daemon.DaemonsDir = %q", paths.Daemon.DaemonsDir)
+	}
+	if paths.Agent.NewsyslogDir != "/etc/newsyslog.d" || paths.Daemon.NewsyslogDir != "/etc/newsyslog.d" {
+		t.Fatalf("unexpected NewsyslogDir values: %#v", paths)
+	}
+}
 
 func TestInstallCreatesManagedLogFiles(t *testing.T) {
 	dir := t.TempDir()
