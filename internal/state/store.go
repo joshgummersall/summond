@@ -85,6 +85,9 @@ func (s *Store) Install(spec job.Spec) (job.Spec, error) {
 	if err := os.WriteFile(spec.PlistPath, content, 0o644); err != nil {
 		return job.Spec{}, fmt.Errorf("write plist: %w", err)
 	}
+	symlinkPath := filepath.Join(s.jobDir(spec.ManagedKey()), "job.plist")
+	_ = os.Remove(symlinkPath)
+	_ = os.Symlink(spec.PlistPath, symlinkPath)
 	spec, err = s.writeSpec(spec, true)
 	if err != nil {
 		return job.Spec{}, err
@@ -122,6 +125,9 @@ func (s *Store) Remove(name string) (job.Spec, error) {
 			return job.Spec{}, fmt.Errorf("remove %s: %w", path, err)
 		}
 	}
+	if err := os.RemoveAll(s.jobDir(spec.ManagedKey())); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return job.Spec{}, fmt.Errorf("remove job directory: %w", err)
+	}
 	return spec, nil
 }
 
@@ -144,10 +150,10 @@ func (s *Store) List() ([]job.Spec, error) {
 	}
 	var specs []job.Spec
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+		if !entry.IsDir() {
 			continue
 		}
-		key := entry.Name()[:len(entry.Name())-len(".json")]
+		key := entry.Name()
 		spec, err := s.readMetadataByKey(key)
 		if err != nil {
 			return nil, err
@@ -176,8 +182,12 @@ func (s *Store) Paths() Paths {
 	return s.paths
 }
 
-func (s *Store) LogsDir() string {
-	return s.logsDir()
+func (s *Store) JobDir(name string) (string, error) {
+	key, err := s.resolveManagedKey(name)
+	if err != nil {
+		return "", err
+	}
+	return s.jobDir(key), nil
 }
 
 func (s *Store) RuntimeBinaryPath() string {
@@ -259,24 +269,18 @@ func (s *Store) RecordExecutionFinish(name string, record job.ExecutionRecord) e
 }
 
 func (s *Store) logPath(spec job.Spec, stream string) string {
-	return filepath.Join(s.logsDir(), fmt.Sprintf("%s.%s.log", spec.ManagedKey(), stream))
+	name := map[string]string{"out": "stdout.log", "err": "stderr.log"}[stream]
+	return filepath.Join(s.jobDir(spec.ManagedKey()), name)
 }
 
 func (s *Store) metadataPath(key string) string {
-	return filepath.Join(s.jobsDir(), key+".json")
+	return filepath.Join(s.jobDir(key), "state.json")
 }
 
 func (s *Store) cleanupPaths(spec job.Spec) []string {
 	paths := []string{
 		spec.PlistPath,
-		s.metadataPath(spec.ManagedKey()),
 		s.metadataPath(spec.ManagedKey()) + ".lock",
-	}
-	if spec.StdoutPath != "" {
-		paths = append(paths, spec.StdoutPath)
-	}
-	if spec.StderrPath != "" {
-		paths = append(paths, spec.StderrPath)
 	}
 	seen := make(map[string]struct{}, len(paths))
 	unique := make([]string, 0, len(paths))
@@ -293,12 +297,12 @@ func (s *Store) cleanupPaths(spec job.Spec) []string {
 	return unique
 }
 
-func (s *Store) jobsDir() string {
-	return filepath.Join(s.paths.Home, "jobs")
+func (s *Store) jobDir(key string) string {
+	return filepath.Join(s.jobsDir(), key)
 }
 
-func (s *Store) logsDir() string {
-	return filepath.Join(s.paths.Home, "logs")
+func (s *Store) jobsDir() string {
+	return filepath.Join(s.paths.Home, "jobs")
 }
 
 func (s *Store) runtimeBinaryPath() string {
@@ -316,15 +320,9 @@ func (s *Store) ensureDirs(spec job.Spec) error {
 	dirs := []string{
 		s.paths.Home,
 		s.jobsDir(),
-		s.logsDir(),
+		s.jobDir(spec.ManagedKey()),
 		filepath.Dir(s.runtimeBinaryPath()),
 		filepath.Dir(spec.PlistPath),
-	}
-	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
-		if path == "" {
-			continue
-		}
-		dirs = append(dirs, filepath.Dir(path))
 	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

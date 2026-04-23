@@ -115,6 +115,8 @@ func (a *App) Run(args []string) error {
 		return a.runLogs(remaining[1:])
 	case "exec":
 		return a.runExec(remaining[1:])
+	case "cd":
+		return a.runCd(remaining[1:])
 	case "version":
 		_, err := fmt.Fprintf(a.stdout, "summond %s\n", version)
 		return err
@@ -629,6 +631,53 @@ func (a *App) runExec(args []string) error {
 	return nil
 }
 
+func (a *App) runCd(args []string) error {
+	if isHelpArg(args) {
+		printCommandUsage(a.stdout, "cd")
+		return nil
+	}
+	if len(args) != 1 {
+		return errors.New("cd requires a job name")
+	}
+	managed, err := a.loadManagedSpec(args[0])
+	if err != nil {
+		return err
+	}
+	dir, err := managed.store.JobDir(managed.spec.Name)
+	if err != nil {
+		return err
+	}
+	// Detect whether stdout is a TTY.
+	// If non-TTY (e.g. eval $(summond cd <name>)), print a cd command for the shell to eval.
+	// If TTY (interactive), spawn a subshell in the job directory.
+	info, err := os.Stdout.Stat()
+	if err != nil {
+		return fmt.Errorf("stat stdout: %w", err)
+	}
+	isTTY := (info.Mode() & os.ModeCharDevice) != 0
+	if !isTTY {
+		_, err := fmt.Fprintf(a.stdout, "cd %s\n", dir)
+		return err
+	}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/zsh"
+	}
+	cmd := exec.Command(shell)
+	cmd.Dir = dir
+	cmd.Stdin = a.stdin
+	cmd.Stdout = a.stdout
+	cmd.Stderr = a.stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return ExitError{Code: exitErr.ExitCode()}
+		}
+		return err
+	}
+	return nil
+}
+
 func (a *App) runLogs(args []string) error {
 	a.logger.Debug("logs start", "args", args)
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
@@ -747,6 +796,7 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  history <name>             Show recent execution history")
 	fmt.Fprintln(stdout, "  logs [flags] <name>        Print job logs")
 	fmt.Fprintln(stdout, "  exec <name>                Run a managed job immediately")
+	fmt.Fprintln(stdout, "  cd <name>                  Open a shell in the job's state directory")
 	fmt.Fprintln(stdout, "  version                    Print the CLI version")
 	fmt.Fprintln(stdout, "")
 	fmt.Fprintln(stdout, "Run 'summond <command> --help' for command-specific usage.")
@@ -800,6 +850,16 @@ func printCommandUsage(stdout io.Writer, command string) {
 		fmt.Fprintln(stdout, "  summond exec <name>")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Run a managed job immediately and record its execution result.")
+	case "cd":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond cd <name>")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Open a subshell in the job's state directory (interactive), or")
+		fmt.Fprintln(stdout, "print a cd command suitable for eval (non-interactive).")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Examples:")
+		fmt.Fprintln(stdout, "  summond cd myjob                  # drops into subshell")
+		fmt.Fprintln(stdout, "  eval $(summond cd myjob)          # cd in current shell")
 	default:
 		printUsage(stdout)
 	}
@@ -1042,21 +1102,20 @@ func (a *App) installDaemonSpecWithSudo(spec job.Spec, runtimeSource string) (jo
 }
 
 func daemonRequiredDirs(store *state.Store, spec job.Spec) []string {
+	jobDir, _ := store.JobDir(spec.Name)
 	dirs := []string{
 		store.Paths().Home,
 		store.JobsFilePath(),
-		store.LogsDir(),
+		jobDir,
 		filepath.Dir(store.RuntimeBinaryPath()),
 		filepath.Dir(spec.PlistPath),
-	}
-	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
-		if path != "" {
-			dirs = append(dirs, filepath.Dir(path))
-		}
 	}
 	seen := map[string]struct{}{}
 	var unique []string
 	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
 		if _, ok := seen[dir]; ok {
 			continue
 		}
