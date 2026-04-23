@@ -254,3 +254,36 @@ func TestNormalizeResolvesRelativeCommandFromWorkingDir(t *testing.T) {
 		t.Fatalf("Command = %q, want %q", got, want)
 	}
 }
+
+func TestNormalizeRejectsPathLikeJobName(t *testing.T) {
+	spec := Spec{
+		Name:    "../escape",
+		Target:  TargetAgent,
+		Command: "/bin/echo",
+		Schedule: Schedule{
+			Kind: ScheduleDaily,
+		},
+		Enabled: true,
+	}
+
+	if err := spec.Normalize(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestNormalizeRejectsPathLikeLabel(t *testing.T) {
+	spec := Spec{
+		Name:    "job",
+		Label:   "../escape",
+		Target:  TargetAgent,
+		Command: "/bin/echo",
+		Schedule: Schedule{
+			Kind: ScheduleDaily,
+		},
+		Enabled: true,
+	}
+
+	if err := spec.Normalize(); err == nil {
+		t.Fatal("expected error")
+	}
+}

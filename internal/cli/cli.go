@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -34,14 +35,15 @@ func (e ExitError) Error() string {
 }
 
 type App struct {
-	stdin  io.Reader
-	stdout io.Writer
-	stderr io.Writer
-	store  *state.Store
-	runner launchd.Runner
-	boot   *bootstrap.Manager
-	priv   privilegedOperator
-	logger *slog.Logger
+	stdin        io.Reader
+	stdout       io.Writer
+	stderr       io.Writer
+	store        *state.Store
+	runner       launchd.Runner
+	boot         *bootstrap.Manager
+	priv         privilegedOperator
+	logger       *slog.Logger
+	promptReader *bufio.Reader
 }
 
 type privilegedOperator interface {
@@ -73,6 +75,7 @@ func NewApp(stdin io.Reader, stdout io.Writer, store *state.Store, runner launch
 }
 
 func (a *App) Run(args []string) error {
+	a.promptReader = nil
 	verbosity, remaining, err := parseGlobalFlags(args)
 	if err != nil {
 		return err
@@ -121,7 +124,6 @@ func (a *App) runInstall(args []string) error {
 	fs.Usage = func() {
 		printCommandUsage(a.stdout, "install")
 	}
-	yes := fs.Bool("yes", false, "automatically accept prompts")
 	overwrite := fs.Bool("overwrite", false, "overwrite generated files")
 	skipNewsyslog := fs.Bool("skip-newsyslog", false, "skip generating newsyslog config")
 	if err := fs.Parse(args); err != nil {
@@ -133,22 +135,30 @@ func (a *App) runInstall(args []string) error {
 	if len(fs.Args()) != 0 {
 		return errors.New("install does not accept positional arguments")
 	}
-
-	result, err := a.boot.Install(bootstrap.Options{
+	opts := bootstrap.Options{
 		SkipNewsyslog: *skipNewsyslog,
 		Overwrite:     *overwrite,
-	})
+	}
+	if err := a.printInstallPlan(opts); err != nil {
+		return err
+	}
+	approved, err := a.confirmWithDefault("Proceed with install? [y/N]: ", false)
+	if err != nil {
+		return err
+	}
+	if !approved {
+		_, err = fmt.Fprintln(a.stdout, "install cancelled")
+		return err
+	}
+
+	result, err := a.boot.Install(opts)
 	if err != nil {
 		a.logger.Debug("install failed", "error", err)
 		var permissionErr *bootstrap.PermissionError
 		if errors.As(err, &permissionErr) && !*skipNewsyslog {
-			approved := *yes
-			if !approved {
-				var promptErr error
-				approved, promptErr = a.confirm("newsyslog install requires sudo. Retry with sudo? [Y/n]: ")
-				if promptErr != nil {
-					return promptErr
-				}
+			approved, promptErr := a.confirmWithDefault("newsyslog install requires sudo. Retry with sudo? [Y/n]: ", true)
+			if promptErr != nil {
+				return promptErr
 			}
 			if approved {
 				if retryErr := a.boot.InstallNewsyslogWithSudo(&result); retryErr != nil {
@@ -182,7 +192,6 @@ func (a *App) runUninstall(args []string) error {
 	fs.Usage = func() {
 		printCommandUsage(a.stdout, "uninstall")
 	}
-	yes := fs.Bool("yes", false, "skip confirmation")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -192,19 +201,19 @@ func (a *App) runUninstall(args []string) error {
 	if len(fs.Args()) != 0 {
 		return errors.New("uninstall does not accept positional arguments")
 	}
-	if !*yes {
-		approved, err := a.confirm("uninstall will remove Summond-managed jobs, logs, plists, and config. Continue? [y/N]: ")
-		if err != nil {
-			return err
-		}
-		if !approved {
-			_, err = fmt.Fprintln(a.stdout, "uninstall cancelled")
-			return err
-		}
-	}
-
 	specs, err := a.store.List()
 	if err != nil {
+		return err
+	}
+	if err := a.printUninstallPlan(specs); err != nil {
+		return err
+	}
+	approved, err := a.confirmWithDefault("Proceed with uninstall? [y/N]: ", false)
+	if err != nil {
+		return err
+	}
+	if !approved {
+		_, err = fmt.Fprintln(a.stdout, "uninstall cancelled")
 		return err
 	}
 	a.logger.Debug("loaded managed jobs", "count", len(specs))
@@ -241,13 +250,9 @@ func (a *App) runUninstall(args []string) error {
 	}
 
 	if len(sudoPlists) > 0 || needsSudoNewsyslog {
-		approved := *yes
-		if !approved {
-			var err error
-			approved, err = a.confirm("some system-owned files require sudo to remove. Retry with sudo? [Y/n]: ")
-			if err != nil {
-				return err
-			}
+		approved, err := a.confirmWithDefault("some system-owned files require sudo to remove. Retry with sudo? [Y/n]: ", true)
+		if err != nil {
+			return err
 		}
 		if approved {
 			for _, plistPath := range sudoPlists {
@@ -745,15 +750,11 @@ func printCommandUsage(stdout io.Writer, command string) {
 		fmt.Fprintln(stdout, "  summond install [flags]")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Flags:")
-		fmt.Fprintln(stdout, "  --yes                      Automatically accept prompts")
 		fmt.Fprintln(stdout, "  --overwrite                Overwrite generated files")
 		fmt.Fprintln(stdout, "  --skip-newsyslog           Skip generating and installing newsyslog config")
 	case "uninstall":
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond uninstall [flags]")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Flags:")
-		fmt.Fprintln(stdout, "  --yes                      Automatically accept prompts")
 	case "apply":
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond apply [file]")
@@ -1019,17 +1020,26 @@ func (m multiValueFlag) Map() map[string]string {
 }
 
 func (a *App) confirm(prompt string) (bool, error) {
+	return a.confirmWithDefault(prompt, true)
+}
+
+func (a *App) confirmWithDefault(prompt string, defaultYes bool) (bool, error) {
 	_, err := fmt.Fprint(a.stdout, prompt)
 	if err != nil {
 		return false, err
 	}
-	reader := bufio.NewReader(a.stdin)
-	line, err := reader.ReadString('\n')
+	if a.promptReader == nil {
+		a.promptReader = bufio.NewReader(a.stdin)
+	}
+	line, err := a.promptReader.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, err
 	}
 	answer := strings.TrimSpace(strings.ToLower(line))
-	return answer == "" || answer == "y" || answer == "yes", nil
+	if answer == "" {
+		return defaultYes && err == nil, nil
+	}
+	return answer == "y" || answer == "yes", nil
 }
 
 func (a *App) printInstallSummary(result bootstrap.Result) error {
@@ -1079,6 +1089,110 @@ func appendIfMissing(values []string, value string) []string {
 		}
 	}
 	return append(values, value)
+}
+
+func (a *App) printInstallPlan(opts bootstrap.Options) error {
+	configPath, err := resolveCurrentConfigPath()
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(a.stdout, "install will:"); err != nil {
+		return err
+	}
+	configAction, err := describeInstallAction(configPath, opts.Overwrite)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- %s starter config: %s\n", configAction, configPath); err != nil {
+		return err
+	}
+	installMarkerPath := filepath.Join(a.store.Paths().Home, ".installed")
+	installMarkerAction, err := describeInstallAction(installMarkerPath, true)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- %s install marker: %s\n", installMarkerAction, installMarkerPath); err != nil {
+		return err
+	}
+	if opts.SkipNewsyslog {
+		if _, err := fmt.Fprintln(a.stdout, "- skip newsyslog generation and system install"); err != nil {
+			return err
+		}
+	} else {
+		generatedNewsyslogAction, err := describeInstallAction(a.boot.GeneratedNewsyslogPath(), opts.Overwrite)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(a.stdout, "- %s generated newsyslog config: %s\n", generatedNewsyslogAction, a.boot.GeneratedNewsyslogPath()); err != nil {
+			return err
+		}
+		systemNewsyslogAction, err := describeInstallAction(a.boot.SystemNewsyslogPath(), true)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(a.stdout, "- %s system newsyslog config: %s\n", systemNewsyslogAction, a.boot.SystemNewsyslogPath()); err != nil {
+			return err
+		}
+	}
+	if opts.Overwrite {
+		if _, err := fmt.Fprintln(a.stdout, "- overwrite generated files if they already exist"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) printUninstallPlan(specs []job.Spec) error {
+	configPath, err := resolveCurrentConfigPath()
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(a.stdout, "uninstall will:"); err != nil {
+		return err
+	}
+	for _, spec := range specs {
+		if _, err := fmt.Fprintf(a.stdout, "- boot out managed job: %s (%s)\n", spec.Name, spec.PlistPath); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(a.stdout, "- remove managed plist: %s\n", spec.PlistPath); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- remove starter config: %s\n", configPath); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- remove generated newsyslog config: %s\n", a.boot.GeneratedNewsyslogPath()); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- remove system newsyslog config: %s\n", a.boot.SystemNewsyslogPath()); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- remove managed state directory: %s\n", a.store.Paths().Home); err != nil {
+		return err
+	}
+	return nil
+}
+
+func resolveCurrentConfigPath() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve current working directory: %w", err)
+	}
+	return filepath.Join(wd, "summond.toml"), nil
+}
+
+func describeInstallAction(path string, overwrite bool) (string, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		if overwrite {
+			return "overwrite", nil
+		}
+		return "leave unchanged", nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return "create", nil
+	}
+	return "", err
 }
 
 func (osPrivilegedOperator) RemoveFileWithSudo(path string) error {

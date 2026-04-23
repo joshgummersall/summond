@@ -55,7 +55,6 @@ func TestInitCreatesFilesAndInstalls(t *testing.T) {
 	installer := &fakeInstaller{}
 	manager := NewManager(state.Paths{
 		Home:         filepath.Join(dir, "state"),
-		ConfigDir:    filepath.Join(dir, "config"),
 		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
 	}, installer)
 
@@ -75,6 +74,9 @@ func TestInitCreatesFilesAndInstalls(t *testing.T) {
 	}
 	if result.NewsyslogGenerateStatus != "created" {
 		t.Fatalf("NewsyslogGenerateStatus = %q", result.NewsyslogGenerateStatus)
+	}
+	if result.NewsyslogGeneratedPath != filepath.Join(dir, "state", newsyslogFilename) {
+		t.Fatalf("NewsyslogGeneratedPath = %q", result.NewsyslogGeneratedPath)
 	}
 	if !result.NewsyslogInstalled {
 		t.Fatal("expected newsyslog installed")
@@ -99,7 +101,6 @@ func TestInitReturnsPermissionErrorForRetry(t *testing.T) {
 	installer := &fakeInstaller{err: &PermissionError{Err: errors.New("permission denied")}}
 	manager := NewManager(state.Paths{
 		Home:         filepath.Join(dir, "state"),
-		ConfigDir:    filepath.Join(dir, "config"),
 		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
 	}, installer)
 
@@ -194,7 +195,6 @@ func TestUninstallRemovesFilesAndInstalledConfig(t *testing.T) {
 	installer := &fakeInstaller{}
 	manager := NewManager(state.Paths{
 		Home:         filepath.Join(dir, "state"),
-		ConfigDir:    filepath.Join(dir, "config"),
 		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
 	}, installer)
 
@@ -236,7 +236,6 @@ func TestInstallAndUninstallUseCurrentWorkingDirectoryForConfig(t *testing.T) {
 	installer := &fakeInstaller{}
 	manager := NewManager(state.Paths{
 		Home:         filepath.Join(dir, "state"),
-		ConfigDir:    filepath.Join(dir, "config"),
 		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
 	}, installer)
 

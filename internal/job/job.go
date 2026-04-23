@@ -92,6 +92,8 @@ type Spec struct {
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-z0-9.-]+`)
+var validJobName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var validLabel = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 const DefaultPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -100,8 +102,14 @@ func (s *Spec) Normalize() error {
 	if s.Name == "" {
 		return errors.New("job name is required")
 	}
+	if !validJobName.MatchString(s.Name) {
+		return fmt.Errorf("job name must match %q, got %q", validJobName.String(), s.Name)
+	}
 	if s.Label == "" {
 		s.Label = DefaultLabel(s.Name)
+	}
+	if !validLabel.MatchString(s.Label) {
+		return fmt.Errorf("label must match %q, got %q", validLabel.String(), s.Label)
 	}
 	if s.Target == "" {
 		s.Target = TargetAgent

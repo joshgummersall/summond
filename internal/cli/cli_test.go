@@ -136,10 +136,10 @@ func TestHelpInstall(t *testing.T) {
 		t.Fatalf("install --help error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "summond install [flags]") || !strings.Contains(got, "--skip-newsyslog") || !strings.Contains(got, "--yes") {
+	if !strings.Contains(got, "summond install [flags]") || !strings.Contains(got, "--skip-newsyslog") {
 		t.Fatalf("stdout = %q", got)
 	}
-	if strings.Contains(got, "--install-newsyslog") || strings.Contains(got, "--no-prompt") || strings.Contains(got, "--config-path") {
+	if strings.Contains(got, "--install-newsyslog") || strings.Contains(got, "--no-prompt") || strings.Contains(got, "--config-path") || strings.Contains(got, "--yes") {
 		t.Fatalf("stdout = %q", got)
 	}
 	if strings.Count(got, "Usage:") != 1 {
@@ -166,10 +166,10 @@ func TestHelpUninstall(t *testing.T) {
 		t.Fatalf("uninstall --help error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "summond uninstall [flags]") || !strings.Contains(got, "--yes") {
+	if !strings.Contains(got, "summond uninstall [flags]") {
 		t.Fatalf("stdout = %q", got)
 	}
-	if strings.Contains(got, "--no-prompt") || strings.Contains(got, "--config-path") {
+	if strings.Contains(got, "--no-prompt") || strings.Contains(got, "--config-path") || strings.Contains(got, "--yes") {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -638,7 +638,6 @@ func TestPrunePromptsAndCancelsWithoutYes(t *testing.T) {
 	home := testHome(t)
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		ConfigDir:    filepath.Join(home, "config"),
 		AgentsDir:    filepath.Join(home, "LaunchAgents"),
 		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
 		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
@@ -961,6 +960,7 @@ func TestExecRecordsFailingRun(t *testing.T) {
 
 func TestInstallCreatesStarterFiles(t *testing.T) {
 	app := newTestApp(t)
+	app.stdin = strings.NewReader("y\n")
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 	prevWD, err := os.Getwd()
@@ -977,7 +977,7 @@ func TestInstallCreatesStarterFiles(t *testing.T) {
 	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
-	if got := stdout.String(); got != "" {
+	if got := stdout.String(); !strings.Contains(got, "install will:\n") || !strings.Contains(got, "Proceed with install? [y/N]: ") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 	if _, err := os.Stat("summond.toml"); err != nil {
@@ -999,13 +999,12 @@ func TestInstallPermissionDeniedCanUseSudoRetry(t *testing.T) {
 	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		ConfigDir:    filepath.Join(home, "config"),
 		AgentsDir:    filepath.Join(home, "LaunchAgents"),
 		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
 		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
 	})
 	installer := &fakeBootstrapInstaller{err: &bootstrap.PermissionError{Err: os.ErrPermission}}
-	app := NewApp(strings.NewReader("y\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	app := NewApp(strings.NewReader("y\ny\ny\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
@@ -1015,12 +1014,12 @@ func TestInstallPermissionDeniedCanUseSudoRetry(t *testing.T) {
 	if len(installer.sudoCalls) != 1 {
 		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
 	}
-	if got := stdout.String(); !strings.Contains(got, "newsyslog install requires sudo. Retry with sudo? [Y/n]: ") {
+	if got := stdout.String(); !strings.Contains(got, "install will:\n") || !strings.Contains(got, "Proceed with install? [y/N]: ") || !strings.Contains(got, "newsyslog install requires sudo. Retry with sudo? [Y/n]: ") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 }
 
-func TestInstallYesAutoAcceptsSudoRetry(t *testing.T) {
+func TestInstallCancelSkipsChanges(t *testing.T) {
 	home := testHome(t)
 	prevWD, err := os.Getwd()
 	if err != nil {
@@ -1034,23 +1033,22 @@ func TestInstallYesAutoAcceptsSudoRetry(t *testing.T) {
 	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		ConfigDir:    filepath.Join(home, "config"),
 		AgentsDir:    filepath.Join(home, "LaunchAgents"),
 		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
 		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
 	})
 	installer := &fakeBootstrapInstaller{err: &bootstrap.PermissionError{Err: os.ErrPermission}}
-	app := NewApp(strings.NewReader(""), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
-	if err := app.Run([]string{"install", "--yes"}); err != nil {
+	if err := app.Run([]string{"install"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
-	if len(installer.sudoCalls) != 1 {
-		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
+	if len(installer.sudoCalls) != 0 || len(installer.installs) != 0 {
+		t.Fatalf("unexpected installer activity: installs=%#v sudoCalls=%#v", installer.installs, installer.sudoCalls)
 	}
-	if got := stdout.String(); strings.Contains(got, "Retry with sudo?") {
+	if got := stdout.String(); !strings.Contains(got, "Proceed with install? [y/N]: ") || !strings.Contains(got, "install cancelled\n") {
 		t.Fatalf("unexpected prompt output: %q", got)
 	}
 }
@@ -1069,24 +1067,51 @@ func TestInstallSkipNewsyslogAvoidsPromptAndManualSudo(t *testing.T) {
 	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		ConfigDir:    filepath.Join(home, "config"),
 		AgentsDir:    filepath.Join(home, "LaunchAgents"),
 		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
 		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
 	})
 	installer := &fakeBootstrapInstaller{err: &bootstrap.PermissionError{Err: os.ErrPermission}}
-	app := NewApp(strings.NewReader(""), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	app := NewApp(strings.NewReader("y\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
 	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
-	if got := stdout.String(); got != "" {
+	if got := stdout.String(); !strings.Contains(got, "install will:\n") || !strings.Contains(got, "- skip newsyslog generation and system install\n") || !strings.Contains(got, "Proceed with install? [y/N]: ") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 	if len(installer.installs) != 0 || len(installer.sudoCalls) != 0 {
 		t.Fatalf("unexpected installer activity: installs=%#v sudoCalls=%#v", installer.installs, installer.sudoCalls)
+	}
+}
+
+func TestInstallPlanShowsExistingConfigUnchangedWithoutOverwrite(t *testing.T) {
+	app := newTestApp(t)
+	app.stdin = strings.NewReader("n\n")
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	wd := testHome(t)
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(wd); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
+	if err := os.WriteFile("summond.toml", []byte("# existing\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
+		t.Fatalf("install error = %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "- leave unchanged starter config: ") {
+		t.Fatalf("unexpected output: %q", got)
 	}
 }
 
@@ -1123,15 +1148,17 @@ func TestUninstallRemovesManagedArtifacts(t *testing.T) {
 		t.Fatalf("apply error = %v", err)
 	}
 	stdout.Reset()
+	app.stdin = strings.NewReader("y\n")
 	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	stdout.Reset()
 
-	if err := app.Run([]string{"uninstall", "--yes"}); err != nil {
+	app.stdin = strings.NewReader("y\n")
+	if err := app.Run([]string{"uninstall"}); err != nil {
 		t.Fatalf("uninstall error = %v", err)
 	}
-	if got := stdout.String(); got != "" {
+	if got := stdout.String(); !strings.Contains(got, "uninstall will:\n") || !strings.Contains(got, "Proceed with uninstall? [y/N]: ") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 	if _, err := os.Stat(app.store.Paths().Home); !os.IsNotExist(err) {
@@ -1156,13 +1183,12 @@ func TestUninstallPermissionDeniedPromptsForNewsyslogCleanup(t *testing.T) {
 	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		ConfigDir:    filepath.Join(home, "config"),
 		AgentsDir:    filepath.Join(home, "LaunchAgents"),
 		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
 		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
 	})
 	installer := &fakeBootstrapInstaller{}
-	app := NewApp(strings.NewReader("y\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	app := NewApp(strings.NewReader("y\ny\ny\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
 	app.priv = &fakePrivilegedOperator{}
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -1172,6 +1198,7 @@ func TestUninstallPermissionDeniedPromptsForNewsyslogCleanup(t *testing.T) {
 	}
 	installer.removeErr = &bootstrap.PermissionError{Err: os.ErrPermission}
 	stdout.Reset()
+	app.stdin = strings.NewReader("y\ny\n")
 
 	if err := app.Run([]string{"uninstall"}); err != nil {
 		t.Fatalf("uninstall error = %v", err)
@@ -1179,12 +1206,12 @@ func TestUninstallPermissionDeniedPromptsForNewsyslogCleanup(t *testing.T) {
 	if len(installer.sudoCalls) != 1 {
 		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
 	}
-	if got := stdout.String(); !strings.Contains(got, "some system-owned files require sudo to remove. Retry with sudo? [Y/n]: ") {
+	if got := stdout.String(); !strings.Contains(got, "Proceed with uninstall? [y/N]: ") || !strings.Contains(got, "some system-owned files require sudo to remove. Retry with sudo? [Y/n]: ") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 }
 
-func TestUninstallYesAutoAcceptsSudoCleanup(t *testing.T) {
+func TestUninstallCancelSkipsChanges(t *testing.T) {
 	home := testHome(t)
 	prevWD, err := os.Getwd()
 	if err != nil {
@@ -1198,30 +1225,31 @@ func TestUninstallYesAutoAcceptsSudoCleanup(t *testing.T) {
 	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		ConfigDir:    filepath.Join(home, "config"),
 		AgentsDir:    filepath.Join(home, "LaunchAgents"),
 		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
 		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
 	})
 	installer := &fakeBootstrapInstaller{}
-	app := NewApp(strings.NewReader(""), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
 	app.priv = &fakePrivilegedOperator{}
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
+	app.stdin = strings.NewReader("y\n")
 	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	installer.removeErr = &bootstrap.PermissionError{Err: os.ErrPermission}
 	stdout.Reset()
 
-	if err := app.Run([]string{"uninstall", "--yes"}); err != nil {
+	app.stdin = strings.NewReader("n\n")
+	if err := app.Run([]string{"uninstall"}); err != nil {
 		t.Fatalf("uninstall error = %v", err)
 	}
-	if len(installer.sudoCalls) != 1 {
+	if len(installer.sudoCalls) != 0 {
 		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
 	}
-	if got := stdout.String(); strings.Contains(got, "Retry with sudo?") {
+	if got := stdout.String(); !strings.Contains(got, "Proceed with uninstall? [y/N]: ") || !strings.Contains(got, "uninstall cancelled\n") {
 		t.Fatalf("unexpected prompt output: %q", got)
 	}
 }
@@ -1231,7 +1259,6 @@ func newTestApp(t *testing.T) *App {
 	home := testHome(t)
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		ConfigDir:    filepath.Join(home, "config"),
 		AgentsDir:    filepath.Join(home, "LaunchAgents"),
 		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
 		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
@@ -1252,7 +1279,6 @@ func newRawTestApp(t *testing.T) *App {
 	home := testHome(t)
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		ConfigDir:    filepath.Join(home, "config"),
 		AgentsDir:    filepath.Join(home, "LaunchAgents"),
 		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
 		NewsyslogDir: filepath.Join(home, "newsyslog.d"),

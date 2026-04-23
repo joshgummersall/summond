@@ -18,7 +18,6 @@ import (
 
 type Paths struct {
 	Home         string
-	ConfigDir    string
 	AgentsDir    string
 	DaemonsDir   string
 	NewsyslogDir string
@@ -42,10 +41,6 @@ func DiscoverPaths() (Paths, error) {
 	if home == "" {
 		home = filepath.Join(current.HomeDir, "Library", "Application Support", "summond")
 	}
-	configDir := os.Getenv("SUMMOND_CONFIG_DIR")
-	if configDir == "" {
-		configDir = filepath.Join(current.HomeDir, ".config", "summond")
-	}
 	agentsDir := os.Getenv("SUMMOND_LAUNCH_AGENTS_DIR")
 	if agentsDir == "" {
 		agentsDir = filepath.Join(current.HomeDir, "Library", "LaunchAgents")
@@ -60,7 +55,6 @@ func DiscoverPaths() (Paths, error) {
 	}
 	return Paths{
 		Home:         home,
-		ConfigDir:    configDir,
 		AgentsDir:    agentsDir,
 		DaemonsDir:   daemonsDir,
 		NewsyslogDir: newsyslogDir,

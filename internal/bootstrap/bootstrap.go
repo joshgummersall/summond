@@ -15,8 +15,8 @@ const newsyslogFilename = "com.standardlabs.summond.conf"
 const installMarkerFilename = ".installed"
 
 type Options struct {
-	SkipNewsyslog    bool
-	Overwrite        bool
+	SkipNewsyslog bool
+	Overwrite     bool
 }
 
 type Result struct {
@@ -181,7 +181,7 @@ func (m *Manager) UninstallNewsyslogWithSudo(result *UninstallResult) error {
 }
 
 func (m *Manager) GeneratedNewsyslogPath() string {
-	return filepath.Join(m.paths.ConfigDir, newsyslogFilename)
+	return filepath.Join(m.paths.Home, newsyslogFilename)
 }
 
 func (m *Manager) SystemNewsyslogPath() string {
