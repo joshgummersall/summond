@@ -11,10 +11,12 @@ import (
 )
 
 type fakeInstaller struct {
-	installs  [][2]string
-	sudoCalls [][2]string
-	err       error
-	sudoErr   error
+	installs    [][2]string
+	sudoCalls   [][2]string
+	removes     []string
+	sudoRemoves []string
+	err         error
+	sudoErr     error
 }
 
 func (f *fakeInstaller) Install(src, dst string) error {
@@ -24,6 +26,16 @@ func (f *fakeInstaller) Install(src, dst string) error {
 
 func (f *fakeInstaller) InstallWithSudo(src, dst string) error {
 	f.sudoCalls = append(f.sudoCalls, [2]string{src, dst})
+	return f.sudoErr
+}
+
+func (f *fakeInstaller) Remove(path string) error {
+	f.removes = append(f.removes, path)
+	return f.err
+}
+
+func (f *fakeInstaller) RemoveWithSudo(path string) error {
+	f.sudoRemoves = append(f.sudoRemoves, path)
 	return f.sudoErr
 }
 
@@ -129,5 +141,36 @@ func TestPermissionErrorMessage(t *testing.T) {
 	buf.WriteString(err)
 	if buf.String() == "" {
 		t.Fatal("expected message")
+	}
+}
+
+func TestUninstallRemovesFilesAndInstalledConfig(t *testing.T) {
+	dir := t.TempDir()
+	installer := &fakeInstaller{}
+	manager := NewManager(state.Paths{
+		Home:         filepath.Join(dir, "state"),
+		ConfigDir:    filepath.Join(dir, "config"),
+		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
+	}, installer)
+
+	if _, err := manager.Install(Options{InstallNewsyslog: false}); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	result, err := manager.Uninstall("")
+	if err != nil {
+		t.Fatalf("Uninstall() error = %v", err)
+	}
+	if result.ConfigStatus != "removed" {
+		t.Fatalf("ConfigStatus = %q", result.ConfigStatus)
+	}
+	if result.NewsyslogGenerateStatus != "removed" {
+		t.Fatalf("NewsyslogGenerateStatus = %q", result.NewsyslogGenerateStatus)
+	}
+	if result.NewsyslogInstallStatus != "removed" {
+		t.Fatalf("NewsyslogInstallStatus = %q", result.NewsyslogInstallStatus)
+	}
+	if len(installer.removes) != 1 {
+		t.Fatalf("removes = %#v", installer.removes)
 	}
 }

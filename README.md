@@ -19,7 +19,7 @@ mise install
 mise test
 mise install
 summond version
-summond init
+summond install
 ```
 
 ## Examples
@@ -27,7 +27,7 @@ summond init
 Bootstrap the default config and log rotation:
 
 ```sh
-summond init
+summond install
 ```
 
 This creates `~/.config/summond/summond.toml`, generates a `newsyslog` snippet for Summond-managed logs, and will ask to retry with `sudo` if the system install step needs elevated privileges.
@@ -80,7 +80,7 @@ summond apply -f summond.toml
 
 ## Logs
 
-Summond writes stdout and stderr to managed log files under `~/Library/Application Support/summond/logs/` by default. `summond init` scaffolds `newsyslog` configuration so those files can be rotated using the native macOS mechanism.
+Summond writes stdout and stderr to managed log files under `~/Library/Application Support/summond/logs/` by default. `summond install` scaffolds `newsyslog` configuration so those files can be rotated using the native macOS mechanism.
 
 ```sh
 summond logs cleanup

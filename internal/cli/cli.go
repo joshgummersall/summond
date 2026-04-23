@@ -18,7 +18,7 @@ import (
 	"github.com/joshgummersall/summond/internal/state"
 )
 
-const version = "0.3.0"
+const version = "0.4.0"
 
 type App struct {
 	stdin  io.Reader
@@ -26,7 +26,15 @@ type App struct {
 	store  *state.Store
 	runner launchd.Runner
 	boot   *bootstrap.Manager
+	priv   privilegedOperator
 }
+
+type privilegedOperator interface {
+	RemoveFileWithSudo(path string) error
+	BootoutDaemonWithSudo(plistPath string) error
+}
+
+type osPrivilegedOperator struct{}
 
 func Run(args []string, stdout io.Writer) error {
 	paths, err := state.DiscoverPaths()
@@ -39,12 +47,13 @@ func Run(args []string, stdout io.Writer) error {
 		store:  state.NewStore(paths),
 		runner: launchd.LaunchCtl{},
 		boot:   bootstrap.NewManager(paths, bootstrap.OSInstaller{}),
+		priv:   osPrivilegedOperator{},
 	}
 	return app.Run(args)
 }
 
 func NewApp(stdin io.Reader, stdout io.Writer, store *state.Store, runner launchd.Runner, boot *bootstrap.Manager) *App {
-	return &App{stdin: stdin, stdout: stdout, store: store, runner: runner, boot: boot}
+	return &App{stdin: stdin, stdout: stdout, store: store, runner: runner, boot: boot, priv: osPrivilegedOperator{}}
 }
 
 func (a *App) Run(args []string) error {
@@ -54,8 +63,10 @@ func (a *App) Run(args []string) error {
 	}
 
 	switch args[0] {
-	case "init":
-		return a.runInit(args[1:])
+	case "install":
+		return a.runInstall(args[1:])
+	case "uninstall":
+		return a.runUninstall(args[1:])
 	case "add":
 		return a.runAdd(args[1:])
 	case "apply":
@@ -89,8 +100,8 @@ func (a *App) Run(args []string) error {
 	}
 }
 
-func (a *App) runInit(args []string) error {
-	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+func (a *App) runInstall(args []string) error {
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config-path", "", "starter config path")
 	force := fs.Bool("force", false, "overwrite generated files")
@@ -101,10 +112,10 @@ func (a *App) runInit(args []string) error {
 		return err
 	}
 	if len(fs.Args()) != 0 {
-		return errors.New("init does not accept positional arguments")
+		return errors.New("install does not accept positional arguments")
 	}
 
-	result, err := a.boot.Init(bootstrap.Options{
+	result, err := a.boot.Install(bootstrap.Options{
 		ConfigPath:       *configPath,
 		InstallNewsyslog: *installNewsyslog,
 		SkipNewsyslog:    *skipNewsyslog,
@@ -121,16 +132,16 @@ func (a *App) runInit(args []string) error {
 				if retryErr := a.boot.InstallNewsyslogWithSudo(&result); retryErr != nil {
 					return retryErr
 				}
-				return a.printInitSummary(result)
+				return a.printInstallSummary(result)
 			}
-			if summaryErr := a.printInitSummary(result); summaryErr != nil {
+			if summaryErr := a.printInstallSummary(result); summaryErr != nil {
 				return summaryErr
 			}
 			_, summaryErr := fmt.Fprintf(a.stdout, "install manually with: sudo install -m 0644 %s %s\n", result.NewsyslogGeneratedPath, result.NewsyslogInstallPath)
 			return summaryErr
 		}
 		if errors.As(err, &permissionErr) {
-			if summaryErr := a.printInitSummary(result); summaryErr != nil {
+			if summaryErr := a.printInstallSummary(result); summaryErr != nil {
 				return summaryErr
 			}
 			_, summaryErr := fmt.Fprintf(a.stdout, "install manually with: sudo install -m 0644 %s %s\n", result.NewsyslogGeneratedPath, result.NewsyslogInstallPath)
@@ -138,7 +149,100 @@ func (a *App) runInit(args []string) error {
 		}
 		return err
 	}
-	return a.printInitSummary(result)
+	return a.printInstallSummary(result)
+}
+
+func (a *App) runUninstall(args []string) error {
+	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	configPath := fs.String("config-path", "", "starter config path")
+	yes := fs.Bool("yes", false, "skip confirmation")
+	noPrompt := fs.Bool("no-prompt", false, "disable sudo retry prompt")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if len(fs.Args()) != 0 {
+		return errors.New("uninstall does not accept positional arguments")
+	}
+	if !*yes {
+		approved, err := a.confirm("uninstall will remove Summond-managed jobs, logs, plists, and config. Continue? [y/N]: ")
+		if err != nil {
+			return err
+		}
+		if !approved {
+			_, err = fmt.Fprintln(a.stdout, "uninstall cancelled")
+			return err
+		}
+	}
+
+	specs, err := a.store.List()
+	if err != nil {
+		return err
+	}
+	var sudoPlists []string
+	removedJobs := 0
+	for _, spec := range specs {
+		if err := a.runner.Bootout(spec); err != nil && spec.Target == job.TargetDaemon {
+			sudoPlists = append(sudoPlists, spec.PlistPath)
+		}
+		if err := removeIfExists(spec.PlistPath); err != nil {
+			if errors.Is(err, os.ErrPermission) && spec.Target == job.TargetDaemon {
+				sudoPlists = appendIfMissing(sudoPlists, spec.PlistPath)
+			} else {
+				return err
+			}
+		}
+		removedJobs++
+	}
+
+	uninstallResult, uninstallErr := a.boot.Uninstall(*configPath)
+	needsSudoNewsyslog := false
+	if uninstallErr != nil {
+		var permissionErr *bootstrap.PermissionError
+		if errors.As(uninstallErr, &permissionErr) {
+			needsSudoNewsyslog = true
+		} else {
+			return uninstallErr
+		}
+	}
+
+	if err := os.RemoveAll(a.store.Paths().Home); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	if (len(sudoPlists) > 0 || needsSudoNewsyslog) && !*noPrompt {
+		approved, err := a.confirm("some system-owned files require sudo to remove. Retry with sudo? [Y/n]: ")
+		if err != nil {
+			return err
+		}
+		if approved {
+			for _, plistPath := range sudoPlists {
+				_ = a.priv.BootoutDaemonWithSudo(plistPath)
+				if err := a.priv.RemoveFileWithSudo(plistPath); err != nil {
+					return err
+				}
+			}
+			if needsSudoNewsyslog {
+				if err := a.boot.UninstallNewsyslogWithSudo(&uninstallResult); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	if err := a.printUninstallSummary(uninstallResult, removedJobs, len(sudoPlists) > 0 || needsSudoNewsyslog); err != nil {
+		return err
+	}
+	if (len(sudoPlists) > 0 || needsSudoNewsyslog) && *noPrompt {
+		return a.printUninstallManual(uninstallResult, sudoPlists)
+	}
+	if (len(sudoPlists) > 0 || needsSudoNewsyslog) && !uninstallResult.UsedSudo && len(sudoPlists) > 0 {
+		return a.printUninstallManual(uninstallResult, sudoPlists)
+	}
+	if needsSudoNewsyslog && !uninstallResult.UsedSudo {
+		return a.printUninstallManual(uninstallResult, sudoPlists)
+	}
+	return nil
 }
 
 func (a *App) runAdd(args []string) error {
@@ -412,7 +516,8 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  summond <command> [arguments]")
 	fmt.Fprintln(stdout, "")
 	fmt.Fprintln(stdout, "Commands:")
-	fmt.Fprintln(stdout, "  init                       Scaffold config and newsyslog setup")
+	fmt.Fprintln(stdout, "  install                    Scaffold config and newsyslog setup")
+	fmt.Fprintln(stdout, "  uninstall                  Remove Summond-managed jobs and setup")
 	fmt.Fprintln(stdout, "  add <name> [args...]       Create or update a managed job")
 	fmt.Fprintln(stdout, "  apply -f <file>            Apply jobs from a TOML file")
 	fmt.Fprintln(stdout, "  list                       List managed jobs")
@@ -504,7 +609,7 @@ func (a *App) confirm(prompt string) (bool, error) {
 	return answer == "" || answer == "y" || answer == "yes", nil
 }
 
-func (a *App) printInitSummary(result bootstrap.Result) error {
+func (a *App) printInstallSummary(result bootstrap.Result) error {
 	lines := []string{
 		fmt.Sprintf("config: %s (%s)", result.ConfigPath, result.ConfigStatus),
 		fmt.Sprintf("newsyslog source: %s (%s)", result.NewsyslogGeneratedPath, result.NewsyslogGenerateStatus),
@@ -526,4 +631,80 @@ func (a *App) printInitSummary(result bootstrap.Result) error {
 		}
 	}
 	return nil
+}
+
+func (a *App) printUninstallSummary(result bootstrap.UninstallResult, removedJobs int, hadPrivileged bool) error {
+	lines := []string{
+		fmt.Sprintf("jobs removed: %d", removedJobs),
+		fmt.Sprintf("config: %s (%s)", result.ConfigPath, result.ConfigStatus),
+		fmt.Sprintf("newsyslog source: %s (%s)", result.NewsyslogGeneratedPath, result.NewsyslogGenerateStatus),
+	}
+	status := result.NewsyslogInstallStatus
+	if status == "" {
+		if hadPrivileged {
+			status = "pending sudo removal"
+		} else {
+			status = "absent"
+		}
+	}
+	if result.UsedSudo && status == "removed" {
+		status += " via sudo"
+	}
+	lines = append(lines, fmt.Sprintf("newsyslog install: %s (%s)", result.NewsyslogInstallPath, status))
+	lines = append(lines, fmt.Sprintf("state home: %s (removed)", a.store.Paths().Home))
+	for _, line := range lines {
+		if _, err := fmt.Fprintln(a.stdout, line); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) printUninstallManual(result bootstrap.UninstallResult, sudoPlists []string) error {
+	for _, plistPath := range sudoPlists {
+		if _, err := fmt.Fprintf(a.stdout, "manual cleanup: sudo launchctl bootout system %s || true\n", plistPath); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(a.stdout, "manual cleanup: sudo rm -f %s\n", plistPath); err != nil {
+			return err
+		}
+	}
+	if result.NewsyslogInstallStatus != "removed" {
+		if _, err := fmt.Fprintf(a.stdout, "manual cleanup: sudo rm -f %s\n", result.NewsyslogInstallPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func appendIfMissing(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func (osPrivilegedOperator) RemoveFileWithSudo(path string) error {
+	cmd := exec.Command("sudo", "rm", "-f", path)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
+}
+
+func (osPrivilegedOperator) BootoutDaemonWithSudo(plistPath string) error {
+	cmd := exec.Command("sudo", "launchctl", "bootout", "system", plistPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
 }

@@ -30,9 +30,21 @@ type Result struct {
 	UsedSudo                bool
 }
 
+type UninstallResult struct {
+	ConfigPath              string
+	ConfigStatus            string
+	NewsyslogGeneratedPath  string
+	NewsyslogGenerateStatus string
+	NewsyslogInstallPath    string
+	NewsyslogInstallStatus  string
+	UsedSudo                bool
+}
+
 type Installer interface {
 	Install(src, dst string) error
 	InstallWithSudo(src, dst string) error
+	Remove(path string) error
+	RemoveWithSudo(path string) error
 }
 
 type PermissionError struct {
@@ -62,7 +74,7 @@ func NewManager(paths state.Paths, installer Installer) *Manager {
 	return &Manager{paths: paths, installer: installer}
 }
 
-func (m *Manager) Init(opts Options) (Result, error) {
+func (m *Manager) Install(opts Options) (Result, error) {
 	configPath := opts.ConfigPath
 	if configPath == "" {
 		configPath = filepath.Join(m.paths.ConfigDir, "summond.toml")
@@ -101,11 +113,53 @@ func (m *Manager) Init(opts Options) (Result, error) {
 	return result, nil
 }
 
+func (m *Manager) Init(opts Options) (Result, error) {
+	return m.Install(opts)
+}
+
 func (m *Manager) InstallNewsyslogWithSudo(result *Result) error {
 	if err := m.installer.InstallWithSudo(result.NewsyslogGeneratedPath, result.NewsyslogInstallPath); err != nil {
 		return err
 	}
 	result.NewsyslogInstalled = true
+	result.UsedSudo = true
+	return nil
+}
+
+func (m *Manager) Uninstall(configPath string) (UninstallResult, error) {
+	if configPath == "" {
+		configPath = filepath.Join(m.paths.ConfigDir, "summond.toml")
+	}
+	result := UninstallResult{
+		ConfigPath:             configPath,
+		NewsyslogGeneratedPath: m.GeneratedNewsyslogPath(),
+		NewsyslogInstallPath:   m.SystemNewsyslogPath(),
+	}
+
+	status, err := removePath(configPath)
+	if err != nil {
+		return result, err
+	}
+	result.ConfigStatus = status
+
+	status, err = removePath(result.NewsyslogGeneratedPath)
+	if err != nil {
+		return result, err
+	}
+	result.NewsyslogGenerateStatus = status
+
+	if err := m.installer.Remove(result.NewsyslogInstallPath); err != nil {
+		return result, err
+	}
+	result.NewsyslogInstallStatus = "removed"
+	return result, nil
+}
+
+func (m *Manager) UninstallNewsyslogWithSudo(result *UninstallResult) error {
+	if err := m.installer.RemoveWithSudo(result.NewsyslogInstallPath); err != nil {
+		return err
+	}
+	result.NewsyslogInstallStatus = "removed"
 	result.UsedSudo = true
 	return nil
 }
@@ -148,6 +202,24 @@ func (OSInstaller) InstallWithSudo(src, dst string) error {
 	return cmd.Run()
 }
 
+func (OSInstaller) Remove(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrPermission) {
+			return &PermissionError{Err: err}
+		}
+		return err
+	}
+	return nil
+}
+
+func (OSInstaller) RemoveWithSudo(path string) error {
+	cmd := exec.Command("sudo", "rm", "-f", path)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	return cmd.Run()
+}
+
 func writeFile(path string, content []byte, force bool) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
@@ -166,6 +238,16 @@ func writeFile(path string, content []byte, force bool) (string, error) {
 		return "overwritten", nil
 	}
 	return "created", nil
+}
+
+func removePath(path string) (string, error) {
+	if err := os.Remove(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "absent", nil
+		}
+		return "", err
+	}
+	return "removed", nil
 }
 
 func renderConfig() string {
