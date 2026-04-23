@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/joshgummersall/summond/internal/bootstrap"
 	"github.com/joshgummersall/summond/internal/config"
@@ -371,13 +372,17 @@ func (a *App) runList(args []string) error {
 		_, err = fmt.Fprintln(a.stdout, "no managed jobs")
 		return err
 	}
+	writer := tabwriter.NewWriter(a.stdout, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(writer, "NAME\tTARGET\tSCHEDULE\tENABLED"); err != nil {
+		return err
+	}
 	for _, spec := range specs {
-		_, err := fmt.Fprintf(a.stdout, "%s\t%s\t%s\tenabled=%t\n", spec.Name, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled)
+		_, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%t\n", spec.Name, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled)
 		if err != nil {
 			return err
 		}
 	}
-	return nil
+	return writer.Flush()
 }
 
 func (a *App) runInspect(args []string) error {
