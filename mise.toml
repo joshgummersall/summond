@@ -15,3 +15,8 @@ run = "go test ./..."
 [tasks.build]
 description = "Build the CLI"
 run = "go build -o ./bin/summond ./cmd/summond"
+
+[tasks.install-bin]
+description = "Build the CLI and copy it into ~/.bin"
+depends = ["build"]
+run = "mkdir -p ~/.bin && cp ./bin/summond ~/.bin/summond"
