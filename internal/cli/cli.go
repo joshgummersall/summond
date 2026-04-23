@@ -347,8 +347,12 @@ func (a *App) runApply(args []string) error {
 			return err
 		}
 		if installed.Enabled {
-			if err := a.runner.Bootout(installed); err != nil {
-				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: bootout before bootstrap failed: %v", installed.Name, err))
+			if loaded, err := a.isLoaded(installed); err != nil {
+				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: load-state check failed: %v", installed.Name, err))
+			} else if loaded {
+				if err := a.runner.Bootout(installed); err != nil {
+					runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: bootout before bootstrap failed: %v", installed.Name, err))
+				}
 			}
 			if err := a.runner.Bootstrap(installed); err != nil {
 				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: bootstrap failed: %v", installed.Name, err))
@@ -372,6 +376,25 @@ func (a *App) runApply(args []string) error {
 		}
 	}
 	return nil
+}
+
+func (a *App) isLoaded(spec job.Spec) (bool, error) {
+	_, err := a.runner.Print(spec)
+	if err == nil {
+		return true, nil
+	}
+	if isMissingServiceError(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+func isMissingServiceError(err error) bool {
+	text := err.Error()
+	return strings.Contains(text, "Could not find service") ||
+		strings.Contains(text, "service not found") ||
+		strings.Contains(text, "No such process") ||
+		strings.Contains(text, "not found in domain")
 }
 
 func (a *App) verifyLoadedJob(spec job.Spec) error {

@@ -211,6 +211,42 @@ func TestApplyReportsBootstrapWarningsButSucceeds(t *testing.T) {
 	}
 }
 
+func TestApplySkipsBootoutWhenServiceIsMissing(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+	runner.printErr = map[string]error{"cleanup": errors.New("Could not find service \"com.joshgummersall.summond.cleanup\" in domain")}
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["clean"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+		"enabled = true",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	if len(runner.bootedOut) != 0 {
+		t.Fatalf("bootedOut = %#v", runner.bootedOut)
+	}
+	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "cleanup" {
+		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
+	}
+	if got := stdout.String(); strings.Contains(got, "bootout before bootstrap failed") || strings.Contains(got, "load-state check failed") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
 func TestApplyReportsBootoutWarningsButSucceeds(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
