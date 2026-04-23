@@ -45,6 +45,12 @@ type Schedule struct {
 	Weekday         int          `json:"weekday,omitempty"`
 	Day             int          `json:"day,omitempty"`
 	Month           int          `json:"month,omitempty"`
+	IntervalSet     bool         `json:"interval_set,omitempty"`
+	MinuteSet       bool         `json:"minute_set,omitempty"`
+	HourSet         bool         `json:"hour_set,omitempty"`
+	WeekdaySet      bool         `json:"weekday_set,omitempty"`
+	DaySet          bool         `json:"day_set,omitempty"`
+	MonthSet        bool         `json:"month_set,omitempty"`
 }
 
 type Spec struct {
@@ -107,6 +113,9 @@ func (s *Spec) Normalize() error {
 		return err
 	}
 	if s.Trigger == "" {
+		if err := s.applyScheduleDefaults(); err != nil {
+			return err
+		}
 		if err := s.Schedule.NormalizeForTarget(s.Target); err != nil {
 			return err
 		}
@@ -134,6 +143,130 @@ func (s *Spec) Normalize() error {
 		return errors.New("either schedule or trigger is required")
 	}
 	return nil
+}
+
+func (s *Spec) applyScheduleDefaults() error {
+	if s.Schedule.Kind == "" {
+		return nil
+	}
+	seed, err := s.scheduleSeed()
+	if err != nil {
+		return err
+	}
+	next := 0
+	pick := func(mod int) int {
+		value := int(seed[next%len(seed)]) % mod
+		next++
+		return value
+	}
+	switch s.Schedule.Kind {
+	case ScheduleHourly:
+		if !s.Schedule.MinuteSet {
+			s.Schedule.Minute = pick(60)
+			s.Schedule.MinuteSet = true
+		}
+	case ScheduleDaily:
+		if !s.Schedule.HourSet {
+			s.Schedule.Hour = pick(24)
+			s.Schedule.HourSet = true
+		}
+		if !s.Schedule.MinuteSet {
+			s.Schedule.Minute = pick(60)
+			s.Schedule.MinuteSet = true
+		}
+	case ScheduleWeekly:
+		if !s.Schedule.WeekdaySet {
+			s.Schedule.Weekday = 1 + pick(7)
+			s.Schedule.WeekdaySet = true
+		}
+		if !s.Schedule.HourSet {
+			s.Schedule.Hour = pick(24)
+			s.Schedule.HourSet = true
+		}
+		if !s.Schedule.MinuteSet {
+			s.Schedule.Minute = pick(60)
+			s.Schedule.MinuteSet = true
+		}
+	}
+	return nil
+}
+
+func (s Spec) scheduleSeed() ([32]byte, error) {
+	type envPair struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	type scheduleSeed struct {
+		Kind            ScheduleKind `json:"kind"`
+		IntervalMinutes *int         `json:"interval_minutes,omitempty"`
+		Minute          *int         `json:"minute,omitempty"`
+		Hour            *int         `json:"hour,omitempty"`
+		Weekday         *int         `json:"weekday,omitempty"`
+		Day             *int         `json:"day,omitempty"`
+		Month           *int         `json:"month,omitempty"`
+	}
+	type seedSpec struct {
+		Name         string      `json:"name"`
+		Label        string      `json:"label"`
+		Target       Target      `json:"target"`
+		Command      string      `json:"command,omitempty"`
+		Args         []string    `json:"args,omitempty"`
+		ShellCommand string      `json:"shell_command,omitempty"`
+		WorkingDir   string      `json:"working_dir,omitempty"`
+		Environment  []envPair   `json:"environment,omitempty"`
+		Schedule     scheduleSeed `json:"schedule"`
+		Trigger      TriggerKind `json:"trigger,omitempty"`
+		WatchPaths   []string    `json:"watch_paths,omitempty"`
+		Enabled      bool        `json:"enabled"`
+	}
+
+	keys := make([]string, 0, len(s.Environment))
+	for key := range s.Environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	env := make([]envPair, 0, len(keys))
+	for _, key := range keys {
+		env = append(env, envPair{Key: key, Value: s.Environment[key]})
+	}
+	seedSchedule := scheduleSeed{Kind: s.Schedule.Kind}
+	if s.Schedule.IntervalSet {
+		seedSchedule.IntervalMinutes = &s.Schedule.IntervalMinutes
+	}
+	if s.Schedule.MinuteSet {
+		seedSchedule.Minute = &s.Schedule.Minute
+	}
+	if s.Schedule.HourSet {
+		seedSchedule.Hour = &s.Schedule.Hour
+	}
+	if s.Schedule.WeekdaySet {
+		seedSchedule.Weekday = &s.Schedule.Weekday
+	}
+	if s.Schedule.DaySet {
+		seedSchedule.Day = &s.Schedule.Day
+	}
+	if s.Schedule.MonthSet {
+		seedSchedule.Month = &s.Schedule.Month
+	}
+
+	payload, err := json.Marshal(seedSpec{
+		Name:         s.Name,
+		Label:        s.Label,
+		Target:       s.Target,
+		Command:      s.Command,
+		Args:         s.Args,
+		ShellCommand: s.ShellCommand,
+		WorkingDir:   s.WorkingDir,
+		Environment:  env,
+		Schedule:     seedSchedule,
+		Trigger:      s.Trigger,
+		WatchPaths:   s.WatchPaths,
+		Enabled:      s.Enabled,
+	})
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(payload), nil
 }
 
 func (s *Spec) normalizeTrigger() error {

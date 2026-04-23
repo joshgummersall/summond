@@ -153,36 +153,42 @@ func applyField(spec *job.Spec, key, raw string) error {
 			return err
 		}
 		spec.Schedule.IntervalMinutes = value
+		spec.Schedule.IntervalSet = true
 	case "minute":
 		value, err := parseInt(raw)
 		if err != nil {
 			return err
 		}
 		spec.Schedule.Minute = value
+		spec.Schedule.MinuteSet = true
 	case "hour":
 		value, err := parseInt(raw)
 		if err != nil {
 			return err
 		}
 		spec.Schedule.Hour = value
+		spec.Schedule.HourSet = true
 	case "weekday":
 		value, err := parseInt(raw)
 		if err != nil {
 			return err
 		}
 		spec.Schedule.Weekday = value
+		spec.Schedule.WeekdaySet = true
 	case "day":
 		value, err := parseInt(raw)
 		if err != nil {
 			return err
 		}
 		spec.Schedule.Day = value
+		spec.Schedule.DaySet = true
 	case "month":
 		value, err := parseInt(raw)
 		if err != nil {
 			return err
 		}
 		spec.Schedule.Month = value
+		spec.Schedule.MonthSet = true
 	case "stdout_path":
 		value, err := parseString(raw)
 		if err != nil {
