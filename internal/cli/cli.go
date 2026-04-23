@@ -566,8 +566,8 @@ func (a *App) runInspect(args []string) error {
 		return err
 	}
 	spec := managed.spec
-	_, err = fmt.Fprintf(a.stdout, "name: %s\nlabel: %s\ntarget: %s\ntrigger: %s\nenabled: %t\nplist: %s\nstdout: %s\nstderr: %s\nruntime: %s\nstatus: %s\nruns: %d (success=%d failure=%d)\n",
-		spec.Name, spec.Label, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled, spec.PlistPath, spec.StdoutPath, spec.StderrPath, spec.RuntimeBinaryPath, describeLastRunStatus(spec), spec.RunCount, spec.SuccessCount, spec.FailureCount)
+	_, err = fmt.Fprintf(a.stdout, "name: %s\nlabel: %s\ntarget: %s\ntrigger: %s\nenabled: %t\nstatus: %s\nruns: %d (success=%d failure=%d)\n",
+		spec.Name, spec.Label, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled, describeLastRunStatus(spec), spec.RunCount, spec.SuccessCount, spec.FailureCount)
 	if err != nil {
 		return err
 	}
