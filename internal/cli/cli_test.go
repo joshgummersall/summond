@@ -23,6 +23,7 @@ type fakeRunner struct {
 	bootoutErr   map[string]error
 	printErr     map[string]error
 	printText    map[string]string
+	printCalls   map[string]int
 }
 
 func (f *fakeRunner) Bootstrap(spec job.Spec) error {
@@ -56,8 +57,12 @@ func (f *fakeRunner) Stop(spec job.Spec) error {
 }
 
 func (f *fakeRunner) Print(spec job.Spec) (string, error) {
+	if f.printCalls == nil {
+		f.printCalls = map[string]int{}
+	}
+	f.printCalls[spec.Name]++
 	if f.printErr != nil {
-		if err, ok := f.printErr[spec.Name]; ok {
+		if err, ok := f.printErr[spec.Name]; ok && f.printCalls[spec.Name] == 1 {
 			return "", err
 		}
 	}
@@ -343,7 +348,7 @@ func TestApplyDefaultsToSummondTomlInWorkingDirectory(t *testing.T) {
 	}
 }
 
-func TestApplyReportsBootstrapWarningsButSucceeds(t *testing.T) {
+func TestApplyFailsWhenBootstrapFails(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -364,7 +369,9 @@ func TestApplyReportsBootstrapWarningsButSucceeds(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	err := app.Run([]string{"apply", configPath})
+	var exitErr ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("apply error = %v", err)
 	}
 	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "cleanup" {
@@ -373,7 +380,7 @@ func TestApplyReportsBootstrapWarningsButSucceeds(t *testing.T) {
 	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "cleanup" {
 		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
 	}
-	if got := stdout.String(); got != "applied 1 job(s)\n" {
+	if got := stdout.String(); got != "applied 0 job(s)\nfailed 1 job(s):\n- cleanup: bootstrap failed: launchctl bootstrap failed\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 	if _, err := app.store.Load("cleanup"); err != nil {
@@ -416,7 +423,7 @@ func TestApplySkipsBootoutWhenServiceIsMissing(t *testing.T) {
 	}
 }
 
-func TestApplyReportsBootoutWarningsButSucceeds(t *testing.T) {
+func TestApplyFailsWhenBootoutFails(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -437,13 +444,15 @@ func TestApplyReportsBootoutWarningsButSucceeds(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	err := app.Run([]string{"apply", configPath})
+	var exitErr ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("apply error = %v", err)
 	}
 	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "cleanup" {
 		t.Fatalf("bootedOut = %#v", runner.bootedOut)
 	}
-	if got := stdout.String(); got != "applied 1 job(s)\n" {
+	if got := stdout.String(); got != "applied 0 job(s)\nfailed 1 job(s):\n- cleanup: bootout before bootstrap failed: launchctl bootout failed\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 	if _, err := app.store.Load("cleanup"); err != nil {
@@ -451,7 +460,7 @@ func TestApplyReportsBootoutWarningsButSucceeds(t *testing.T) {
 	}
 }
 
-func TestApplyReportsVerificationWarningsButSucceeds(t *testing.T) {
+func TestApplyFailsWhenVerificationFails(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -472,10 +481,13 @@ func TestApplyReportsVerificationWarningsButSucceeds(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	err := app.Run([]string{"apply", configPath})
+	var exitErr ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("apply error = %v", err)
 	}
-	if got := stdout.String(); got != "applied 1 job(s)\n" {
+	got := stdout.String()
+	if !strings.Contains(got, "applied 0 job(s)\nfailed 1 job(s):\n- cleanup: loaded job verification failed: missing ") {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -504,7 +516,10 @@ func TestApplyUsesChecksumForVerificationWhenAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFile() error = %v", err)
 	}
-	installed, err := app.store.Install(specs[0])
+	spec := specs[0]
+	spec.EnvironmentFilePath = app.store.EnvFilePath()
+	spec.RuntimeBinaryPath = app.store.RuntimeBinaryPath()
+	installed, err := app.store.Install(spec)
 	if err != nil {
 		t.Fatalf("Install() error = %v", err)
 	}
@@ -514,7 +529,7 @@ func TestApplyUsesChecksumForVerificationWhenAvailable(t *testing.T) {
 	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
-	if got := stdout.String(); strings.Contains(got, "warning: cleanup: loaded job verification failed:") {
+	if got := stdout.String(); got != "applied 1 job(s)\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 }

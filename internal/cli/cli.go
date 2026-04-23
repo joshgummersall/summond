@@ -353,41 +353,52 @@ func (a *App) runApply(args []string) error {
 	if err != nil {
 		return err
 	}
-	var runtimeWarnings []string
 	agentRuntimePath, err := a.store.PrepareRuntimeBinary(runtimeSource)
 	if err != nil {
 		return err
 	}
 	daemonRuntimePath := a.daemonStore.RuntimeBinaryPath()
 	envFilePath := a.store.EnvFilePath()
+	applied := 0
+	var failures []string
 	for _, spec := range specs {
 		spec.EnvironmentFilePath = envFilePath
 		if spec.Target == job.TargetDaemon {
 			spec.RuntimeBinaryPath = daemonRuntimePath
 			installedSpec, applyErr := a.applyDaemonSpec(spec, runtimeSource)
 			if applyErr != nil {
-				return applyErr
+				failures = append(failures, fmt.Sprintf("%s: %v", spec.Name, applyErr))
+				continue
 			}
-			if warning := a.reconcileDaemonRuntime(installedSpec); warning != "" {
-				runtimeWarnings = append(runtimeWarnings, warning)
+			if err := a.reconcileDaemonRuntime(installedSpec); err != nil {
+				failures = append(failures, fmt.Sprintf("%s: %v", spec.Name, err))
+				continue
 			}
+			applied++
 			continue
 		}
 		spec.RuntimeBinaryPath = agentRuntimePath
-		installedSpec, warning, applyErr := a.applySpec(a.store, spec)
+		installedSpec, applyErr := a.applySpec(a.store, spec)
 		if applyErr != nil {
-			return applyErr
-		}
-		if warning != "" {
-			runtimeWarnings = append(runtimeWarnings, warning)
+			failures = append(failures, fmt.Sprintf("%s: %v", spec.Name, applyErr))
+			continue
 		}
 		_ = installedSpec
+		applied++
 	}
-	if _, err := fmt.Fprintf(a.stdout, "applied %d job(s)\n", len(specs)); err != nil {
+	if _, err := fmt.Fprintf(a.stdout, "applied %d job(s)\n", applied); err != nil {
 		return err
 	}
-	for _, warning := range runtimeWarnings {
-		a.logger.Info("apply warning", "warning", warning)
+	if len(failures) > 0 {
+		if _, err := fmt.Fprintf(a.stdout, "failed %d job(s):\n", len(failures)); err != nil {
+			return err
+		}
+		for _, failure := range failures {
+			if _, err := fmt.Fprintf(a.stdout, "- %s\n", failure); err != nil {
+				return err
+			}
+		}
+		return ExitError{Code: 1}
 	}
 	if len(orphanedSpecs) > 0 {
 		pruned, err := a.pruneManagedSpecs(orphanedSpecs, *prune)
@@ -400,7 +411,7 @@ func (a *App) runApply(args []string) error {
 			}
 		}
 	}
-	a.logger.Info("apply completed", "jobs", len(specs), "warnings", len(runtimeWarnings))
+	a.logger.Info("apply completed", "jobs", applied)
 	return nil
 }
 
@@ -1048,31 +1059,31 @@ func (a *App) environmentFilePath(spec job.Spec) string {
 	return a.store.EnvFilePath()
 }
 
-func (a *App) applySpec(store *state.Store, spec job.Spec) (job.Spec, string, error) {
+func (a *App) applySpec(store *state.Store, spec job.Spec) (job.Spec, error) {
 	a.logger.Debug("reconciling job", "name", spec.Name, "target", spec.Target, "trigger", spec.Trigger, "schedule", spec.Schedule.Kind)
 	installed, err := store.Install(spec)
 	if err != nil {
-		return job.Spec{}, "", err
+		return job.Spec{}, err
 	}
 	if loaded, err := a.isLoaded(installed); err != nil {
 		a.logger.Debug("load-state check failed", "name", installed.Name, "error", err)
-		return installed, fmt.Sprintf("%s: load-state check failed: %v", installed.Name, err), nil
+		return installed, fmt.Errorf("load-state check failed: %w", err)
 	} else if loaded {
 		a.logger.Debug("job already loaded, bootout before bootstrap", "name", installed.Name)
 		if err := a.runner.Bootout(installed); err != nil {
 			a.logger.Debug("bootout before bootstrap failed", "name", installed.Name, "error", err)
-			return installed, fmt.Sprintf("%s: bootout before bootstrap failed: %v", installed.Name, err), nil
+			return installed, fmt.Errorf("bootout before bootstrap failed: %w", err)
 		}
 	}
 	if err := a.runner.Bootstrap(installed); err != nil {
 		a.logger.Debug("bootstrap failed", "name", installed.Name, "error", err)
-		return installed, fmt.Sprintf("%s: bootstrap failed: %v", installed.Name, err), nil
+		return installed, fmt.Errorf("bootstrap failed: %w", err)
 	}
 	if err := a.verifyLoadedJob(installed); err != nil {
 		a.logger.Debug("loaded job verification failed", "name", installed.Name, "error", err)
-		return installed, fmt.Sprintf("%s: loaded job verification failed: %v", installed.Name, err), nil
+		return installed, fmt.Errorf("loaded job verification failed: %w", err)
 	}
-	return installed, "", nil
+	return installed, nil
 }
 
 func (a *App) applyDaemonSpec(spec job.Spec, runtimeSource string) (job.Spec, error) {
@@ -1156,9 +1167,9 @@ func daemonRequiredDirs(store *state.Store, spec job.Spec) []string {
 	return unique
 }
 
-func (a *App) reconcileDaemonRuntime(spec job.Spec) string {
+func (a *App) reconcileDaemonRuntime(spec job.Spec) error {
 	_ = spec
-	return ""
+	return nil
 }
 
 func (a *App) removeDaemonSpecWithSudo(spec job.Spec) error {
