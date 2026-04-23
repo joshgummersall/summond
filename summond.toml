@@ -1,0 +1,7 @@
+[jobs.hello-world]
+command = "/bin/echo"
+args = ["hello", "world"]
+target = "agent"
+trigger = "on_change"
+watch_paths = ["summond.toml"]
+enabled = true

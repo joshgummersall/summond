@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -69,6 +70,7 @@ func LoadFile(path string) ([]job.Spec, error) {
 		return nil, err
 	}
 	for i := range specs {
+		resolvePaths(&specs[i], filepath.Dir(path))
 		if err := specs[i].Normalize(); err != nil {
 			return nil, fmt.Errorf("job %s: %w", specs[i].Name, err)
 		}
@@ -122,6 +124,12 @@ func applyField(spec *job.Spec, key, raw string) error {
 			return err
 		}
 		spec.Schedule.Kind = job.ScheduleKind(value)
+	case "trigger":
+		value, err := parseString(raw)
+		if err != nil {
+			return err
+		}
+		spec.Trigger = job.TriggerKind(value)
 	case "args":
 		value, err := parseStringArray(raw)
 		if err != nil {
@@ -182,10 +190,26 @@ func applyField(spec *job.Spec, key, raw string) error {
 			return err
 		}
 		spec.StderrPath = value
+	case "watch_paths":
+		value, err := parseStringArray(raw)
+		if err != nil {
+			return err
+		}
+		spec.WatchPaths = value
 	default:
 		return fmt.Errorf("unsupported key %q", key)
 	}
 	return nil
+}
+
+func resolvePaths(spec *job.Spec, baseDir string) {
+	for i, path := range spec.WatchPaths {
+		if filepath.IsAbs(path) {
+			spec.WatchPaths[i] = filepath.Clean(path)
+			continue
+		}
+		spec.WatchPaths[i] = filepath.Clean(filepath.Join(baseDir, path))
+	}
 }
 
 func parseString(value string) (string, error) {

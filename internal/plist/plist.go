@@ -44,6 +44,9 @@ func Render(spec job.Spec) ([]byte, error) {
 		buf.WriteString("  </dict>\n")
 	}
 	writeSchedule(&buf, spec.Schedule)
+	if len(spec.WatchPaths) > 0 {
+		writeStringArray(&buf, "WatchPaths", spec.WatchPaths)
+	}
 	if spec.StdoutPath != "" {
 		writeString(&buf, "StandardOutPath", spec.StdoutPath)
 	}
@@ -164,6 +167,15 @@ func writeBool(buf *bytes.Buffer, key string, value bool) {
 
 func writeArrayString(buf *bytes.Buffer, value string) {
 	buf.WriteString(fmt.Sprintf("    <string>%s</string>\n", xmlEscape(value)))
+}
+
+func writeStringArray(buf *bytes.Buffer, key string, values []string) {
+	buf.WriteString(fmt.Sprintf("  <key>%s</key>\n", xmlEscape(key)))
+	buf.WriteString("  <array>\n")
+	for _, value := range values {
+		writeArrayString(buf, value)
+	}
+	buf.WriteString("  </array>\n")
 }
 
 func indentString(indent int) string {

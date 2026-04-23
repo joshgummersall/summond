@@ -73,6 +73,10 @@ func (f *fakeRunner) Print(spec job.Spec) (string, error) {
 	b.WriteString("\n")
 	b.WriteString(spec.StderrPath)
 	b.WriteString("\n")
+	for _, path := range spec.WatchPaths {
+		b.WriteString(path)
+		b.WriteString("\n")
+	}
 	if spec.ShellCommand != "" {
 		b.WriteString(spec.ShellCommand)
 		b.WriteString("\n")
@@ -126,7 +130,7 @@ func TestAddAndList(t *testing.T) {
 	if err := app.Run([]string{"list"}); err != nil {
 		t.Fatalf("list error = %v", err)
 	}
-	if got := stdout.String(); !strings.Contains(got, "backup\tagent\thourly\tenabled=true") {
+	if got := stdout.String(); !strings.Contains(got, "backup\tagent\thourly at minute 15\tenabled=true") {
 		t.Fatalf("unexpected list output: %q", got)
 	}
 }
@@ -309,6 +313,38 @@ func TestApplyUsesChecksumForVerificationWhenAvailable(t *testing.T) {
 		t.Fatalf("apply error = %v", err)
 	}
 	if got := stdout.String(); strings.Contains(got, "warning: cleanup: loaded job verification failed:") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestInspectOnChangeJobShowsWatchPaths(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.watcher]",
+		`command = "/bin/echo"`,
+		`args = ["watch"]`,
+		`target = "agent"`,
+		`trigger = "on_change"`,
+		`watch_paths = ["/tmp/watch.txt"]`,
+		"enabled = true",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	stdout.Reset()
+	if err := app.Run([]string{"inspect", "watcher"}); err != nil {
+		t.Fatalf("inspect error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "trigger: on_change") || !strings.Contains(got, "watch_paths: /tmp/watch.txt") {
 		t.Fatalf("stdout = %q", got)
 	}
 }

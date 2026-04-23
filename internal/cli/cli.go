@@ -383,6 +383,7 @@ func (a *App) verifyLoadedJob(spec job.Spec) error {
 		return nil
 	}
 	expected := []string{spec.Label, spec.StdoutPath, spec.StderrPath}
+	expected = append(expected, spec.WatchPaths...)
 	if spec.ShellCommand != "" {
 		expected = append(expected, spec.ShellCommand)
 	} else {
@@ -413,7 +414,7 @@ func (a *App) runList(args []string) error {
 		return err
 	}
 	for _, spec := range specs {
-		_, err := fmt.Fprintf(a.stdout, "%s\t%s\t%s\tenabled=%t\n", spec.Name, spec.Target, spec.Schedule.Kind, spec.Enabled)
+		_, err := fmt.Fprintf(a.stdout, "%s\t%s\t%s\tenabled=%t\n", spec.Name, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled)
 		if err != nil {
 			return err
 		}
@@ -429,10 +430,15 @@ func (a *App) runInspect(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(a.stdout, "name: %s\nlabel: %s\ntarget: %s\nschedule: %s\nenabled: %t\nplist: %s\nstdout: %s\nstderr: %s\n",
-		spec.Name, spec.Label, spec.Target, describeSchedule(spec.Schedule), spec.Enabled, spec.PlistPath, spec.StdoutPath, spec.StderrPath)
+	_, err = fmt.Fprintf(a.stdout, "name: %s\nlabel: %s\ntarget: %s\ntrigger: %s\nenabled: %t\nplist: %s\nstdout: %s\nstderr: %s\n",
+		spec.Name, spec.Label, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled, spec.PlistPath, spec.StdoutPath, spec.StderrPath)
 	if err != nil {
 		return err
+	}
+	if len(spec.WatchPaths) > 0 {
+		if _, err := fmt.Fprintf(a.stdout, "watch_paths: %s\n", strings.Join(spec.WatchPaths, ", ")); err != nil {
+			return err
+		}
 	}
 	if spec.Command != "" {
 		_, err = fmt.Fprintf(a.stdout, "command: %s %s\n", spec.Command, strings.Join(spec.Args, " "))
@@ -605,6 +611,13 @@ func describeSchedule(schedule job.Schedule) string {
 	default:
 		return string(schedule.Kind)
 	}
+}
+
+func describeTriggerOrSchedule(spec job.Spec) string {
+	if spec.Trigger == job.TriggerOnChange {
+		return "on_change"
+	}
+	return describeSchedule(spec.Schedule)
 }
 
 type multiValueFlag []string

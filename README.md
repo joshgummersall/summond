@@ -87,6 +87,20 @@ summond logs cleanup
 summond logs --follow cleanup
 ```
 
+## File Watch Triggers
+
+Use `trigger = "on_change"` with `watch_paths` to run a job when files change. Relative `watch_paths` are resolved against the TOML file being applied.
+
+```toml
+[jobs.watcher]
+command = "/bin/echo"
+args = ["config changed"]
+target = "agent"
+trigger = "on_change"
+watch_paths = ["../fixtures/input.txt"]
+enabled = true
+```
+
 ## Supported schedules
 
 - `hourly` with `--minute`

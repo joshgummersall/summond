@@ -37,3 +37,29 @@ func TestRenderIntervalPlist(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderOnChangePlist(t *testing.T) {
+	data, err := Render(job.Spec{
+		Name:       "watcher",
+		Target:     job.TargetAgent,
+		Command:    "/bin/echo",
+		Args:       []string{"watch"},
+		Trigger:    job.TriggerOnChange,
+		WatchPaths: []string{"/tmp/watch.txt"},
+		Enabled:    true,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(data)
+	for _, needle := range []string{
+		"<key>WatchPaths</key>",
+		"<string>/tmp/watch.txt</string>",
+		"<string>/bin/echo</string>",
+		"<string>watch</string>",
+	} {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("plist missing %q: %s", needle, text)
+		}
+	}
+}

@@ -73,3 +73,17 @@ func TestSpecChecksumStableAcrossMapOrder(t *testing.T) {
 		t.Fatalf("checksums differ: %q != %q", sumA, sumB)
 	}
 }
+
+func TestNormalizeOnChangeTriggerWithoutSchedule(t *testing.T) {
+	spec := Spec{
+		Name:       "watcher",
+		Target:     TargetAgent,
+		Command:    "/bin/echo",
+		Trigger:    TriggerOnChange,
+		WatchPaths: []string{"/tmp/watch.txt"},
+		Enabled:    true,
+	}
+	if err := spec.Normalize(); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+}

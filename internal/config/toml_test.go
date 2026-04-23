@@ -37,3 +37,35 @@ MODE = "fast"
 		t.Fatalf("MODE = %q, want %q", got, want)
 	}
 }
+
+func TestLoadFileResolvesRelativeWatchPaths(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "configs", "summond.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	data := []byte(`
+[jobs.watcher]
+command = "/bin/echo"
+args = ["watch"]
+target = "agent"
+trigger = "on_change"
+watch_paths = ["../data/input.txt", "/tmp/absolute.txt"]
+enabled = true
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	specs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	got := specs[0].WatchPaths
+	want0 := filepath.Clean(filepath.Join(filepath.Dir(path), "../data/input.txt"))
+	if got[0] != want0 {
+		t.Fatalf("WatchPaths[0] = %q, want %q", got[0], want0)
+	}
+	if got[1] != "/tmp/absolute.txt" {
+		t.Fatalf("WatchPaths[1] = %q", got[1])
+	}
+}
