@@ -527,53 +527,14 @@ func (a *App) confirm(prompt string) (bool, error) {
 }
 
 func (a *App) printInstallSummary(result bootstrap.Result) error {
-	lines := []string{
-		fmt.Sprintf("config: %s (%s)", result.ConfigPath, result.ConfigStatus),
-		fmt.Sprintf("newsyslog source: %s (%s)", result.NewsyslogGeneratedPath, result.NewsyslogGenerateStatus),
-	}
-	if result.NewsyslogGenerateStatus != "skipped" {
-		status := "not installed"
-		if result.NewsyslogInstalled {
-			status = "installed"
-			if result.UsedSudo {
-				status += " via sudo"
-			}
-		}
-		lines = append(lines, fmt.Sprintf("newsyslog install: %s -> %s (%s)", result.NewsyslogGeneratedPath, result.NewsyslogInstallPath, status))
-	}
-	lines = append(lines, fmt.Sprintf("next: edit %s and run summond apply -f %s", result.ConfigPath, result.ConfigPath))
-	for _, line := range lines {
-		if _, err := fmt.Fprintln(a.stdout, line); err != nil {
-			return err
-		}
-	}
+	_ = result
 	return nil
 }
 
 func (a *App) printUninstallSummary(result bootstrap.UninstallResult, removedJobs int, hadPrivileged bool) error {
-	lines := []string{
-		fmt.Sprintf("jobs removed: %d", removedJobs),
-		fmt.Sprintf("config: %s (%s)", result.ConfigPath, result.ConfigStatus),
-		fmt.Sprintf("newsyslog source: %s (%s)", result.NewsyslogGeneratedPath, result.NewsyslogGenerateStatus),
-	}
-	status := result.NewsyslogInstallStatus
-	if status == "" {
-		if hadPrivileged {
-			status = "pending sudo removal"
-		} else {
-			status = "absent"
-		}
-	}
-	if result.UsedSudo && status == "removed" {
-		status += " via sudo"
-	}
-	lines = append(lines, fmt.Sprintf("newsyslog install: %s (%s)", result.NewsyslogInstallPath, status))
-	lines = append(lines, fmt.Sprintf("state home: %s (removed)", a.store.Paths().Home))
-	for _, line := range lines {
-		if _, err := fmt.Fprintln(a.stdout, line); err != nil {
-			return err
-		}
-	}
+	_ = result
+	_ = removedJobs
+	_ = hadPrivileged
 	return nil
 }
 

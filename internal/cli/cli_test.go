@@ -363,7 +363,7 @@ func TestInstallCreatesStarterFiles(t *testing.T) {
 	if err := app.Run([]string{"install", "--install-newsyslog=false"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
-	if got := stdout.String(); !strings.Contains(got, "config: ") || !strings.Contains(got, "newsyslog source: ") {
+	if got := stdout.String(); got != "" {
 		t.Fatalf("unexpected output: %q", got)
 	}
 }
@@ -388,7 +388,7 @@ func TestInstallPermissionDeniedCanUseSudoRetry(t *testing.T) {
 	if len(installer.sudoCalls) != 1 {
 		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
 	}
-	if got := stdout.String(); !strings.Contains(got, "installed via sudo") {
+	if got := stdout.String(); !strings.Contains(got, "newsyslog install requires sudo. Retry with sudo? [Y/n]: ") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 }
@@ -445,7 +445,7 @@ func TestUninstallRemovesManagedArtifacts(t *testing.T) {
 	if err := app.Run([]string{"uninstall", "--yes"}); err != nil {
 		t.Fatalf("uninstall error = %v", err)
 	}
-	if got := stdout.String(); !strings.Contains(got, "jobs removed: 1") || !strings.Contains(got, "state home: ") {
+	if got := stdout.String(); got != "" {
 		t.Fatalf("unexpected output: %q", got)
 	}
 	if _, err := os.Stat(app.store.Paths().Home); !os.IsNotExist(err) {
