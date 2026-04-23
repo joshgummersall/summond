@@ -91,6 +91,8 @@ func (a *App) Run(args []string) error {
 		return a.runUninstall(remaining[1:])
 	case "apply":
 		return a.runApply(remaining[1:])
+	case "prune":
+		return a.runPrune(remaining[1:])
 	case "list":
 		return a.runList(remaining[1:])
 	case "inspect":
@@ -286,13 +288,9 @@ func (a *App) runApply(args []string) error {
 		}
 		return err
 	}
-	filePath := "summond.toml"
-	switch len(fs.Args()) {
-	case 0:
-	case 1:
-		filePath = fs.Args()[0]
-	default:
-		return errors.New("apply accepts at most one config path")
+	filePath, err := optionalConfigPath(fs.Args(), "apply")
+	if err != nil {
+		return err
 	}
 	installed, err := a.boot.IsInstalled()
 	if err != nil {
@@ -314,6 +312,10 @@ func (a *App) runApply(args []string) error {
 		return err
 	}
 	a.logger.Debug("loaded config", "path", filePath, "jobs", len(specs))
+	orphanedSpecs, err := a.orphanedManagedJobs(specs)
+	if err != nil {
+		return err
+	}
 	var runtimeWarnings []string
 	for _, spec := range specs {
 		spec.RuntimeBinaryPath = runtimePath
@@ -358,8 +360,89 @@ func (a *App) runApply(args []string) error {
 			return err
 		}
 	}
+	if len(orphanedSpecs) > 0 {
+		names := make([]string, 0, len(orphanedSpecs))
+		for _, spec := range orphanedSpecs {
+			names = append(names, spec.Name)
+		}
+		if _, err := fmt.Fprintf(a.stdout, "warning: orphaned managed jobs not present in %s: %s\n", filePath, strings.Join(names, ", ")); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(a.stdout, "warning: run 'summond prune' to remove them"); err != nil {
+			return err
+		}
+	}
 	a.logger.Info("apply completed", "jobs", len(specs), "warnings", len(runtimeWarnings))
 	return nil
+}
+
+func (a *App) runPrune(args []string) error {
+	a.logger.Debug("prune start")
+	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {
+		printCommandUsage(a.stdout, "prune")
+	}
+	yes := fs.Bool("yes", false, "skip confirmation")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	filePath, err := optionalConfigPath(fs.Args(), "prune")
+	if err != nil {
+		return err
+	}
+	installed, err := a.boot.IsInstalled()
+	if err != nil {
+		return err
+	}
+	if !installed {
+		return errors.New("prune requires install to be run first")
+	}
+
+	desiredSpecs, err := config.LoadFile(filePath)
+	if err != nil {
+		return err
+	}
+	pruneSpecs, err := a.orphanedManagedJobs(desiredSpecs)
+	if err != nil {
+		return err
+	}
+	if len(pruneSpecs) == 0 {
+		_, err := fmt.Fprintln(a.stdout, "no jobs to prune")
+		return err
+	}
+
+	if _, err := fmt.Fprintln(a.stdout, "jobs to prune:"); err != nil {
+		return err
+	}
+	for _, spec := range pruneSpecs {
+		if _, err := fmt.Fprintf(a.stdout, "- %s\n", spec.Name); err != nil {
+			return err
+		}
+	}
+
+	if !*yes {
+		approved, err := a.confirm("prune will remove these Summond-managed jobs. Continue? [y/N]: ")
+		if err != nil {
+			return err
+		}
+		if !approved {
+			_, err = fmt.Fprintln(a.stdout, "prune cancelled")
+			return err
+		}
+	}
+
+	for _, spec := range pruneSpecs {
+		_ = a.runner.Bootout(spec)
+		if _, err := a.store.Remove(spec.Name); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintf(a.stdout, "pruned %d job(s)\n", len(pruneSpecs))
+	return err
 }
 
 func (a *App) isLoaded(spec job.Spec) (bool, error) {
@@ -644,6 +727,7 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  install                    Scaffold config and newsyslog setup")
 	fmt.Fprintln(stdout, "  uninstall                  Remove Summond-managed jobs and setup")
 	fmt.Fprintln(stdout, "  apply [file]               Apply jobs from a TOML file")
+	fmt.Fprintln(stdout, "  prune [flags] [file]       Remove managed jobs missing from a TOML file")
 	fmt.Fprintln(stdout, "  list                       List managed jobs")
 	fmt.Fprintln(stdout, "  inspect <name>             Show job details")
 	fmt.Fprintln(stdout, "  remove <name>              Remove a managed job")
@@ -676,6 +760,15 @@ func printCommandUsage(stdout io.Writer, command string) {
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Apply jobs from a TOML config file.")
 		fmt.Fprintln(stdout, "If [file] is omitted, reads ./summond.toml.")
+	case "prune":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond prune [flags] [file]")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Remove managed jobs that are missing from a TOML config file.")
+		fmt.Fprintln(stdout, "If [file] is omitted, reads ./summond.toml.")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Flags:")
+		fmt.Fprintln(stdout, "  --yes                      Automatically accept prompts")
 	case "list":
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond list")
@@ -726,6 +819,36 @@ func parseGlobalFlags(args []string) (int, []string, error) {
 		}
 	}
 	return verbosity, args, nil
+}
+
+func optionalConfigPath(args []string, command string) (string, error) {
+	filePath := "summond.toml"
+	switch len(args) {
+	case 0:
+		return filePath, nil
+	case 1:
+		return args[0], nil
+	default:
+		return "", fmt.Errorf("%s accepts at most one config path", command)
+	}
+}
+
+func (a *App) orphanedManagedJobs(desiredSpecs []job.Spec) ([]job.Spec, error) {
+	desired := make(map[string]struct{}, len(desiredSpecs))
+	for _, spec := range desiredSpecs {
+		desired[spec.Name] = struct{}{}
+	}
+	existingSpecs, err := a.store.List()
+	if err != nil {
+		return nil, err
+	}
+	var orphaned []job.Spec
+	for _, spec := range existingSpecs {
+		if _, ok := desired[spec.Name]; !ok {
+			orphaned = append(orphaned, spec)
+		}
+	}
+	return orphaned, nil
 }
 
 func (a *App) configureLogger(verbosity int) {

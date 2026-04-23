@@ -113,6 +113,20 @@ func TestHelpApply(t *testing.T) {
 	}
 }
 
+func TestHelpPrune(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"prune", "--help"}); err != nil {
+		t.Fatalf("prune --help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond prune [flags] [file]") || !strings.Contains(got, "reads ./summond.toml") || !strings.Contains(got, "--yes") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
 func TestHelpInstall(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
@@ -182,6 +196,31 @@ func TestApplyFailsWithoutInstall(t *testing.T) {
 	err = app.Run([]string{"apply"})
 	if err == nil || err.Error() != "apply requires install to be run first" {
 		t.Fatalf("apply error = %v", err)
+	}
+}
+
+func TestPruneFailsWithoutInstall(t *testing.T) {
+	app := newRawTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	wd := testHome(t)
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(wd); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
+	if err := os.WriteFile("summond.toml", []byte("[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err = app.Run([]string{"prune"})
+	if err == nil || err.Error() != "prune requires install to be run first" {
+		t.Fatalf("prune error = %v", err)
 	}
 }
 
@@ -485,6 +524,186 @@ func TestApplyUsesChecksumForVerificationWhenAvailable(t *testing.T) {
 		t.Fatalf("apply error = %v", err)
 	}
 	if got := stdout.String(); strings.Contains(got, "warning: cleanup: loaded job verification failed:") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestApplyWarnsAboutOrphanedManagedJobs(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	initialConfigPath := filepath.Join(testHome(t), "before.toml")
+	initialData := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+		"",
+		"[jobs.sync]",
+		`command = "/bin/echo"`,
+		`schedule = "hourly"`,
+		"minute = 15",
+	}, "\n")
+	if err := os.WriteFile(initialConfigPath, []byte(initialData), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", initialConfigPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	stdout.Reset()
+
+	updatedConfigPath := filepath.Join(testHome(t), "after.toml")
+	updatedData := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(updatedConfigPath, []byte(updatedData), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := app.Run([]string{"apply", updatedConfigPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "applied 1 job(s)\n") || !strings.Contains(got, "warning: orphaned managed jobs not present in "+updatedConfigPath+": sync\n") || !strings.Contains(got, "warning: run 'summond prune' to remove them\n") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestPruneRemovesManagedJobsMissingFromConfig(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+
+	firstConfigPath := filepath.Join(testHome(t), "before.toml")
+	firstData := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+		"",
+		"[jobs.sync]",
+		`command = "/bin/echo"`,
+		`schedule = "hourly"`,
+		"minute = 15",
+	}, "\n")
+	if err := os.WriteFile(firstConfigPath, []byte(firstData), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", firstConfigPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	stdout.Reset()
+	runner.bootedOut = nil
+
+	pruneConfigPath := filepath.Join(testHome(t), "after.toml")
+	pruneData := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(pruneConfigPath, []byte(pruneData), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := app.Run([]string{"prune", "--yes", pruneConfigPath}); err != nil {
+		t.Fatalf("prune error = %v", err)
+	}
+	if got := stdout.String(); got != "jobs to prune:\n- sync\npruned 1 job(s)\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "sync" {
+		t.Fatalf("bootedOut = %#v", runner.bootedOut)
+	}
+	if _, err := app.store.Load("sync"); err == nil {
+		t.Fatalf("expected sync metadata to be removed")
+	}
+	if _, err := app.store.Load("cleanup"); err != nil {
+		t.Fatalf("expected cleanup metadata to remain, err = %v", err)
+	}
+}
+
+func TestPrunePromptsAndCancelsWithoutYes(t *testing.T) {
+	home := testHome(t)
+	store := state.NewStore(state.Paths{
+		Home:         filepath.Join(home, "managed"),
+		ConfigDir:    filepath.Join(home, "config"),
+		AgentsDir:    filepath.Join(home, "LaunchAgents"),
+		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
+		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
+	})
+	runner := &fakeRunner{}
+	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, runner, bootstrap.NewManager(store.Paths(), &fakeBootstrapInstaller{}))
+	app.priv = &fakePrivilegedOperator{}
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	if err := os.MkdirAll(store.Paths().Home, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(store.Paths().Home, ".installed"), []byte("installed\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	configPath := filepath.Join(home, "current.toml")
+	if err := os.WriteFile(configPath, []byte("[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	stale := job.Spec{Name: "stale", Command: "/bin/echo", Schedule: job.Schedule{Kind: "hourly"}, Target: job.TargetAgent}
+	if _, err := store.Install(stale); err != nil {
+		t.Fatalf("Install(stale) error = %v", err)
+	}
+
+	stdout.Reset()
+	runner.bootedOut = nil
+
+	if err := app.Run([]string{"prune", configPath}); err != nil {
+		t.Fatalf("prune error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "jobs to prune:\n- stale\n") || !strings.Contains(got, "prune will remove these Summond-managed jobs. Continue? [y/N]: ") || !strings.Contains(got, "prune cancelled\n") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if len(runner.bootedOut) != 0 {
+		t.Fatalf("bootedOut = %#v", runner.bootedOut)
+	}
+	if _, err := store.Load("stale"); err != nil {
+		t.Fatalf("expected stale metadata to remain, err = %v", err)
+	}
+}
+
+func TestPruneReportsNoJobsToPrune(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	if err := os.WriteFile(configPath, []byte("[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	stdout.Reset()
+	if err := app.Run([]string{"prune", "--yes", configPath}); err != nil {
+		t.Fatalf("prune error = %v", err)
+	}
+	if got := stdout.String(); got != "no jobs to prune\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 }

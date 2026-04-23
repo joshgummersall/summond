@@ -1,9 +1,5 @@
 [jobs.brew-maintenance]
-shell_command = """
-brew update
-brew upgrade
-brew cleanup
-"""
+shell_command = "brew update && brew upgrade && brew cleanup"
 target = "agent"
 schedule = "weekly"
 enabled = true
