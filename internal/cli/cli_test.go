@@ -108,21 +108,7 @@ func TestHelpApply(t *testing.T) {
 		t.Fatalf("apply --help error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "summond apply [file]") || !strings.Contains(got, "reads ./summond.toml") {
-		t.Fatalf("stdout = %q", got)
-	}
-}
-
-func TestHelpPrune(t *testing.T) {
-	app := newTestApp(t)
-	var stdout bytes.Buffer
-	app.stdout = &stdout
-
-	if err := app.Run([]string{"prune", "--help"}); err != nil {
-		t.Fatalf("prune --help error = %v", err)
-	}
-	got := stdout.String()
-	if !strings.Contains(got, "summond prune [flags] [file]") || !strings.Contains(got, "reads ./summond.toml") || !strings.Contains(got, "--yes") {
+	if !strings.Contains(got, "summond apply [flags] [file]") || !strings.Contains(got, "reads ./summond.toml") || !strings.Contains(got, "--prune") {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -196,31 +182,6 @@ func TestApplyFailsWithoutInstall(t *testing.T) {
 	err = app.Run([]string{"apply"})
 	if err == nil || err.Error() != "apply requires install to be run first" {
 		t.Fatalf("apply error = %v", err)
-	}
-}
-
-func TestPruneFailsWithoutInstall(t *testing.T) {
-	app := newRawTestApp(t)
-	var stdout bytes.Buffer
-	app.stdout = &stdout
-	wd := testHome(t)
-	prevWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd() error = %v", err)
-	}
-	if err := os.Chdir(wd); err != nil {
-		t.Fatalf("Chdir() error = %v", err)
-	}
-	defer func() {
-		_ = os.Chdir(prevWD)
-	}()
-	if err := os.WriteFile("summond.toml", []byte("[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	err = app.Run([]string{"prune"})
-	if err == nil || err.Error() != "prune requires install to be run first" {
-		t.Fatalf("prune error = %v", err)
 	}
 }
 
@@ -528,10 +489,11 @@ func TestApplyUsesChecksumForVerificationWhenAvailable(t *testing.T) {
 	}
 }
 
-func TestApplyWarnsAboutOrphanedManagedJobs(t *testing.T) {
+func TestApplyPromptsAboutOrphanedManagedJobs(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
+	app.stdin = strings.NewReader("n\n")
 
 	initialConfigPath := filepath.Join(testHome(t), "before.toml")
 	initialData := strings.Join([]string{
@@ -575,12 +537,15 @@ func TestApplyWarnsAboutOrphanedManagedJobs(t *testing.T) {
 		t.Fatalf("apply error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "applied 1 job(s)\n") || !strings.Contains(got, "warning: orphaned managed jobs not present in "+updatedConfigPath+": sync\n") || !strings.Contains(got, "warning: run 'summond prune' to remove them\n") {
+	if !strings.Contains(got, "applied 1 job(s)\n") || !strings.Contains(got, "jobs to prune:\n- sync\n") || !strings.Contains(got, "apply will remove these Summond-managed jobs. Continue? [y/N]: ") || !strings.Contains(got, "prune cancelled\n") {
 		t.Fatalf("stdout = %q", got)
+	}
+	if _, err := app.store.Load("sync"); err != nil {
+		t.Fatalf("expected sync metadata to remain, err = %v", err)
 	}
 }
 
-func TestPruneRemovesManagedJobsMissingFromConfig(t *testing.T) {
+func TestApplyPrunesManagedJobsMissingFromConfigWithFlag(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -625,13 +590,13 @@ func TestPruneRemovesManagedJobsMissingFromConfig(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"prune", "--yes", pruneConfigPath}); err != nil {
-		t.Fatalf("prune error = %v", err)
+	if err := app.Run([]string{"apply", "--prune", pruneConfigPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
 	}
-	if got := stdout.String(); got != "jobs to prune:\n- sync\npruned 1 job(s)\n" {
+	if got := stdout.String(); got != "applied 1 job(s)\njobs to prune:\n- sync\npruned 1 job(s)\n" {
 		t.Fatalf("stdout = %q", got)
 	}
-	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "sync" {
+	if !containsString(runner.bootedOut, "sync") {
 		t.Fatalf("bootedOut = %#v", runner.bootedOut)
 	}
 	if _, err := app.store.Load("sync"); err == nil {
@@ -642,7 +607,7 @@ func TestPruneRemovesManagedJobsMissingFromConfig(t *testing.T) {
 	}
 }
 
-func TestPruneRemovesPerJobLogsAndLockFiles(t *testing.T) {
+func TestApplyPrunesPerJobLogsAndLockFiles(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -671,8 +636,8 @@ func TestPruneRemovesPerJobLogsAndLockFiles(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte("group = \"tests\"\n\n[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"prune", "--yes", configPath}); err != nil {
-		t.Fatalf("prune error = %v", err)
+	if err := app.Run([]string{"apply", "--prune", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
 	}
 
 	for _, path := range []string{
@@ -687,7 +652,7 @@ func TestPruneRemovesPerJobLogsAndLockFiles(t *testing.T) {
 	}
 }
 
-func TestPrunePromptsAndCancelsWithoutYes(t *testing.T) {
+func TestApplyPrunePromptCancelsWithoutFlag(t *testing.T) {
 	home := testHome(t)
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
@@ -723,14 +688,15 @@ func TestPrunePromptsAndCancelsWithoutYes(t *testing.T) {
 	stdout.Reset()
 	runner.bootedOut = nil
 
-	if err := app.Run([]string{"prune", configPath}); err != nil {
-		t.Fatalf("prune error = %v", err)
+	app.stdin = strings.NewReader("n\n")
+	if err := app.Run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "jobs to prune:\n- stale\n") || !strings.Contains(got, "prune will remove these Summond-managed jobs. Continue? [y/N]: ") || !strings.Contains(got, "prune cancelled\n") {
+	if !strings.Contains(got, "applied 1 job(s)\n") || !strings.Contains(got, "jobs to prune:\n- stale\n") || !strings.Contains(got, "apply will remove these Summond-managed jobs. Continue? [y/N]: ") || !strings.Contains(got, "prune cancelled\n") {
 		t.Fatalf("stdout = %q", got)
 	}
-	if len(runner.bootedOut) != 0 {
+	if containsString(runner.bootedOut, "stale") {
 		t.Fatalf("bootedOut = %#v", runner.bootedOut)
 	}
 	if _, err := store.Load("stale"); err != nil {
@@ -738,7 +704,7 @@ func TestPrunePromptsAndCancelsWithoutYes(t *testing.T) {
 	}
 }
 
-func TestPruneReportsNoJobsToPrune(t *testing.T) {
+func TestApplyWithPruneReportsNoJobsToPrune(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -752,10 +718,10 @@ func TestPruneReportsNoJobsToPrune(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"prune", "--yes", configPath}); err != nil {
-		t.Fatalf("prune error = %v", err)
+	if err := app.Run([]string{"apply", "--prune", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
 	}
-	if got := stdout.String(); got != "no jobs to prune\n" {
+	if got := stdout.String(); got != "applied 1 job(s)\n" {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -1345,6 +1311,15 @@ type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) {
 	return len(p), nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func testHome(t *testing.T) string {

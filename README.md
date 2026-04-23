@@ -38,10 +38,10 @@ Apply the generated config:
 summond apply
 ```
 
-Prune managed jobs that were removed from the config:
+Apply and automatically remove managed jobs that were removed from the config:
 
 ```sh
-summond prune
+summond apply --prune
 ```
 
 Create an hourly user job directly:
@@ -84,10 +84,10 @@ MODE = "nightly"
 summond apply
 ```
 
-If you later delete jobs from `summond.toml`, remove the orphaned managed jobs and their managed logs/state with:
+If you later delete jobs from `summond.toml`, `summond apply` will prompt to remove the orphaned managed jobs and their managed logs/state. To skip the prompt:
 
 ```sh
-summond prune
+summond apply --prune
 ```
 
 ## Logs
