@@ -84,7 +84,7 @@ MODE = "nightly"
 summond apply
 ```
 
-If you later delete jobs from `summond.toml`, remove the orphaned managed jobs with:
+If you later delete jobs from `summond.toml`, remove the orphaned managed jobs and their managed logs/state with:
 
 ```sh
 summond prune

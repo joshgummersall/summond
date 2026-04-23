@@ -50,10 +50,9 @@ type App struct {
 }
 
 type privilegedOperator interface {
-	CreateDirWithSudo(path string, mode os.FileMode) error
-	InstallFileWithSudo(src string, dst string, mode os.FileMode) error
+	InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string, enabled bool) error
+	RemoveDaemonArtifactsWithSudo(plistPaths []string, metadataPaths []string, home string) error
 	RemovePathWithSudo(path string) error
-	BootstrapDaemonWithSudo(plistPath string) error
 	BootoutDaemonWithSudo(plistPath string) error
 }
 
@@ -112,8 +111,6 @@ func (a *App) Run(args []string) error {
 		return a.runList(remaining[1:])
 	case "inspect":
 		return a.runInspect(remaining[1:])
-	case "remove":
-		return a.runRemove(remaining[1:])
 	case "logs":
 		return a.runLogs(remaining[1:])
 	case "exec":
@@ -246,7 +243,9 @@ func (a *App) runUninstall(args []string) error {
 		}
 		if _, err := managed.store.Remove(spec.Name); err != nil {
 			if spec.Target == job.TargetDaemon && errors.Is(err, os.ErrPermission) {
-				sudoMetadata = appendIfMissing(sudoMetadata, managed.store.MetadataPath(spec.Name))
+				for _, path := range managedCleanupPaths(managed.store, spec) {
+					sudoMetadata = appendIfMissing(sudoMetadata, path)
+				}
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
@@ -284,19 +283,12 @@ func (a *App) runUninstall(args []string) error {
 			return err
 		}
 		if approved {
-			for _, plistPath := range sudoPlists {
-				_ = a.priv.BootoutDaemonWithSudo(plistPath)
-				if err := a.priv.RemovePathWithSudo(plistPath); err != nil {
-					return err
+			if len(sudoPlists) > 0 || len(sudoMetadata) > 0 || needsSudoDaemonHome {
+				daemonHome := ""
+				if needsSudoDaemonHome {
+					daemonHome = a.daemonStore.Paths().Home
 				}
-			}
-			for _, metadataPath := range sudoMetadata {
-				if err := a.priv.RemovePathWithSudo(metadataPath); err != nil {
-					return err
-				}
-			}
-			if needsSudoDaemonHome {
-				if err := a.priv.RemovePathWithSudo(a.daemonStore.Paths().Home); err != nil {
+				if err := a.priv.RemoveDaemonArtifactsWithSudo(sudoPlists, sudoMetadata, daemonHome); err != nil {
 					return err
 				}
 			}
@@ -395,7 +387,12 @@ func (a *App) runApply(args []string) error {
 		for _, managed := range orphanedSpecs {
 			names = append(names, managed.spec.Name)
 		}
-		a.logger.Info("orphaned managed jobs", "config_path", filePath, "jobs", strings.Join(names, ", "))
+		if _, err := fmt.Fprintf(a.stdout, "warning: orphaned managed jobs not present in %s: %s\n", filePath, strings.Join(names, ", ")); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(a.stdout, "warning: run 'summond prune' to remove them"); err != nil {
+			return err
+		}
 	}
 	a.logger.Info("apply completed", "jobs", len(specs), "warnings", len(runtimeWarnings))
 	return nil
@@ -638,39 +635,6 @@ func (a *App) runExec(args []string) error {
 	return nil
 }
 
-func (a *App) runRemove(args []string) error {
-	a.logger.Debug("remove start", "args", args)
-	if isHelpArg(args) {
-		printCommandUsage(a.stdout, "remove")
-		return nil
-	}
-	managed, err := a.requireSingleSpec(args, "remove")
-	if err != nil {
-		return err
-	}
-	spec := managed.spec
-	_ = a.runner.Bootout(spec)
-	if _, err := managed.store.Remove(spec.Name); err != nil {
-		if spec.Target == job.TargetDaemon && errors.Is(err, os.ErrPermission) {
-			approved, promptErr := a.confirmWithDefault("removing daemon jobs requires sudo. Retry with sudo? [Y/n]: ", true)
-			if promptErr != nil {
-				return promptErr
-			}
-			if approved {
-				if err := a.removeDaemonSpecWithSudo(spec); err != nil {
-					return err
-				}
-			} else {
-				return err
-			}
-		} else {
-			return err
-		}
-	}
-	_, err = fmt.Fprintf(a.stdout, "removed %s\n", spec.Name)
-	return err
-}
-
 func (a *App) runLogs(args []string) error {
 	a.logger.Debug("logs start", "args", args)
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
@@ -787,7 +751,6 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  prune [flags] [file]       Remove managed jobs missing from a TOML file")
 	fmt.Fprintln(stdout, "  list                       List managed jobs")
 	fmt.Fprintln(stdout, "  inspect <name>             Show job details")
-	fmt.Fprintln(stdout, "  remove <name>              Remove a managed job")
 	fmt.Fprintln(stdout, "  logs [flags] <name>        Print job logs")
 	fmt.Fprintln(stdout, "  exec <name>                Run a managed job immediately")
 	fmt.Fprintln(stdout, "  version                    Print the CLI version")
@@ -832,11 +795,6 @@ func printCommandUsage(stdout io.Writer, command string) {
 		fmt.Fprintln(stdout, "  summond inspect <name>")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Show the stored configuration and recent run state for a managed job.")
-	case "remove":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond remove <name>")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Boot out and remove a managed job's plist and metadata.")
 	case "logs":
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond logs [flags] <name>")
@@ -1077,18 +1035,16 @@ func (a *App) installDaemonSpecWithSudo(spec job.Spec, runtimeSource string) (jo
 	if err := os.WriteFile(metadataPath, metadata, 0o644); err != nil {
 		return job.Spec{}, err
 	}
-	for _, dir := range daemonRequiredDirs(a.daemonStore, installed) {
-		if err := a.priv.CreateDirWithSudo(dir, 0o755); err != nil {
-			return job.Spec{}, err
-		}
-	}
-	if err := a.priv.InstallFileWithSudo(runtimeSource, installed.RuntimeBinaryPath, 0o755); err != nil {
-		return job.Spec{}, err
-	}
-	if err := a.priv.InstallFileWithSudo(plistPath, installed.PlistPath, 0o644); err != nil {
-		return job.Spec{}, err
-	}
-	if err := a.priv.InstallFileWithSudo(metadataPath, a.daemonStore.MetadataPath(installed.Name), 0o644); err != nil {
+	if err := a.priv.InstallDaemonSpecWithSudo(
+		daemonRequiredDirs(a.daemonStore, installed),
+		runtimeSource,
+		installed.RuntimeBinaryPath,
+		plistPath,
+		installed.PlistPath,
+		metadataPath,
+		a.daemonStore.MetadataPath(installed.Name),
+		installed.Enabled,
+	); err != nil {
 		return job.Spec{}, err
 	}
 	return installed, nil
@@ -1120,25 +1076,16 @@ func daemonRequiredDirs(store *state.Store, spec job.Spec) []string {
 }
 
 func (a *App) reconcileDaemonRuntime(spec job.Spec) string {
-	if spec.Enabled {
-		_ = a.priv.BootoutDaemonWithSudo(spec.PlistPath)
-		if err := a.priv.BootstrapDaemonWithSudo(spec.PlistPath); err != nil {
-			return fmt.Sprintf("%s: bootstrap failed: %v", spec.Name, err)
-		}
-		return ""
-	}
-	if err := a.priv.BootoutDaemonWithSudo(spec.PlistPath); err != nil {
-		return fmt.Sprintf("%s: bootout failed: %v", spec.Name, err)
-	}
+	_ = spec
 	return ""
 }
 
 func (a *App) removeDaemonSpecWithSudo(spec job.Spec) error {
-	_ = a.priv.BootoutDaemonWithSudo(spec.PlistPath)
-	if err := a.priv.RemovePathWithSudo(spec.PlistPath); err != nil {
-		return err
-	}
-	return a.priv.RemovePathWithSudo(a.daemonStore.MetadataPath(spec.Name))
+	return a.priv.RemoveDaemonArtifactsWithSudo(
+		[]string{spec.PlistPath},
+		managedCleanupPaths(a.daemonStore, spec),
+		"",
+	)
 }
 
 func preserveRuntimeFields(dst *job.Spec, src job.Spec) {
@@ -1353,6 +1300,23 @@ func appendIfMissing(values []string, value string) []string {
 	return append(values, value)
 }
 
+func managedCleanupPaths(store *state.Store, spec job.Spec) []string {
+	paths := []string{
+		store.MetadataPath(spec.Name),
+		store.MetadataPath(spec.Name) + ".lock",
+		spec.StdoutPath,
+		spec.StderrPath,
+	}
+	var unique []string
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		unique = appendIfMissing(unique, path)
+	}
+	return unique
+}
+
 func (a *App) printInstallPlan(opts bootstrap.Options) error {
 	configPath, err := resolveCurrentConfigPath()
 	if err != nil {
@@ -1460,9 +1424,10 @@ func describeInstallAction(path string, overwrite bool) (string, error) {
 	return "", err
 }
 
-func (osPrivilegedOperator) CreateDirWithSudo(path string, mode os.FileMode) error {
+func runSudoScript(script string, args ...string) error {
 	var stderr bytes.Buffer
-	cmd := exec.Command("sudo", "install", "-d", "-m", fmt.Sprintf("%04o", mode.Perm()), path)
+	commandArgs := append([]string{"/bin/sh", "-c", script, "summond-sudo"}, args...)
+	cmd := exec.Command("sudo", commandArgs...)
 	cmd.Stderr = &stderr
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
@@ -1474,58 +1439,72 @@ func (osPrivilegedOperator) CreateDirWithSudo(path string, mode os.FileMode) err
 	return nil
 }
 
-func (osPrivilegedOperator) InstallFileWithSudo(src string, dst string, mode os.FileMode) error {
-	var stderr bytes.Buffer
-	cmd := exec.Command("sudo", "install", "-m", fmt.Sprintf("%04o", mode.Perm()), src, dst)
-	cmd.Stderr = &stderr
-	cmd.Stdin = os.Stdin
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return fmt.Errorf("%w: %s", err, stderr.String())
-		}
-		return err
+func (osPrivilegedOperator) InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string, enabled bool) error {
+	script := `
+dir_count="$1"
+enabled="$2"
+shift 2
+i=0
+while [ "$i" -lt "$dir_count" ]; do
+  install -d -m 0755 "$1"
+  shift
+  i=$((i + 1))
+done
+runtime_source="$1"
+runtime_dest="$2"
+plist_source="$3"
+plist_dest="$4"
+metadata_source="$5"
+metadata_dest="$6"
+install -m 0755 "$runtime_source" "$runtime_dest"
+install -m 0644 "$plist_source" "$plist_dest"
+install -m 0644 "$metadata_source" "$metadata_dest"
+launchctl bootout system "$plist_dest" >/dev/null 2>&1 || true
+if [ "$enabled" = "true" ]; then
+  launchctl bootstrap system "$plist_dest"
+fi
+`
+	args := []string{fmt.Sprintf("%d", len(dirs)), fmt.Sprintf("%t", enabled)}
+	args = append(args, dirs...)
+	args = append(args, runtimeSource, runtimeDest, plistSource, plistDest, metadataSource, metadataDest)
+	return runSudoScript(script, args...)
+}
+
+func (osPrivilegedOperator) RemoveDaemonArtifactsWithSudo(plistPaths []string, metadataPaths []string, home string) error {
+	script := `
+plist_count="$1"
+metadata_count="$2"
+shift 2
+i=0
+while [ "$i" -lt "$plist_count" ]; do
+  launchctl bootout system "$1" >/dev/null 2>&1 || true
+  rm -rf "$1"
+  shift
+  i=$((i + 1))
+done
+i=0
+while [ "$i" -lt "$metadata_count" ]; do
+  rm -rf "$1"
+  shift
+  i=$((i + 1))
+done
+if [ "$#" -gt 0 ] && [ -n "$1" ]; then
+  rm -rf "$1"
+fi
+`
+	args := []string{fmt.Sprintf("%d", len(plistPaths)), fmt.Sprintf("%d", len(metadataPaths))}
+	args = append(args, plistPaths...)
+	args = append(args, metadataPaths...)
+	if home != "" {
+		args = append(args, home)
 	}
-	return nil
+	return runSudoScript(script, args...)
 }
 
 func (osPrivilegedOperator) RemovePathWithSudo(path string) error {
-	var stderr bytes.Buffer
-	cmd := exec.Command("sudo", "rm", "-rf", path)
-	cmd.Stderr = &stderr
-	cmd.Stdin = os.Stdin
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return fmt.Errorf("%w: %s", err, stderr.String())
-		}
-		return err
-	}
-	return nil
-}
-
-func (osPrivilegedOperator) BootstrapDaemonWithSudo(plistPath string) error {
-	var stderr bytes.Buffer
-	cmd := exec.Command("sudo", "launchctl", "bootstrap", "system", plistPath)
-	cmd.Stderr = &stderr
-	cmd.Stdin = os.Stdin
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return fmt.Errorf("%w: %s", err, stderr.String())
-		}
-		return err
-	}
-	return nil
+	return runSudoScript(`rm -rf "$1"`, path)
 }
 
 func (osPrivilegedOperator) BootoutDaemonWithSudo(plistPath string) error {
-	var stderr bytes.Buffer
-	cmd := exec.Command("sudo", "launchctl", "bootout", "system", plistPath)
-	cmd.Stderr = &stderr
-	cmd.Stdin = os.Stdin
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return fmt.Errorf("%w: %s", err, stderr.String())
-		}
-		return err
-	}
-	return nil
+	return runSudoScript(`launchctl bootout system "$1"`, plistPath)
 }

@@ -571,7 +571,7 @@ func TestApplyWarnsAboutOrphanedManagedJobs(t *testing.T) {
 		t.Fatalf("apply error = %v", err)
 	}
 	got := stdout.String()
-	if got != "applied 1 job(s)\n" {
+	if !strings.Contains(got, "applied 1 job(s)\n") || !strings.Contains(got, "warning: orphaned managed jobs not present in "+updatedConfigPath+": sync\n") || !strings.Contains(got, "warning: run 'summond prune' to remove them\n") {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -631,6 +631,50 @@ func TestPruneRemovesManagedJobsMissingFromConfig(t *testing.T) {
 	}
 	if _, err := app.store.Load("cleanup"); err != nil {
 		t.Fatalf("expected cleanup metadata to remain, err = %v", err)
+	}
+}
+
+func TestPruneRemovesPerJobLogsAndLockFiles(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	stale, err := app.store.Install(job.Spec{
+		Name:     "stale",
+		Command:  "/bin/echo",
+		Schedule: job.Schedule{Kind: job.ScheduleDaily, Hour: 3, HourSet: true, Minute: 45, MinuteSet: true},
+		Enabled:  true,
+	})
+	if err != nil {
+		t.Fatalf("Install(stale) error = %v", err)
+	}
+	if err := os.WriteFile(stale.StdoutPath, []byte("stdout\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(stdout) error = %v", err)
+	}
+	if err := os.WriteFile(stale.StderrPath, []byte("stderr\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(stderr) error = %v", err)
+	}
+	if err := os.WriteFile(app.store.MetadataPath(stale.Name)+".lock", []byte("lock"), 0o644); err != nil {
+		t.Fatalf("WriteFile(lock) error = %v", err)
+	}
+
+	configPath := filepath.Join(testHome(t), "current.toml")
+	if err := os.WriteFile(configPath, []byte("[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"prune", "--yes", configPath}); err != nil {
+		t.Fatalf("prune error = %v", err)
+	}
+
+	for _, path := range []string{
+		stale.StdoutPath,
+		stale.StderrPath,
+		app.store.MetadataPath(stale.Name),
+		app.store.MetadataPath(stale.Name) + ".lock",
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed, stat err = %v", path, err)
+		}
 	}
 }
 
@@ -1335,23 +1379,33 @@ type fakePrivilegedOperator struct {
 	err          error
 }
 
-func (f *fakePrivilegedOperator) CreateDirWithSudo(path string, mode os.FileMode) error {
-	f.created = append(f.created, path)
+func (f *fakePrivilegedOperator) InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string, enabled bool) error {
+	f.created = append(f.created, dirs...)
+	f.installed = append(f.installed,
+		[2]string{runtimeSource, runtimeDest},
+		[2]string{plistSource, plistDest},
+		[2]string{metadataSource, metadataDest},
+	)
+	if enabled {
+		f.bootstrapped = append(f.bootstrapped, plistDest)
+	} else {
+		f.bootout = append(f.bootout, plistDest)
+	}
 	return f.err
 }
 
-func (f *fakePrivilegedOperator) InstallFileWithSudo(src string, dst string, mode os.FileMode) error {
-	f.installed = append(f.installed, [2]string{src, dst})
+func (f *fakePrivilegedOperator) RemoveDaemonArtifactsWithSudo(plistPaths []string, metadataPaths []string, home string) error {
+	f.bootout = append(f.bootout, plistPaths...)
+	f.removed = append(f.removed, plistPaths...)
+	f.removed = append(f.removed, metadataPaths...)
+	if home != "" {
+		f.removed = append(f.removed, home)
+	}
 	return f.err
 }
 
 func (f *fakePrivilegedOperator) RemovePathWithSudo(path string) error {
 	f.removed = append(f.removed, path)
-	return f.err
-}
-
-func (f *fakePrivilegedOperator) BootstrapDaemonWithSudo(plistPath string) error {
-	f.bootstrapped = append(f.bootstrapped, plistPath)
 	return f.err
 }
 

@@ -137,11 +137,10 @@ func (s *Store) Remove(name string) (job.Spec, error) {
 	if err != nil {
 		return job.Spec{}, err
 	}
-	if err := os.Remove(spec.PlistPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return job.Spec{}, fmt.Errorf("remove plist: %w", err)
-	}
-	if err := os.Remove(s.metadataPath(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return job.Spec{}, fmt.Errorf("remove metadata: %w", err)
+	for _, path := range s.cleanupPaths(spec) {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return job.Spec{}, fmt.Errorf("remove %s: %w", path, err)
+		}
 	}
 	return spec, nil
 }
@@ -294,6 +293,33 @@ func (s *Store) logPath(name, stream string) string {
 
 func (s *Store) metadataPath(name string) string {
 	return filepath.Join(s.jobsDir(), name+".json")
+}
+
+func (s *Store) cleanupPaths(spec job.Spec) []string {
+	paths := []string{
+		spec.PlistPath,
+		s.metadataPath(spec.Name),
+		s.metadataPath(spec.Name) + ".lock",
+	}
+	if spec.StdoutPath != "" {
+		paths = append(paths, spec.StdoutPath)
+	}
+	if spec.StderrPath != "" {
+		paths = append(paths, spec.StderrPath)
+	}
+	seen := make(map[string]struct{}, len(paths))
+	unique := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		unique = append(unique, path)
+	}
+	return unique
 }
 
 func (s *Store) jobsDir() string {
