@@ -7,3 +7,10 @@ brew cleanup
 target = "agent"
 schedule = "weekly"
 enabled = true
+
+[jobs.chezmoi-update]
+command = "chezmoi"
+args = ["update"]
+target = "agent"
+schedule = "daily"
+enabled = true
