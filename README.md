@@ -30,12 +30,12 @@ Bootstrap the default config and log rotation:
 summond install
 ```
 
-This creates `~/.config/summond/summond.toml`, generates a `newsyslog` snippet for Summond-managed logs, and will ask to retry with `sudo` if the system install step needs elevated privileges.
+This creates `./summond.toml`, generates a `newsyslog` snippet for Summond-managed logs, and will ask to retry with `sudo` if the system install step needs elevated privileges.
 
 Apply the generated config:
 
 ```sh
-summond apply -f ~/.config/summond/summond.toml
+summond apply
 ```
 
 Create an hourly user job directly:
@@ -75,7 +75,7 @@ MODE = "nightly"
 ```
 
 ```sh
-summond apply -f summond.toml
+summond apply
 ```
 
 ## Logs

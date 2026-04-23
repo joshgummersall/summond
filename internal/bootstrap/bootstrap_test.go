@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"bytes"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,6 +42,16 @@ func (f *fakeInstaller) RemoveWithSudo(path string) error {
 
 func TestInitCreatesFilesAndInstalls(t *testing.T) {
 	dir := t.TempDir()
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
 	installer := &fakeInstaller{}
 	manager := NewManager(state.Paths{
 		Home:         filepath.Join(dir, "state"),
@@ -48,9 +59,16 @@ func TestInitCreatesFilesAndInstalls(t *testing.T) {
 		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
 	}, installer)
 
-	result, err := manager.Init(Options{InstallNewsyslog: true})
+	result, err := manager.Init(Options{})
 	if err != nil {
 		t.Fatalf("Init() error = %v", err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if result.ConfigPath != filepath.Join(wd, "summond.toml") {
+		t.Fatalf("ConfigPath = %q", result.ConfigPath)
 	}
 	if result.ConfigStatus != "created" {
 		t.Fatalf("ConfigStatus = %q", result.ConfigStatus)
@@ -68,6 +86,16 @@ func TestInitCreatesFilesAndInstalls(t *testing.T) {
 
 func TestInitReturnsPermissionErrorForRetry(t *testing.T) {
 	dir := t.TempDir()
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
 	installer := &fakeInstaller{err: &PermissionError{Err: errors.New("permission denied")}}
 	manager := NewManager(state.Paths{
 		Home:         filepath.Join(dir, "state"),
@@ -75,7 +103,7 @@ func TestInitReturnsPermissionErrorForRetry(t *testing.T) {
 		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
 	}, installer)
 
-	result, err := manager.Init(Options{InstallNewsyslog: true})
+	result, err := manager.Init(Options{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -85,6 +113,13 @@ func TestInitReturnsPermissionErrorForRetry(t *testing.T) {
 	}
 	if result.ConfigStatus != "created" {
 		t.Fatalf("ConfigStatus = %q", result.ConfigStatus)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if result.ConfigPath != filepath.Join(wd, "summond.toml") {
+		t.Fatalf("ConfigPath = %q", result.ConfigPath)
 	}
 }
 
@@ -146,6 +181,16 @@ func TestPermissionErrorMessage(t *testing.T) {
 
 func TestUninstallRemovesFilesAndInstalledConfig(t *testing.T) {
 	dir := t.TempDir()
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
 	installer := &fakeInstaller{}
 	manager := NewManager(state.Paths{
 		Home:         filepath.Join(dir, "state"),
@@ -153,18 +198,18 @@ func TestUninstallRemovesFilesAndInstalledConfig(t *testing.T) {
 		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
 	}, installer)
 
-	if _, err := manager.Install(Options{InstallNewsyslog: false}); err != nil {
+	if _, err := manager.Install(Options{SkipNewsyslog: true}); err != nil {
 		t.Fatalf("Install() error = %v", err)
 	}
 
-	result, err := manager.Uninstall("")
+	result, err := manager.Uninstall()
 	if err != nil {
 		t.Fatalf("Uninstall() error = %v", err)
 	}
 	if result.ConfigStatus != "removed" {
 		t.Fatalf("ConfigStatus = %q", result.ConfigStatus)
 	}
-	if result.NewsyslogGenerateStatus != "removed" {
+	if result.NewsyslogGenerateStatus != "absent" {
 		t.Fatalf("NewsyslogGenerateStatus = %q", result.NewsyslogGenerateStatus)
 	}
 	if result.NewsyslogInstallStatus != "removed" {
@@ -172,5 +217,52 @@ func TestUninstallRemovesFilesAndInstalledConfig(t *testing.T) {
 	}
 	if len(installer.removes) != 1 {
 		t.Fatalf("removes = %#v", installer.removes)
+	}
+}
+
+func TestInstallAndUninstallUseCurrentWorkingDirectoryForConfig(t *testing.T) {
+	dir := t.TempDir()
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
+
+	installer := &fakeInstaller{}
+	manager := NewManager(state.Paths{
+		Home:         filepath.Join(dir, "state"),
+		ConfigDir:    filepath.Join(dir, "config"),
+		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
+	}, installer)
+
+	result, err := manager.Install(Options{SkipNewsyslog: true})
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if result.ConfigPath != filepath.Join(wd, "summond.toml") {
+		t.Fatalf("ConfigPath = %q", result.ConfigPath)
+	}
+	if _, err := os.Stat(filepath.Join(wd, "summond.toml")); err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+
+	uninstallResult, err := manager.Uninstall()
+	if err != nil {
+		t.Fatalf("Uninstall() error = %v", err)
+	}
+	if uninstallResult.ConfigPath != filepath.Join(wd, "summond.toml") {
+		t.Fatalf("ConfigPath = %q", uninstallResult.ConfigPath)
+	}
+	if _, err := os.Stat(filepath.Join(wd, "summond.toml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected config removed, stat err = %v", err)
 	}
 }

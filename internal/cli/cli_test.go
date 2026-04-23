@@ -99,6 +99,112 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
+func TestHelpApply(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"apply", "--help"}); err != nil {
+		t.Fatalf("apply --help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond apply [file]") || !strings.Contains(got, "reads ./summond.toml") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestHelpInstall(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"install", "--help"}); err != nil {
+		t.Fatalf("install --help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond install [flags]") || !strings.Contains(got, "--skip-newsyslog") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if strings.Contains(got, "--install-newsyslog") || strings.Contains(got, "--no-prompt") || strings.Contains(got, "--config-path") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if strings.Count(got, "Usage:") != 1 {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestHelpLogsExitsCleanly(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"logs", "--help"}); err != nil {
+		t.Fatalf("logs --help error = %v", err)
+	}
+}
+
+func TestHelpUninstall(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"uninstall", "--help"}); err != nil {
+		t.Fatalf("uninstall --help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond uninstall [flags]") || !strings.Contains(got, "--yes") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if strings.Contains(got, "--no-prompt") || strings.Contains(got, "--config-path") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestHelpLogs(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"logs", "--help"}); err != nil {
+		t.Fatalf("logs --help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond logs [flags] <name>") || !strings.Contains(got, "--follow") || !strings.Contains(got, "-n <lines>") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if strings.Contains(got, "--stream") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestHelpInspect(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"inspect", "--help"}); err != nil {
+		t.Fatalf("inspect --help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond inspect <name>") || !strings.Contains(got, "stored configuration") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestTopLevelHelpMentionsCommandHelp(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"--help"}); err != nil {
+		t.Fatalf("--help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond <command> --help") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
 func TestApplyConfig(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
@@ -122,11 +228,52 @@ func TestApplyConfig(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "cleanup" {
 		t.Fatalf("bootedOut = %#v", runner.bootedOut)
+	}
+	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "cleanup" {
+		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
+	}
+	if got := stdout.String(); got != "applied 1 job(s)\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestApplyDefaultsToSummondTomlInWorkingDirectory(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+	wd := testHome(t)
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(wd); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
+
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["clean"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile("summond.toml", []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := app.Run([]string{"apply"}); err != nil {
+		t.Fatalf("apply error = %v", err)
 	}
 	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "cleanup" {
 		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
@@ -158,7 +305,7 @@ func TestApplyReportsBootstrapWarningsButSucceeds(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "cleanup" {
@@ -197,7 +344,7 @@ func TestApplySkipsBootoutWhenServiceIsMissing(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if len(runner.bootedOut) != 0 {
@@ -233,7 +380,7 @@ func TestApplyReportsBootoutWarningsButSucceeds(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "cleanup" {
@@ -269,7 +416,7 @@ func TestApplyReportsVerificationWarningsButSucceeds(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if got := stdout.String(); !strings.Contains(got, "warning: cleanup: loaded job verification failed:") {
@@ -309,11 +456,70 @@ func TestApplyUsesChecksumForVerificationWhenAvailable(t *testing.T) {
 	runner.printText = map[string]string{"cleanup": "loaded checksum " + installed.Checksum}
 	stdout.Reset()
 
-	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if got := stdout.String(); strings.Contains(got, "warning: cleanup: loaded job verification failed:") {
 		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestLogsTailArgsDefault(t *testing.T) {
+	got := logsTailArgs(40, false, "/tmp/job.log")
+	want := []string{"-n", "40", "/tmp/job.log"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("logsTailArgs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestLogsTailArgsFollow(t *testing.T) {
+	got := logsTailArgs(12, true, "/tmp/job.log")
+	want := []string{"-n", "12", "-f", "/tmp/job.log"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("logsTailArgs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestLogsRejectsNegativeLineCount(t *testing.T) {
+	app := newTestApp(t)
+
+	err := app.Run([]string{"logs", "-n", "-1", "cleanup"})
+	if err == nil || err.Error() != "logs requires -n >= 0" {
+		t.Fatalf("logs error = %v", err)
+	}
+}
+
+func TestLogsWritesStdoutAndStderrSeparately(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	app.stdout = &stdout
+	app.stderr = &stderr
+
+	spec, err := app.store.Install(job.Spec{
+		Name:     "cleanup",
+		Command:  "/bin/echo",
+		Schedule: job.Schedule{Kind: job.ScheduleDaily, Hour: 3, HourSet: true, Minute: 45, MinuteSet: true},
+		Enabled:  true,
+	})
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if err := os.WriteFile(spec.StdoutPath, []byte("out-1\nout-2\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(stdout) error = %v", err)
+	}
+	if err := os.WriteFile(spec.StderrPath, []byte("err-1\nerr-2\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(stderr) error = %v", err)
+	}
+
+	if err := app.Run([]string{"logs", "-n", "1", "cleanup"}); err != nil {
+		t.Fatalf("logs error = %v", err)
+	}
+	if got := stdout.String(); got != "out-2\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	if got := stderr.String(); got != "err-2\n" {
+		t.Fatalf("stderr = %q", got)
 	}
 }
 
@@ -335,7 +541,7 @@ func TestInspectOnChangeJobShowsWatchPaths(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
@@ -368,7 +574,7 @@ func TestInspectShowsShellScriptOnNewLine(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
@@ -401,7 +607,7 @@ func TestListOutputsTSV(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
@@ -440,7 +646,7 @@ func TestExecRecordsSuccessfulRun(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
@@ -482,7 +688,7 @@ func TestExecRecordsFailingRun(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
@@ -510,17 +716,40 @@ func TestInstallCreatesStarterFiles(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(testHome(t)); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
 
-	if err := app.Run([]string{"install", "--install-newsyslog=false"}); err != nil {
+	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	if got := stdout.String(); got != "" {
 		t.Fatalf("unexpected output: %q", got)
 	}
+	if _, err := os.Stat("summond.toml"); err != nil {
+		t.Fatalf("expected summond.toml in cwd, stat err = %v", err)
+	}
 }
 
 func TestInstallPermissionDeniedCanUseSudoRetry(t *testing.T) {
 	home := testHome(t)
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(home); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
 		ConfigDir:    filepath.Join(home, "config"),
@@ -544,8 +773,18 @@ func TestInstallPermissionDeniedCanUseSudoRetry(t *testing.T) {
 	}
 }
 
-func TestInstallPermissionDeniedWithoutPromptPrintsManualCommand(t *testing.T) {
+func TestInstallSkipNewsyslogAvoidsPromptAndManualSudo(t *testing.T) {
 	home := testHome(t)
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(home); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
 		ConfigDir:    filepath.Join(home, "config"),
@@ -558,11 +797,14 @@ func TestInstallPermissionDeniedWithoutPromptPrintsManualCommand(t *testing.T) {
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
-	if err := app.Run([]string{"install", "--no-prompt"}); err != nil {
+	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
-	if got := stdout.String(); !strings.Contains(got, "install manually with: sudo install -m 0644") {
+	if got := stdout.String(); got != "" {
 		t.Fatalf("unexpected output: %q", got)
+	}
+	if len(installer.installs) != 0 || len(installer.sudoCalls) != 0 {
+		t.Fatalf("unexpected installer activity: installs=%#v sudoCalls=%#v", installer.installs, installer.sudoCalls)
 	}
 }
 
@@ -570,8 +812,19 @@ func TestUninstallRemovesManagedArtifacts(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
+	wd := testHome(t)
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(wd); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
 
-	configPath := filepath.Join(testHome(t), "summond.toml")
+	configPath := filepath.Join(wd, "summond.toml")
 	data := strings.Join([]string{
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
@@ -584,11 +837,11 @@ func TestUninstallRemovesManagedArtifacts(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	stdout.Reset()
-	if err := app.Run([]string{"install", "--install-newsyslog=false"}); err != nil {
+	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	stdout.Reset()
@@ -602,10 +855,23 @@ func TestUninstallRemovesManagedArtifacts(t *testing.T) {
 	if _, err := os.Stat(app.store.Paths().Home); !os.IsNotExist(err) {
 		t.Fatalf("expected managed state to be removed, stat err = %v", err)
 	}
+	if _, err := os.Stat("summond.toml"); !os.IsNotExist(err) {
+		t.Fatalf("expected cwd config removed, stat err = %v", err)
+	}
 }
 
-func TestUninstallPermissionDeniedPrintsManualCleanup(t *testing.T) {
+func TestUninstallPermissionDeniedPromptsForNewsyslogCleanup(t *testing.T) {
 	home := testHome(t)
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(home); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
 		ConfigDir:    filepath.Join(home, "config"),
@@ -614,21 +880,24 @@ func TestUninstallPermissionDeniedPrintsManualCleanup(t *testing.T) {
 		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
 	})
 	installer := &fakeBootstrapInstaller{}
-	app := NewApp(strings.NewReader(""), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	app := NewApp(strings.NewReader("y\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
 	app.priv = &fakePrivilegedOperator{}
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
-	if err := app.Run([]string{"install", "--install-newsyslog=false"}); err != nil {
+	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	installer.removeErr = &bootstrap.PermissionError{Err: os.ErrPermission}
 	stdout.Reset()
 
-	if err := app.Run([]string{"uninstall", "--yes", "--no-prompt"}); err != nil {
+	if err := app.Run([]string{"uninstall", "--yes"}); err != nil {
 		t.Fatalf("uninstall error = %v", err)
 	}
-	if got := stdout.String(); !strings.Contains(got, "manual cleanup: sudo rm -f") {
+	if len(installer.sudoCalls) != 1 {
+		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
+	}
+	if got := stdout.String(); !strings.Contains(got, "some system-owned files require sudo to remove. Retry with sudo? [Y/n]: ") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 }

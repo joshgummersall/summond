@@ -14,8 +14,6 @@ import (
 const newsyslogFilename = "com.joshgummersall.summond.conf"
 
 type Options struct {
-	ConfigPath       string
-	InstallNewsyslog bool
 	SkipNewsyslog    bool
 	Force            bool
 }
@@ -75,9 +73,9 @@ func NewManager(paths state.Paths, installer Installer) *Manager {
 }
 
 func (m *Manager) Install(opts Options) (Result, error) {
-	configPath := opts.ConfigPath
-	if configPath == "" {
-		configPath = filepath.Join(m.paths.ConfigDir, "summond.toml")
+	configPath, err := currentConfigPath()
+	if err != nil {
+		return Result{}, err
 	}
 	result := Result{
 		ConfigPath:             configPath,
@@ -102,10 +100,6 @@ func (m *Manager) Install(opts Options) (Result, error) {
 	}
 	result.NewsyslogGenerateStatus = newsyslogStatus
 
-	if !opts.InstallNewsyslog {
-		return result, nil
-	}
-
 	if err := m.installer.Install(result.NewsyslogGeneratedPath, result.NewsyslogInstallPath); err != nil {
 		return result, err
 	}
@@ -126,9 +120,10 @@ func (m *Manager) InstallNewsyslogWithSudo(result *Result) error {
 	return nil
 }
 
-func (m *Manager) Uninstall(configPath string) (UninstallResult, error) {
-	if configPath == "" {
-		configPath = filepath.Join(m.paths.ConfigDir, "summond.toml")
+func (m *Manager) Uninstall() (UninstallResult, error) {
+	configPath, err := currentConfigPath()
+	if err != nil {
+		return UninstallResult{}, err
 	}
 	result := UninstallResult{
 		ConfigPath:             configPath,
@@ -170,6 +165,14 @@ func (m *Manager) GeneratedNewsyslogPath() string {
 
 func (m *Manager) SystemNewsyslogPath() string {
 	return filepath.Join(m.paths.NewsyslogDir, newsyslogFilename)
+}
+
+func currentConfigPath() (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve current working directory: %w", err)
+	}
+	return filepath.Join(wd, "summond.toml"), nil
 }
 
 type OSInstaller struct{}
@@ -253,7 +256,7 @@ func removePath(path string) (string, error) {
 func renderConfig() string {
 	return strings.TrimSpace(`
 # Summond starter config
-# Edit this file, then run: summond apply -f ~/.config/summond/summond.toml
+# Edit this file, then run: summond apply summond.toml
 
 # Hourly example
 # [jobs.cleanup]

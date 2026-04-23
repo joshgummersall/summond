@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -116,12 +116,15 @@ func (a *App) runInstall(args []string) error {
 	a.logger.Debug("install start")
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	configPath := fs.String("config-path", "", "starter config path")
+	fs.Usage = func() {
+		printCommandUsage(a.stdout, "install")
+	}
 	force := fs.Bool("force", false, "overwrite generated files")
 	skipNewsyslog := fs.Bool("skip-newsyslog", false, "skip generating newsyslog config")
-	installNewsyslog := fs.Bool("install-newsyslog", true, "install newsyslog config")
-	noPrompt := fs.Bool("no-prompt", false, "disable sudo retry prompt")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if len(fs.Args()) != 0 {
@@ -129,15 +132,13 @@ func (a *App) runInstall(args []string) error {
 	}
 
 	result, err := a.boot.Install(bootstrap.Options{
-		ConfigPath:       *configPath,
-		InstallNewsyslog: *installNewsyslog,
-		SkipNewsyslog:    *skipNewsyslog,
-		Force:            *force,
+		SkipNewsyslog: *skipNewsyslog,
+		Force:         *force,
 	})
 	if err != nil {
 		a.logger.Debug("install failed", "error", err)
 		var permissionErr *bootstrap.PermissionError
-		if errors.As(err, &permissionErr) && !*noPrompt {
+		if errors.As(err, &permissionErr) && !*skipNewsyslog {
 			approved, promptErr := a.confirm("newsyslog install requires sudo. Retry with sudo? [Y/n]: ")
 			if promptErr != nil {
 				return promptErr
@@ -171,10 +172,14 @@ func (a *App) runUninstall(args []string) error {
 	a.logger.Debug("uninstall start")
 	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	configPath := fs.String("config-path", "", "starter config path")
+	fs.Usage = func() {
+		printCommandUsage(a.stdout, "uninstall")
+	}
 	yes := fs.Bool("yes", false, "skip confirmation")
-	noPrompt := fs.Bool("no-prompt", false, "disable sudo retry prompt")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if len(fs.Args()) != 0 {
@@ -212,12 +217,13 @@ func (a *App) runUninstall(args []string) error {
 		removedJobs++
 	}
 
-	uninstallResult, uninstallErr := a.boot.Uninstall(*configPath)
+	uninstallResult, uninstallErr := a.boot.Uninstall()
 	needsSudoNewsyslog := false
 	if uninstallErr != nil {
 		var permissionErr *bootstrap.PermissionError
 		if errors.As(uninstallErr, &permissionErr) {
 			needsSudoNewsyslog = true
+			uninstallResult.NewsyslogInstallStatus = "permission_denied"
 		} else {
 			return uninstallErr
 		}
@@ -227,7 +233,7 @@ func (a *App) runUninstall(args []string) error {
 		return err
 	}
 
-	if (len(sudoPlists) > 0 || needsSudoNewsyslog) && !*noPrompt {
+	if len(sudoPlists) > 0 || needsSudoNewsyslog {
 		approved, err := a.confirm("some system-owned files require sudo to remove. Retry with sudo? [Y/n]: ")
 		if err != nil {
 			return err
@@ -243,20 +249,15 @@ func (a *App) runUninstall(args []string) error {
 				if err := a.boot.UninstallNewsyslogWithSudo(&uninstallResult); err != nil {
 					return err
 				}
+				needsSudoNewsyslog = false
 			}
 		}
 	}
 
-	if err := a.printUninstallSummary(uninstallResult, removedJobs, len(sudoPlists) > 0 || needsSudoNewsyslog); err != nil {
+	if err := a.printUninstallSummary(uninstallResult, removedJobs, needsSudoNewsyslog); err != nil {
 		return err
 	}
-	if (len(sudoPlists) > 0 || needsSudoNewsyslog) && *noPrompt {
-		return a.printUninstallManual(uninstallResult, sudoPlists)
-	}
-	if (len(sudoPlists) > 0 || needsSudoNewsyslog) && !uninstallResult.UsedSudo && len(sudoPlists) > 0 {
-		return a.printUninstallManual(uninstallResult, sudoPlists)
-	}
-	if needsSudoNewsyslog && !uninstallResult.UsedSudo {
+	if len(sudoPlists) > 0 && !uninstallResult.UsedSudo {
 		return a.printUninstallManual(uninstallResult, sudoPlists)
 	}
 	a.logger.Info("uninstall completed", "removed_jobs", removedJobs)
@@ -267,12 +268,22 @@ func (a *App) runApply(args []string) error {
 	a.logger.Debug("apply start")
 	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	filePath := fs.String("f", "", "TOML config file")
+	fs.Usage = func() {
+		printCommandUsage(a.stdout, "apply")
+	}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
-	if *filePath == "" {
-		return errors.New("apply requires -f <config>")
+	filePath := "summond.toml"
+	switch len(fs.Args()) {
+	case 0:
+	case 1:
+		filePath = fs.Args()[0]
+	default:
+		return errors.New("apply accepts at most one config path")
 	}
 	runtimeSource, err := os.Executable()
 	if err != nil {
@@ -282,11 +293,11 @@ func (a *App) runApply(args []string) error {
 	if err != nil {
 		return err
 	}
-	specs, err := config.LoadFile(*filePath)
+	specs, err := config.LoadFile(filePath)
 	if err != nil {
 		return err
 	}
-	a.logger.Debug("loaded config", "path", *filePath, "jobs", len(specs))
+	a.logger.Debug("loaded config", "path", filePath, "jobs", len(specs))
 	var runtimeWarnings []string
 	for _, spec := range specs {
 		spec.RuntimeBinaryPath = runtimePath
@@ -378,6 +389,10 @@ func (a *App) verifyLoadedJob(spec job.Spec) error {
 
 func (a *App) runList(args []string) error {
 	a.logger.Debug("list start")
+	if isHelpArg(args) {
+		printCommandUsage(a.stdout, "list")
+		return nil
+	}
 	if len(args) != 0 {
 		return errors.New("list does not accept arguments")
 	}
@@ -404,6 +419,10 @@ func (a *App) runList(args []string) error {
 
 func (a *App) runInspect(args []string) error {
 	a.logger.Debug("inspect start", "args", args)
+	if isHelpArg(args) {
+		printCommandUsage(a.stdout, "inspect")
+		return nil
+	}
 	if len(args) != 1 {
 		return errors.New("inspect requires a job name")
 	}
@@ -446,6 +465,10 @@ func (a *App) runInspect(args []string) error {
 
 func (a *App) runExec(args []string) error {
 	a.logger.Debug("exec start", "args", args)
+	if isHelpArg(args) {
+		printCommandUsage(a.stdout, "exec")
+		return nil
+	}
 	if len(args) != 1 {
 		return errors.New("exec requires a job name")
 	}
@@ -476,6 +499,10 @@ func (a *App) runExec(args []string) error {
 
 func (a *App) runRemove(args []string) error {
 	a.logger.Debug("remove start", "args", args)
+	if isHelpArg(args) {
+		printCommandUsage(a.stdout, "remove")
+		return nil
+	}
 	spec, err := a.requireSingleSpec(args, "remove")
 	if err != nil {
 		return err
@@ -492,29 +519,95 @@ func (a *App) runLogs(args []string) error {
 	a.logger.Debug("logs start", "args", args)
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	stream := fs.String("stream", "stdout", "stdout or stderr")
+	fs.Usage = func() {
+		printCommandUsage(a.stdout, "logs")
+	}
+	lineCount := fs.Int("n", 40, "number of lines to print")
+	follow := fs.Bool("follow", false, "follow appended data")
+	fs.BoolVar(follow, "f", false, "follow appended data")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
 		return err
 	}
 	if len(fs.Args()) != 1 {
 		return errors.New("logs requires a job name")
 	}
+	if *lineCount < 0 {
+		return errors.New("logs requires -n >= 0")
+	}
 	spec, err := a.store.Load(fs.Args()[0])
 	if err != nil {
 		return err
 	}
-	path := spec.StdoutPath
-	if *stream == "stderr" {
-		path = spec.StderrPath
+	targets := []logTailTarget{}
+	if spec.StdoutPath != "" {
+		targets = append(targets, logTailTarget{path: spec.StdoutPath, output: a.stdout, name: "stdout"})
 	}
-	if path == "" {
+	if spec.StderrPath != "" {
+		targets = append(targets, logTailTarget{path: spec.StderrPath, output: a.stderr, name: "stderr"})
+	}
+	if len(targets) == 0 {
 		return errors.New("no log path configured")
 	}
-	a.logger.Debug("following log", "path", path, "stream", *stream)
-	cmd := exec.Command("tail", "-n", "40", "-f", path)
-	cmd.Stdout = a.stdout
-	cmd.Stderr = os.Stderr
+	if !*follow {
+		for _, target := range targets {
+			if err := a.runTail(target, *lineCount, false); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errCh := make(chan error, len(targets))
+	for _, target := range targets {
+		target := target
+		go func() {
+			errCh <- a.runTailContext(ctx, target, *lineCount, true)
+		}()
+	}
+	var firstErr error
+	for range targets {
+		if err := <-errCh; err != nil && firstErr == nil && !errors.Is(err, context.Canceled) {
+			firstErr = err
+			cancel()
+		}
+	}
+	return firstErr
+}
+
+func logsTailArgs(lineCount int, follow bool, path string) []string {
+	args := []string{"-n", fmt.Sprintf("%d", lineCount)}
+	if follow {
+		args = append(args, "-f")
+	}
+	return append(args, path)
+}
+
+type logTailTarget struct {
+	path   string
+	output io.Writer
+	name   string
+}
+
+func (a *App) runTail(target logTailTarget, lineCount int, follow bool) error {
+	return a.runTailContext(context.Background(), target, lineCount, follow)
+}
+
+func (a *App) runTailContext(ctx context.Context, target logTailTarget, lineCount int, follow bool) error {
+	tailArgs := logsTailArgs(lineCount, follow, target.path)
+	a.logger.Debug("reading log", "path", target.path, "stream", target.name, "follow", follow, "lines", lineCount)
+	cmd := exec.CommandContext(ctx, "tail", tailArgs...)
+	cmd.Stdout = target.output
+	cmd.Stderr = a.stderr
 	return cmd.Run()
+}
+
+func isHelpArg(args []string) bool {
+	return len(args) == 1 && (args[0] == "-h" || args[0] == "--help")
 }
 
 func (a *App) requireSingleSpec(args []string, name string) (job.Spec, error) {
@@ -533,12 +626,68 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "Commands:")
 	fmt.Fprintln(stdout, "  install                    Scaffold config and newsyslog setup")
 	fmt.Fprintln(stdout, "  uninstall                  Remove Summond-managed jobs and setup")
-	fmt.Fprintln(stdout, "  apply -f <file>            Apply jobs from a TOML file")
+	fmt.Fprintln(stdout, "  apply [file]               Apply jobs from a TOML file")
 	fmt.Fprintln(stdout, "  list                       List managed jobs")
 	fmt.Fprintln(stdout, "  inspect <name>             Show job details")
 	fmt.Fprintln(stdout, "  remove <name>              Remove a managed job")
-	fmt.Fprintln(stdout, "  logs <name>                Follow logs")
+	fmt.Fprintln(stdout, "  logs [flags] <name>        Print job logs")
+	fmt.Fprintln(stdout, "  exec <name>                Run a managed job immediately")
 	fmt.Fprintln(stdout, "  version                    Print the CLI version")
+	fmt.Fprintln(stdout, "")
+	fmt.Fprintln(stdout, "Run 'summond <command> --help' for command-specific usage.")
+}
+
+func printCommandUsage(stdout io.Writer, command string) {
+	switch command {
+	case "install":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond install [flags]")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Flags:")
+		fmt.Fprintln(stdout, "  --force                    Overwrite generated files")
+		fmt.Fprintln(stdout, "  --skip-newsyslog           Skip generating and installing newsyslog config")
+	case "uninstall":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond uninstall [flags]")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Flags:")
+		fmt.Fprintln(stdout, "  --yes                      Skip confirmation")
+	case "apply":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond apply [file]")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Apply jobs from a TOML config file.")
+		fmt.Fprintln(stdout, "If [file] is omitted, reads ./summond.toml.")
+	case "list":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond list")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "List all managed jobs with target, schedule, enabled state, and status.")
+	case "inspect":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond inspect <name>")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Show the stored configuration and recent run state for a managed job.")
+	case "remove":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond remove <name>")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Boot out and remove a managed job's plist and metadata.")
+	case "logs":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond logs [flags] <name>")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Flags:")
+		fmt.Fprintln(stdout, "  -n <lines>                 Number of lines to print (default 40)")
+		fmt.Fprintln(stdout, "  -f, --follow               Follow appended log output")
+	case "exec":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond exec <name>")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Run a managed job immediately and record its execution result.")
+	default:
+		printUsage(stdout)
+	}
 }
 
 func parseGlobalFlags(args []string) (int, []string, error) {
@@ -728,11 +877,6 @@ func (m multiValueFlag) Map() map[string]string {
 	return values
 }
 
-func ExampleConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "summond", "summond.toml")
-}
-
 func (a *App) confirm(prompt string) (bool, error) {
 	_, err := fmt.Fprint(a.stdout, prompt)
 	if err != nil {
@@ -752,10 +896,14 @@ func (a *App) printInstallSummary(result bootstrap.Result) error {
 	return nil
 }
 
-func (a *App) printUninstallSummary(result bootstrap.UninstallResult, removedJobs int, hadPrivileged bool) error {
+func (a *App) printUninstallSummary(result bootstrap.UninstallResult, removedJobs int, needsNewsyslogWarning bool) error {
 	_ = result
 	_ = removedJobs
-	_ = hadPrivileged
+	if needsNewsyslogWarning {
+		if _, err := fmt.Fprintf(a.stdout, "warning: could not remove system newsyslog config %s\n", result.NewsyslogInstallPath); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
