@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,15 +18,29 @@ type fakeRunner struct {
 	bootedOut    []string
 	kickstarted  []string
 	stopped      []string
+	bootstrapErr map[string]error
+	bootoutErr   map[string]error
+	printErr     map[string]error
+	printText    map[string]string
 }
 
 func (f *fakeRunner) Bootstrap(spec job.Spec) error {
 	f.bootstrapped = append(f.bootstrapped, spec.Name)
+	if f.bootstrapErr != nil {
+		if err, ok := f.bootstrapErr[spec.Name]; ok {
+			return err
+		}
+	}
 	return nil
 }
 
 func (f *fakeRunner) Bootout(spec job.Spec) error {
 	f.bootedOut = append(f.bootedOut, spec.Name)
+	if f.bootoutErr != nil {
+		if err, ok := f.bootoutErr[spec.Name]; ok {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -40,7 +55,35 @@ func (f *fakeRunner) Stop(spec job.Spec) error {
 }
 
 func (f *fakeRunner) Print(spec job.Spec) (string, error) {
-	return spec.Label, nil
+	if f.printErr != nil {
+		if err, ok := f.printErr[spec.Name]; ok {
+			return "", err
+		}
+	}
+	if f.printText != nil {
+		if text, ok := f.printText[spec.Name]; ok {
+			return text, nil
+		}
+	}
+	var b strings.Builder
+	b.WriteString(spec.Label)
+	b.WriteString("\n")
+	b.WriteString(spec.StdoutPath)
+	b.WriteString("\n")
+	b.WriteString(spec.StderrPath)
+	b.WriteString("\n")
+	if spec.ShellCommand != "" {
+		b.WriteString(spec.ShellCommand)
+		b.WriteString("\n")
+	} else {
+		b.WriteString(spec.Command)
+		b.WriteString("\n")
+		for _, arg := range spec.Args {
+			b.WriteString(arg)
+			b.WriteString("\n")
+		}
+	}
+	return b.String(), nil
 }
 
 func TestRunVersion(t *testing.T) {
@@ -113,10 +156,118 @@ func TestApplyConfig(t *testing.T) {
 	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
+	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "cleanup" {
+		t.Fatalf("bootedOut = %#v", runner.bootedOut)
+	}
 	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "cleanup" {
 		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
 	}
 	if got := stdout.String(); got != "applied 1 job(s)\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestApplyReportsBootstrapWarningsButSucceeds(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+	runner.bootstrapErr = map[string]error{"cleanup": errors.New("launchctl bootstrap failed")}
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["clean"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+		"enabled = true",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "cleanup" {
+		t.Fatalf("bootedOut = %#v", runner.bootedOut)
+	}
+	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "cleanup" {
+		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
+	}
+	if got := stdout.String(); !strings.Contains(got, "applied 1 job(s)\n") || !strings.Contains(got, "warning: cleanup: bootstrap failed: launchctl bootstrap failed\n") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if _, err := app.store.Load("cleanup"); err != nil {
+		t.Fatalf("Load(cleanup) error = %v", err)
+	}
+}
+
+func TestApplyReportsBootoutWarningsButSucceeds(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+	runner.bootoutErr = map[string]error{"cleanup": errors.New("launchctl bootout failed")}
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["clean"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+		"enabled = false",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "cleanup" {
+		t.Fatalf("bootedOut = %#v", runner.bootedOut)
+	}
+	if got := stdout.String(); !strings.Contains(got, "applied 1 job(s)\n") || !strings.Contains(got, "warning: cleanup: bootout failed: launchctl bootout failed\n") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if _, err := app.store.Load("cleanup"); err != nil {
+		t.Fatalf("Load(cleanup) error = %v", err)
+	}
+}
+
+func TestApplyReportsVerificationWarningsButSucceeds(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+	runner.printText = map[string]string{"cleanup": "com.joshgummersall.summond.cleanup\n/bin/echo\n"}
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["clean"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+		"enabled = true",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "warning: cleanup: loaded job verification failed:") {
 		t.Fatalf("stdout = %q", got)
 	}
 }

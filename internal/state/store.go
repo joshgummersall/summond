@@ -75,6 +75,9 @@ func (s *Store) Install(spec job.Spec) (job.Spec, error) {
 	if err := s.ensureDirs(spec); err != nil {
 		return job.Spec{}, err
 	}
+	if err := s.ensureLogFiles(spec); err != nil {
+		return job.Spec{}, err
+	}
 	content, err := plist.Render(spec)
 	if err != nil {
 		return job.Spec{}, err
@@ -192,9 +195,36 @@ func (s *Store) ensureDirs(spec job.Spec) error {
 		s.logsDir(),
 		filepath.Dir(spec.PlistPath),
 	}
+	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
+		if path == "" {
+			continue
+		}
+		dirs = append(dirs, filepath.Dir(path))
+	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create directory %s: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) ensureLogFiles(spec job.Spec) error {
+	seen := map[string]struct{}{}
+	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		file, err := os.OpenFile(path, os.O_CREATE, 0o644)
+		if err != nil {
+			return fmt.Errorf("create log file %s: %w", path, err)
+		}
+		if err := file.Close(); err != nil {
+			return fmt.Errorf("close log file %s: %w", path, err)
 		}
 	}
 	return nil

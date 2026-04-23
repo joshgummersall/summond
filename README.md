@@ -80,7 +80,7 @@ summond apply -f summond.toml
 
 ## Logs
 
-Summond writes stdout and stderr to managed log files under `~/Library/Application Support/summond/logs/` by default. `summond install` scaffolds `newsyslog` configuration so those files can be rotated using the native macOS mechanism.
+Summond writes stdout and stderr to managed log files under `~/Library/Application Support/summond/logs/` by default. Those files are created during install/update. `summond install` scaffolds `newsyslog` configuration so those files can be rotated using the native macOS mechanism.
 
 ```sh
 summond logs cleanup

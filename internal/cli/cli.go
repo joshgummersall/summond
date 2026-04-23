@@ -340,21 +340,61 @@ func (a *App) runApply(args []string) error {
 	if err != nil {
 		return err
 	}
+	var runtimeWarnings []string
 	for _, spec := range specs {
 		installed, err := a.store.Install(spec)
 		if err != nil {
 			return err
 		}
 		if installed.Enabled {
+			if err := a.runner.Bootout(installed); err != nil {
+				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: bootout before bootstrap failed: %v", installed.Name, err))
+			}
 			if err := a.runner.Bootstrap(installed); err != nil {
-				return err
+				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: bootstrap failed: %v", installed.Name, err))
+				continue
+			}
+			if err := a.verifyLoadedJob(installed); err != nil {
+				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: loaded job verification failed: %v", installed.Name, err))
 			}
 		} else {
-			_ = a.runner.Bootout(installed)
+			if err := a.runner.Bootout(installed); err != nil {
+				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: bootout failed: %v", installed.Name, err))
+			}
 		}
 	}
-	_, err = fmt.Fprintf(a.stdout, "applied %d job(s)\n", len(specs))
-	return err
+	if _, err := fmt.Fprintf(a.stdout, "applied %d job(s)\n", len(specs)); err != nil {
+		return err
+	}
+	for _, warning := range runtimeWarnings {
+		if _, err := fmt.Fprintf(a.stdout, "warning: %s\n", warning); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (a *App) verifyLoadedJob(spec job.Spec) error {
+	text, err := a.runner.Print(spec)
+	if err != nil {
+		return fmt.Errorf("launchctl print: %w", err)
+	}
+	expected := []string{spec.Label, spec.StdoutPath, spec.StderrPath}
+	if spec.ShellCommand != "" {
+		expected = append(expected, spec.ShellCommand)
+	} else {
+		expected = append(expected, spec.Command)
+		expected = append(expected, spec.Args...)
+	}
+	for _, needle := range expected {
+		if needle == "" {
+			continue
+		}
+		if !strings.Contains(text, needle) {
+			return fmt.Errorf("missing %q in loaded definition", needle)
+		}
+	}
+	return nil
 }
 
 func (a *App) runList(args []string) error {
