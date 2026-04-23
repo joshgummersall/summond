@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 type Target string
@@ -54,6 +55,13 @@ type Schedule struct {
 	MonthSet        bool         `json:"month_set,omitempty"`
 }
 
+type ExecutionRecord struct {
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	ExitCode   *int       `json:"exit_code,omitempty"`
+	Error      string     `json:"error,omitempty"`
+}
+
 type Spec struct {
 	Name                    string            `json:"name"`
 	Label                   string            `json:"label"`
@@ -71,7 +79,16 @@ type Spec struct {
 	StdoutPath              string            `json:"stdout_path,omitempty"`
 	StderrPath              string            `json:"stderr_path,omitempty"`
 	PlistPath               string            `json:"plist_path,omitempty"`
+	RuntimeBinaryPath       string            `json:"runtime_binary_path,omitempty"`
 	Checksum                string            `json:"checksum,omitempty"`
+	LastStartedAt           *time.Time        `json:"last_started_at,omitempty"`
+	LastFinishedAt          *time.Time        `json:"last_finished_at,omitempty"`
+	LastExitCode            *int              `json:"last_exit_code,omitempty"`
+	LastError               string            `json:"last_error,omitempty"`
+	RunCount                int               `json:"run_count,omitempty"`
+	SuccessCount            int               `json:"success_count,omitempty"`
+	FailureCount            int               `json:"failure_count,omitempty"`
+	RecentRuns              []ExecutionRecord `json:"recent_runs,omitempty"`
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-z0-9.-]+`)
@@ -418,6 +435,7 @@ func (s Spec) SpecChecksum() (string, error) {
 		StdoutPath              string      `json:"stdout_path,omitempty"`
 		StderrPath              string      `json:"stderr_path,omitempty"`
 		PlistPath               string      `json:"plist_path,omitempty"`
+		RuntimeBinaryPath       string      `json:"runtime_binary_path,omitempty"`
 	}
 
 	keys := make([]string, 0, len(s.Environment))
@@ -447,6 +465,7 @@ func (s Spec) SpecChecksum() (string, error) {
 		StdoutPath:              s.StdoutPath,
 		StderrPath:              s.StderrPath,
 		PlistPath:               s.PlistPath,
+		RuntimeBinaryPath:       s.RuntimeBinaryPath,
 	})
 	if err != nil {
 		return "", err

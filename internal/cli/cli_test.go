@@ -77,20 +77,11 @@ func (f *fakeRunner) Print(spec job.Spec) (string, error) {
 		b.WriteString(path)
 		b.WriteString("\n")
 	}
-	if spec.ShellCommand != "" {
-		b.WriteString("/bin/bash\n")
-		b.WriteString("-lc\n")
-		b.WriteString("set -euo pipefail\n")
-		b.WriteString(spec.ShellCommand)
-		b.WriteString("\n")
-	} else {
-		b.WriteString(spec.Command)
-		b.WriteString("\n")
-		for _, arg := range spec.Args {
-			b.WriteString(arg)
-			b.WriteString("\n")
-		}
-	}
+	b.WriteString(spec.RuntimeBinaryPath)
+	b.WriteString("\n")
+	b.WriteString("exec\n")
+	b.WriteString(spec.Name)
+	b.WriteString("\n")
 	return b.String(), nil
 }
 
@@ -358,6 +349,39 @@ func TestInspectOnChangeJobShowsWatchPaths(t *testing.T) {
 	}
 }
 
+func TestInspectShowsShellScriptOnNewLine(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.scripted]",
+		`shell_command = """`,
+		"echo hello",
+		"echo world",
+		`"""`,
+		`target = "agent"`,
+		`schedule = "login"`,
+		"enabled = true",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	stdout.Reset()
+	if err := app.Run([]string{"inspect", "scripted"}); err != nil {
+		t.Fatalf("inspect error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "shell:\n  echo hello\n  echo world\n") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
 func TestListOutputsTSV(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
@@ -386,14 +410,99 @@ func TestListOutputsTSV(t *testing.T) {
 		t.Fatalf("list error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "NAME") || !strings.Contains(got, "TARGET") || !strings.Contains(got, "SCHEDULE") || !strings.Contains(got, "ENABLED") {
+	if !strings.Contains(got, "NAME") || !strings.Contains(got, "TARGET") || !strings.Contains(got, "SCHEDULE") || !strings.Contains(got, "ENABLED") || !strings.Contains(got, "STATUS") {
 		t.Fatalf("stdout missing headers: %q", got)
 	}
-	if !strings.Contains(got, "cleanup") || !strings.Contains(got, "agent") || !strings.Contains(got, "daily at 03:45") || !strings.Contains(got, "true\n") {
+	if !strings.Contains(got, "cleanup") || !strings.Contains(got, "agent") || !strings.Contains(got, "daily at 03:45") || !strings.Contains(got, "true") || !strings.Contains(got, "never") {
 		t.Fatalf("stdout = %q", got)
 	}
 	if strings.Contains(got, "\t") {
 		t.Fatalf("stdout still contains raw tabs: %q", got)
+	}
+}
+
+func TestExecRecordsSuccessfulRun(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["clean"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+		"enabled = true",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	stdout.Reset()
+	if err := app.Run([]string{"exec", "cleanup"}); err != nil {
+		t.Fatalf("exec error = %v", err)
+	}
+	if got := stdout.String(); got != "clean\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	spec, err := app.store.Load("cleanup")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if spec.RunCount != 1 || spec.SuccessCount != 1 || spec.FailureCount != 0 {
+		t.Fatalf("unexpected counters: %+v", spec)
+	}
+	if spec.LastExitCode == nil || *spec.LastExitCode != 0 {
+		t.Fatalf("LastExitCode = %v", spec.LastExitCode)
+	}
+}
+
+func TestExecRecordsFailingRun(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.failer]",
+		`command = "/bin/sh"`,
+		`args = ["-c", "exit 7"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+		"enabled = true",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	err := app.Run([]string{"exec", "failer"})
+	var exitErr ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 7 {
+		t.Fatalf("exec error = %#v", err)
+	}
+	spec, loadErr := app.store.Load("failer")
+	if loadErr != nil {
+		t.Fatalf("Load() error = %v", loadErr)
+	}
+	if spec.RunCount != 1 || spec.SuccessCount != 0 || spec.FailureCount != 1 {
+		t.Fatalf("unexpected counters: %+v", spec)
+	}
+	if spec.LastExitCode == nil || *spec.LastExitCode != 7 {
+		t.Fatalf("LastExitCode = %v", spec.LastExitCode)
+	}
+	if spec.LastError == "" {
+		t.Fatal("expected LastError")
 	}
 }
 

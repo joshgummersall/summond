@@ -17,18 +17,10 @@ enabled = true
 
 [jobs.podman-machine-start]
 shell_command = """
-if [ -z "$(podman machine list --format '{{.Name}}' 2>/dev/null)" ]; then
-  exit 0
-fi
-
 state=$(podman machine inspect --format '{{.State}}' 2>/dev/null || echo "unknown")
 if [ "$state" != "running" ]; then
-  echo "$(date '+%Y-%m-%d %H:%M:%S') state='$state', starting..."
-  if podman machine start; then
-    echo "$(date '+%Y-%m-%d %H:%M:%S') started"
-  else
+  if ! podman machine start; then
     rc=$?
-    echo "$(date '+%Y-%m-%d %H:%M:%S') start failed (exit $rc)" >&2
     exit "$rc"
   fi
 fi

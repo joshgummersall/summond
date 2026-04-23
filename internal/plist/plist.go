@@ -10,11 +10,13 @@ import (
 )
 
 const checksumKey = "SummondSpecChecksum"
-const shellPreamble = "set -euo pipefail\n"
 
 func Render(spec job.Spec) ([]byte, error) {
 	if err := spec.Normalize(); err != nil {
 		return nil, err
+	}
+	if spec.RuntimeBinaryPath == "" {
+		return nil, fmt.Errorf("runtime binary path is required")
 	}
 
 	var buf bytes.Buffer
@@ -75,16 +77,9 @@ func runAtLoad(schedule job.Schedule) bool {
 func writeProgram(buf *bytes.Buffer, spec job.Spec) {
 	buf.WriteString("  <key>ProgramArguments</key>\n")
 	buf.WriteString("  <array>\n")
-	if spec.ShellCommand != "" {
-		writeArrayString(buf, "/bin/bash")
-		writeArrayString(buf, "-lc")
-		writeArrayString(buf, shellPreamble+spec.ShellCommand)
-	} else {
-		writeArrayString(buf, spec.Command)
-		for _, arg := range spec.Args {
-			writeArrayString(buf, arg)
-		}
-	}
+	writeArrayString(buf, spec.RuntimeBinaryPath)
+	writeArrayString(buf, "exec")
+	writeArrayString(buf, spec.Name)
 	buf.WriteString("  </array>\n")
 }
 

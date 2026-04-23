@@ -9,11 +9,12 @@ import (
 
 func TestRenderIntervalPlist(t *testing.T) {
 	data, err := Render(job.Spec{
-		Name:     "sync",
-		Target:   job.TargetAgent,
-		Command:  "/bin/echo",
-		Args:     []string{"hi"},
-		Checksum: "checksum-123",
+		Name:              "sync",
+		Target:            job.TargetAgent,
+		Command:           "/bin/echo",
+		Args:              []string{"hi"},
+		Checksum:          "checksum-123",
+		RuntimeBinaryPath: "/tmp/summond",
 		Schedule: job.Schedule{
 			Kind:            job.ScheduleInterval,
 			IntervalMinutes: 30,
@@ -34,8 +35,9 @@ func TestRenderIntervalPlist(t *testing.T) {
 		"<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
 		"<key>StartInterval</key>",
 		"<integer>1800</integer>",
-		"<string>/bin/echo</string>",
-		"<string>hi</string>",
+		"<string>/tmp/summond</string>",
+		"<string>exec</string>",
+		"<string>sync</string>",
 	} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("plist missing %q: %s", needle, text)
@@ -45,13 +47,14 @@ func TestRenderIntervalPlist(t *testing.T) {
 
 func TestRenderOnChangePlist(t *testing.T) {
 	data, err := Render(job.Spec{
-		Name:       "watcher",
-		Target:     job.TargetAgent,
-		Command:    "/bin/echo",
-		Args:       []string{"watch"},
-		Trigger:    job.TriggerOnChange,
-		WatchPaths: []string{"/tmp/watch.txt"},
-		Enabled:    true,
+		Name:              "watcher",
+		Target:            job.TargetAgent,
+		Command:           "/bin/echo",
+		Args:              []string{"watch"},
+		Trigger:           job.TriggerOnChange,
+		WatchPaths:        []string{"/tmp/watch.txt"},
+		RuntimeBinaryPath: "/tmp/summond",
+		Enabled:           true,
 	})
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
@@ -64,8 +67,9 @@ func TestRenderOnChangePlist(t *testing.T) {
 		"<string>/tmp/watch.txt</string>",
 		"<key>ThrottleInterval</key>",
 		"<integer>2</integer>",
-		"<string>/bin/echo</string>",
-		"<string>watch</string>",
+		"<string>/tmp/summond</string>",
+		"<string>exec</string>",
+		"<string>watcher</string>",
 	} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("plist missing %q: %s", needle, text)
@@ -75,10 +79,11 @@ func TestRenderOnChangePlist(t *testing.T) {
 
 func TestRenderDaemonPlistDoesNotSetAquaSessionLimit(t *testing.T) {
 	data, err := Render(job.Spec{
-		Name:    "daemon-job",
-		Target:  job.TargetDaemon,
-		Command: "/bin/echo",
-		Args:    []string{"daemon"},
+		Name:              "daemon-job",
+		Target:            job.TargetDaemon,
+		Command:           "/bin/echo",
+		Args:              []string{"daemon"},
+		RuntimeBinaryPath: "/tmp/summond",
 		Schedule: job.Schedule{
 			Kind: job.ScheduleBoot,
 		},
@@ -95,9 +100,10 @@ func TestRenderDaemonPlistDoesNotSetAquaSessionLimit(t *testing.T) {
 
 func TestRenderShellCommandUsesBashStrictMode(t *testing.T) {
 	data, err := Render(job.Spec{
-		Name:         "shell-job",
-		Target:       job.TargetAgent,
-		ShellCommand: "echo hello",
+		Name:              "shell-job",
+		Target:            job.TargetAgent,
+		ShellCommand:      "echo hello",
+		RuntimeBinaryPath: "/tmp/summond",
 		Schedule: job.Schedule{
 			Kind: job.ScheduleLogin,
 		},
@@ -108,10 +114,9 @@ func TestRenderShellCommandUsesBashStrictMode(t *testing.T) {
 	}
 	text := string(data)
 	for _, needle := range []string{
-		"<string>/bin/bash</string>",
-		"<string>-lc</string>",
-		"<string>set -euo pipefail",
-		"echo hello</string>",
+		"<string>/tmp/summond</string>",
+		"<string>exec</string>",
+		"<string>shell-job</string>",
 	} {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("plist missing %q: %s", needle, text)

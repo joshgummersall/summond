@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/joshgummersall/summond/internal/bootstrap"
 	"github.com/joshgummersall/summond/internal/config"
@@ -21,6 +23,15 @@ import (
 )
 
 const version = "0.4.0"
+const shellPreamble = "set -euo pipefail\n"
+
+type ExitError struct {
+	Code int
+}
+
+func (e ExitError) Error() string {
+	return ""
+}
 
 type App struct {
 	stdin  io.Reader
@@ -88,6 +99,8 @@ func (a *App) Run(args []string) error {
 		return a.runRemove(remaining[1:])
 	case "logs":
 		return a.runLogs(remaining[1:])
+	case "exec":
+		return a.runExec(remaining[1:])
 	case "version":
 		_, err := fmt.Fprintf(a.stdout, "summond %s\n", version)
 		return err
@@ -261,6 +274,14 @@ func (a *App) runApply(args []string) error {
 	if *filePath == "" {
 		return errors.New("apply requires -f <config>")
 	}
+	runtimeSource, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve current executable: %w", err)
+	}
+	runtimePath, err := a.store.PrepareRuntimeBinary(runtimeSource)
+	if err != nil {
+		return err
+	}
 	specs, err := config.LoadFile(*filePath)
 	if err != nil {
 		return err
@@ -268,6 +289,7 @@ func (a *App) runApply(args []string) error {
 	a.logger.Debug("loaded config", "path", *filePath, "jobs", len(specs))
 	var runtimeWarnings []string
 	for _, spec := range specs {
+		spec.RuntimeBinaryPath = runtimePath
 		a.logger.Debug("reconciling job", "name", spec.Name, "trigger", spec.Trigger, "schedule", spec.Schedule.Kind)
 		installed, err := a.store.Install(spec)
 		if err != nil {
@@ -342,12 +364,7 @@ func (a *App) verifyLoadedJob(spec job.Spec) error {
 	}
 	expected := []string{spec.Label, spec.StdoutPath, spec.StderrPath}
 	expected = append(expected, spec.WatchPaths...)
-	if spec.ShellCommand != "" {
-		expected = append(expected, "/bin/bash", "-lc", "set -euo pipefail")
-	} else {
-		expected = append(expected, spec.Command)
-		expected = append(expected, spec.Args...)
-	}
+	expected = append(expected, spec.RuntimeBinaryPath, "exec", spec.Name)
 	for _, needle := range expected {
 		if needle == "" {
 			continue
@@ -373,11 +390,11 @@ func (a *App) runList(args []string) error {
 		return err
 	}
 	writer := tabwriter.NewWriter(a.stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(writer, "NAME\tTARGET\tSCHEDULE\tENABLED"); err != nil {
+	if _, err := fmt.Fprintln(writer, "NAME\tTARGET\tSCHEDULE\tENABLED\tSTATUS"); err != nil {
 		return err
 	}
 	for _, spec := range specs {
-		_, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%t\n", spec.Name, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled)
+		_, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%t\t%s\n", spec.Name, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled, describeLastRunStatus(spec))
 		if err != nil {
 			return err
 		}
@@ -394,22 +411,67 @@ func (a *App) runInspect(args []string) error {
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(a.stdout, "name: %s\nlabel: %s\ntarget: %s\ntrigger: %s\nenabled: %t\nplist: %s\nstdout: %s\nstderr: %s\n",
-		spec.Name, spec.Label, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled, spec.PlistPath, spec.StdoutPath, spec.StderrPath)
+	_, err = fmt.Fprintf(a.stdout, "name: %s\nlabel: %s\ntarget: %s\ntrigger: %s\nenabled: %t\nplist: %s\nstdout: %s\nstderr: %s\nruntime: %s\nstatus: %s\nruns: %d (success=%d failure=%d)\n",
+		spec.Name, spec.Label, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled, spec.PlistPath, spec.StdoutPath, spec.StderrPath, spec.RuntimeBinaryPath, describeLastRunStatus(spec), spec.RunCount, spec.SuccessCount, spec.FailureCount)
 	if err != nil {
 		return err
+	}
+	if spec.LastError != "" {
+		if _, err := fmt.Fprintf(a.stdout, "last_error: %s\n", spec.LastError); err != nil {
+			return err
+		}
 	}
 	if len(spec.WatchPaths) > 0 {
 		if _, err := fmt.Fprintf(a.stdout, "watch_paths: %s\n", strings.Join(spec.WatchPaths, ", ")); err != nil {
 			return err
 		}
 	}
+	if len(spec.RecentRuns) > 0 {
+		if _, err := fmt.Fprintln(a.stdout, "recent_runs:"); err != nil {
+			return err
+		}
+		for _, run := range spec.RecentRuns {
+			if _, err := fmt.Fprintf(a.stdout, "  %s\n", describeExecutionRecord(run)); err != nil {
+				return err
+			}
+		}
+	}
 	if spec.Command != "" {
 		_, err = fmt.Fprintf(a.stdout, "command: %s %s\n", spec.Command, strings.Join(spec.Args, " "))
 		return err
 	}
-	_, err = fmt.Fprintf(a.stdout, "shell: %s\n", spec.ShellCommand)
+	_, err = fmt.Fprintf(a.stdout, "shell:\n  %s\n", strings.ReplaceAll(spec.ShellCommand, "\n", "\n  "))
 	return err
+}
+
+func (a *App) runExec(args []string) error {
+	a.logger.Debug("exec start", "args", args)
+	if len(args) != 1 {
+		return errors.New("exec requires a job name")
+	}
+	spec, err := a.store.Load(args[0])
+	if err != nil {
+		return err
+	}
+	startedAt := time.Now()
+	if err := a.store.RecordExecutionStart(spec.Name, startedAt); err != nil {
+		return err
+	}
+	record := job.ExecutionRecord{StartedAt: startedAt}
+	exitCode, runErr := a.executeSpec(spec)
+	finishedAt := time.Now()
+	record.FinishedAt = &finishedAt
+	record.ExitCode = &exitCode
+	if runErr != nil {
+		record.Error = runErr.Error()
+	}
+	if err := a.store.RecordExecutionFinish(spec.Name, record); err != nil {
+		return err
+	}
+	if runErr != nil {
+		return ExitError{Code: exitCode}
+	}
+	return nil
 }
 
 func (a *App) runRemove(args []string) error {
@@ -513,6 +575,28 @@ func (a *App) configureLogger(verbosity int) {
 	a.logger = slog.New(slog.NewTextHandler(a.stderr, &slog.HandlerOptions{Level: level}))
 }
 
+func (a *App) executeSpec(spec job.Spec) (int, error) {
+	var cmd *exec.Cmd
+	if spec.ShellCommand != "" {
+		cmd = exec.Command("/bin/bash", "-lc", shellPreamble+spec.ShellCommand)
+	} else {
+		cmd = exec.Command(spec.Command, spec.Args...)
+	}
+	cmd.Dir = spec.WorkingDir
+	cmd.Env = mergeEnvironment(os.Environ(), spec.Environment)
+	cmd.Stdout = a.stdout
+	cmd.Stderr = a.stderr
+	cmd.Stdin = a.stdin
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode(), err
+		}
+		return 1, err
+	}
+	return 0, nil
+}
+
 func describeSchedule(schedule job.Schedule) string {
 	switch schedule.Kind {
 	case job.ScheduleHourly:
@@ -550,6 +634,72 @@ func describeTriggerOrSchedule(spec job.Spec) string {
 		return "on_change"
 	}
 	return describeSchedule(spec.Schedule)
+}
+
+func describeLastRunStatus(spec job.Spec) string {
+	if spec.LastStartedAt == nil {
+		return "never"
+	}
+	if spec.LastFinishedAt == nil {
+		return "running"
+	}
+	when := formatTimestamp(*spec.LastFinishedAt)
+	if spec.LastExitCode != nil && *spec.LastExitCode == 0 && spec.LastError == "" {
+		return "ok " + when
+	}
+	if spec.LastExitCode != nil {
+		return fmt.Sprintf("exit %d %s", *spec.LastExitCode, when)
+	}
+	return "failed " + when
+}
+
+func describeExecutionRecord(record job.ExecutionRecord) string {
+	status := "running"
+	if record.FinishedAt != nil {
+		status = "finished"
+	}
+	if record.ExitCode != nil {
+		status = fmt.Sprintf("exit=%d", *record.ExitCode)
+	}
+	text := fmt.Sprintf("started=%s %s", formatTimestamp(record.StartedAt), status)
+	if record.FinishedAt != nil {
+		text += fmt.Sprintf(" finished=%s", formatTimestamp(*record.FinishedAt))
+	}
+	if record.Error != "" {
+		text += fmt.Sprintf(" error=%q", record.Error)
+	}
+	return text
+}
+
+func formatTimestamp(ts time.Time) string {
+	return ts.In(time.Local).Format("2006-01-02 15:04:05")
+}
+
+func mergeEnvironment(base []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return base
+	}
+	values := map[string]string{}
+	for _, item := range base {
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		values[parts[0]] = parts[1]
+	}
+	for key, value := range overrides {
+		values[key] = value
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]string, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, key+"="+values[key])
+	}
+	return result
 }
 
 type multiValueFlag []string
