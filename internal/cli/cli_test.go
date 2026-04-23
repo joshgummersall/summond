@@ -535,6 +535,8 @@ func TestApplyWarnsAboutOrphanedManagedJobs(t *testing.T) {
 
 	initialConfigPath := filepath.Join(testHome(t), "before.toml")
 	initialData := strings.Join([]string{
+		`group = "tests"`,
+		"",
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`schedule = "daily"`,
@@ -557,6 +559,8 @@ func TestApplyWarnsAboutOrphanedManagedJobs(t *testing.T) {
 
 	updatedConfigPath := filepath.Join(testHome(t), "after.toml")
 	updatedData := strings.Join([]string{
+		`group = "tests"`,
+		"",
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`schedule = "daily"`,
@@ -584,6 +588,8 @@ func TestPruneRemovesManagedJobsMissingFromConfig(t *testing.T) {
 
 	firstConfigPath := filepath.Join(testHome(t), "before.toml")
 	firstData := strings.Join([]string{
+		`group = "tests"`,
+		"",
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`schedule = "daily"`,
@@ -607,6 +613,8 @@ func TestPruneRemovesManagedJobsMissingFromConfig(t *testing.T) {
 
 	pruneConfigPath := filepath.Join(testHome(t), "after.toml")
 	pruneData := strings.Join([]string{
+		`group = "tests"`,
+		"",
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`schedule = "daily"`,
@@ -640,6 +648,7 @@ func TestPruneRemovesPerJobLogsAndLockFiles(t *testing.T) {
 	app.stdout = &stdout
 
 	stale, err := app.store.Install(job.Spec{
+		Group:    "tests",
 		Name:     "stale",
 		Command:  "/bin/echo",
 		Schedule: job.Schedule{Kind: job.ScheduleDaily, Hour: 3, HourSet: true, Minute: 45, MinuteSet: true},
@@ -654,12 +663,12 @@ func TestPruneRemovesPerJobLogsAndLockFiles(t *testing.T) {
 	if err := os.WriteFile(stale.StderrPath, []byte("stderr\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile(stderr) error = %v", err)
 	}
-	if err := os.WriteFile(app.store.MetadataPath(stale.Name)+".lock", []byte("lock"), 0o644); err != nil {
+	if err := os.WriteFile(app.store.MetadataPathForSpec(stale)+".lock", []byte("lock"), 0o644); err != nil {
 		t.Fatalf("WriteFile(lock) error = %v", err)
 	}
 
 	configPath := filepath.Join(testHome(t), "current.toml")
-	if err := os.WriteFile(configPath, []byte("[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("group = \"tests\"\n\n[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	if err := app.Run([]string{"prune", "--yes", configPath}); err != nil {
@@ -669,8 +678,8 @@ func TestPruneRemovesPerJobLogsAndLockFiles(t *testing.T) {
 	for _, path := range []string{
 		stale.StdoutPath,
 		stale.StderrPath,
-		app.store.MetadataPath(stale.Name),
-		app.store.MetadataPath(stale.Name) + ".lock",
+		app.store.MetadataPathForSpec(stale),
+		app.store.MetadataPathForSpec(stale) + ".lock",
 	} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("expected %s to be removed, stat err = %v", path, err)
@@ -699,14 +708,14 @@ func TestPrunePromptsAndCancelsWithoutYes(t *testing.T) {
 	}
 
 	configPath := filepath.Join(home, "current.toml")
-	if err := os.WriteFile(configPath, []byte("[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
+	if err := os.WriteFile(configPath, []byte("group = \"tests\"\n\n[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	if err := app.Run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
-	stale := job.Spec{Name: "stale", Command: "/bin/echo", Schedule: job.Schedule{Kind: "hourly"}, Target: job.TargetAgent}
+	stale := job.Spec{Group: "tests", Name: "stale", Command: "/bin/echo", Schedule: job.Schedule{Kind: "hourly"}, Target: job.TargetAgent}
 	if _, err := store.Install(stale); err != nil {
 		t.Fatalf("Install(stale) error = %v", err)
 	}

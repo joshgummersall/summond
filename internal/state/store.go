@@ -96,8 +96,8 @@ func (s *Store) PrepareInstall(spec job.Spec) (job.Spec, []byte, error) {
 	if err := spec.Normalize(); err != nil {
 		return job.Spec{}, nil, err
 	}
-	spec.StdoutPath = defaultIfEmpty(spec.StdoutPath, s.logPath(spec.Name, "out"))
-	spec.StderrPath = defaultIfEmpty(spec.StderrPath, s.logPath(spec.Name, "err"))
+	spec.StdoutPath = s.logPath(spec, "out")
+	spec.StderrPath = s.logPath(spec, "err")
 	spec.PlistPath = s.plistInstallPath(spec)
 	spec.RuntimeBinaryPath = defaultIfEmpty(spec.RuntimeBinaryPath, s.runtimeBinaryPath())
 	checksum, err := spec.SpecChecksum()
@@ -126,15 +126,11 @@ func (s *Store) Remove(name string) (job.Spec, error) {
 }
 
 func (s *Store) Load(name string) (job.Spec, error) {
-	data, err := os.ReadFile(s.metadataPath(name))
+	key, err := s.resolveManagedKey(name)
 	if err != nil {
-		return job.Spec{}, fmt.Errorf("read job metadata: %w", err)
+		return job.Spec{}, err
 	}
-	var spec job.Spec
-	if err := json.Unmarshal(data, &spec); err != nil {
-		return job.Spec{}, fmt.Errorf("decode job metadata: %w", err)
-	}
-	return spec, nil
+	return s.readMetadataByKey(key)
 }
 
 func (s *Store) List() ([]job.Spec, error) {
@@ -151,8 +147,8 @@ func (s *Store) List() ([]job.Spec, error) {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		name := entry.Name()[:len(entry.Name())-len(".json")]
-		spec, err := s.Load(name)
+		key := entry.Name()[:len(entry.Name())-len(".json")]
+		spec, err := s.readMetadataByKey(key)
 		if err != nil {
 			return nil, err
 		}
@@ -170,6 +166,10 @@ func (s *Store) JobsFilePath() string {
 
 func (s *Store) MetadataPath(name string) string {
 	return s.metadataPath(name)
+}
+
+func (s *Store) MetadataPathForSpec(spec job.Spec) string {
+	return s.metadataPath(spec.ManagedKey())
 }
 
 func (s *Store) Paths() Paths {
@@ -267,19 +267,19 @@ func (s *Store) RecordExecutionFinish(name string, record job.ExecutionRecord) e
 	})
 }
 
-func (s *Store) logPath(name, stream string) string {
-	return filepath.Join(s.logsDir(), fmt.Sprintf("%s.%s.log", name, stream))
+func (s *Store) logPath(spec job.Spec, stream string) string {
+	return filepath.Join(s.logsDir(), fmt.Sprintf("%s.%s.log", spec.ManagedKey(), stream))
 }
 
-func (s *Store) metadataPath(name string) string {
-	return filepath.Join(s.jobsDir(), name+".json")
+func (s *Store) metadataPath(key string) string {
+	return filepath.Join(s.jobsDir(), key+".json")
 }
 
 func (s *Store) cleanupPaths(spec job.Spec) []string {
 	paths := []string{
 		spec.PlistPath,
-		s.metadataPath(spec.Name),
-		s.metadataPath(spec.Name) + ".lock",
+		s.metadataPath(spec.ManagedKey()),
+		s.metadataPath(spec.ManagedKey()) + ".lock",
 	}
 	if spec.StdoutPath != "" {
 		paths = append(paths, spec.StdoutPath)
@@ -372,13 +372,14 @@ func defaultIfEmpty(value, fallback string) string {
 }
 
 func (s *Store) writeSpec(spec job.Spec, preserveRuntime bool) (job.Spec, error) {
-	unlock, err := s.lockMetadata(spec.Name)
+	key := spec.ManagedKey()
+	unlock, err := s.lockMetadata(key)
 	if err != nil {
 		return job.Spec{}, err
 	}
 	defer unlock()
 	if preserveRuntime {
-		existing, err := s.readMetadataUnlocked(spec.Name)
+		existing, err := s.readMetadataUnlocked(key)
 		if err == nil {
 			preserveRuntimeState(&spec, existing)
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -392,12 +393,16 @@ func (s *Store) writeSpec(spec job.Spec, preserveRuntime bool) (job.Spec, error)
 }
 
 func (s *Store) updateRuntimeState(name string, update func(*job.Spec)) error {
-	unlock, err := s.lockMetadata(name)
+	key, err := s.resolveManagedKey(name)
+	if err != nil {
+		return err
+	}
+	unlock, err := s.lockMetadata(key)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	spec, err := s.readMetadataUnlocked(name)
+	spec, err := s.readMetadataUnlocked(key)
 	if err != nil {
 		return err
 	}
@@ -405,8 +410,20 @@ func (s *Store) updateRuntimeState(name string, update func(*job.Spec)) error {
 	return s.writeMetadataUnlocked(spec)
 }
 
-func (s *Store) readMetadataUnlocked(name string) (job.Spec, error) {
-	data, err := os.ReadFile(s.metadataPath(name))
+func (s *Store) readMetadataByKey(key string) (job.Spec, error) {
+	data, err := os.ReadFile(s.metadataPath(key))
+	if err != nil {
+		return job.Spec{}, fmt.Errorf("read job metadata: %w", err)
+	}
+	var spec job.Spec
+	if err := json.Unmarshal(data, &spec); err != nil {
+		return job.Spec{}, fmt.Errorf("decode job metadata: %w", err)
+	}
+	return spec, nil
+}
+
+func (s *Store) readMetadataUnlocked(key string) (job.Spec, error) {
+	data, err := os.ReadFile(s.metadataPath(key))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return job.Spec{}, os.ErrNotExist
@@ -425,7 +442,7 @@ func (s *Store) writeMetadataUnlocked(spec job.Spec) error {
 	if err != nil {
 		return fmt.Errorf("encode job metadata: %w", err)
 	}
-	path := s.metadataPath(spec.Name)
+	path := s.metadataPath(spec.ManagedKey())
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("create metadata temp file: %w", err)
@@ -451,8 +468,8 @@ func (s *Store) writeMetadataUnlocked(spec job.Spec) error {
 	return nil
 }
 
-func (s *Store) lockMetadata(name string) (func(), error) {
-	lockPath := s.metadataPath(name) + ".lock"
+func (s *Store) lockMetadata(key string) (func(), error) {
+	lockPath := s.metadataPath(key) + ".lock"
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create metadata lock directory: %w", err)
 	}
@@ -468,6 +485,32 @@ func (s *Store) lockMetadata(name string) (func(), error) {
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		_ = file.Close()
 	}, nil
+}
+
+func (s *Store) resolveManagedKey(name string) (string, error) {
+	if _, err := os.Stat(s.metadataPath(name)); err == nil {
+		return name, nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read job metadata: %w", err)
+	}
+	specs, err := s.List()
+	if err != nil {
+		return "", err
+	}
+	var matches []string
+	for _, spec := range specs {
+		if spec.Name == name || spec.ManagedKey() == name {
+			matches = append(matches, spec.ManagedKey())
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("read job metadata: %w", os.ErrNotExist)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("duplicate managed job name %q", name)
+	}
 }
 
 func preserveRuntimeState(dst *job.Spec, src job.Spec) {

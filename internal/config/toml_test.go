@@ -166,3 +166,22 @@ PATH = "` + binDir + `"
 		t.Fatalf("Command = %q, want %q", got, want)
 	}
 }
+
+func TestLoadFileRejectsManagedLogOverrides(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[jobs.cleanup]
+command = "/bin/echo"
+schedule = "daily"
+stdout_path = "/tmp/custom.out"
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := LoadFile(path)
+	if err == nil || err.Error() != "unknown config key(s): jobs.cleanup.stdout_path" {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+}

@@ -73,7 +73,7 @@ func TestInstallCreatesManagedLogFiles(t *testing.T) {
 	}
 }
 
-func TestInstallCreatesCustomLogDirectoriesAndFiles(t *testing.T) {
+func TestInstallAlwaysUsesManagedLogPaths(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(Paths{
 		Home:       filepath.Join(dir, "state"),
@@ -83,7 +83,7 @@ func TestInstallCreatesCustomLogDirectoriesAndFiles(t *testing.T) {
 	stdoutPath := filepath.Join(dir, "custom", "logs", "stdout.log")
 	stderrPath := filepath.Join(dir, "custom", "logs", "stderr.log")
 
-	_, err := store.Install(job.Spec{
+	spec, err := store.Install(job.Spec{
 		Name:       "custom-logs",
 		Target:     job.TargetAgent,
 		Command:    "/bin/echo",
@@ -98,7 +98,10 @@ func TestInstallCreatesCustomLogDirectoriesAndFiles(t *testing.T) {
 		t.Fatalf("Install() error = %v", err)
 	}
 
-	for _, path := range []string{stdoutPath, stderrPath} {
+	if spec.StdoutPath == stdoutPath || spec.StderrPath == stderrPath {
+		t.Fatalf("expected managed log paths, got stdout=%q stderr=%q", spec.StdoutPath, spec.StderrPath)
+	}
+	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("Stat(%q) error = %v", path, err)
 		}

@@ -1,10 +1,13 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/BurntSushi/toml"
 
@@ -12,7 +15,8 @@ import (
 )
 
 type fileConfig struct {
-	Jobs map[string]rawJob `toml:"jobs"`
+	Group string            `toml:"group"`
+	Jobs  map[string]rawJob `toml:"jobs"`
 }
 
 type rawJob struct {
@@ -32,8 +36,6 @@ type rawJob struct {
 	Weekday                 *int              `toml:"weekday"`
 	Day                     *int              `toml:"day"`
 	Month                   *int              `toml:"month"`
-	StdoutPath              string            `toml:"stdout_path"`
-	StderrPath              string            `toml:"stderr_path"`
 	WatchPaths              []string          `toml:"watch_paths"`
 	ThrottleIntervalSeconds *int              `toml:"throttle_interval_seconds"`
 }
@@ -49,8 +51,17 @@ func LoadFile(path string) ([]job.Spec, error) {
 	}
 
 	var cfg fileConfig
-	if err := toml.Unmarshal(data, &cfg); err != nil {
+	meta, err := toml.Decode(string(data), &cfg)
+	if err != nil {
 		return nil, err
+	}
+	if undecoded := meta.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, 0, len(undecoded))
+		for _, key := range undecoded {
+			keys = append(keys, key.String())
+		}
+		sort.Strings(keys)
+		return nil, fmt.Errorf("unknown config key(s): %s", strings.Join(keys, ", "))
 	}
 
 	names := make([]string, 0, len(cfg.Jobs))
@@ -61,8 +72,12 @@ func LoadFile(path string) ([]job.Spec, error) {
 
 	specs := make([]job.Spec, 0, len(names))
 	baseDir := filepath.Dir(absPath)
+	group := cfg.Group
+	if strings.TrimSpace(group) == "" {
+		group = defaultGroup(absPath)
+	}
 	for _, name := range names {
-		spec := cfg.Jobs[name].toSpec(name)
+		spec := cfg.Jobs[name].toSpec(name, group)
 		resolvePaths(&spec, baseDir)
 		if err := spec.Normalize(); err != nil {
 			return nil, fmt.Errorf("job %s: %w", spec.Name, err)
@@ -72,9 +87,10 @@ func LoadFile(path string) ([]job.Spec, error) {
 	return specs, nil
 }
 
-func (r rawJob) toSpec(name string) job.Spec {
+func (r rawJob) toSpec(name string, group string) job.Spec {
 	spec := job.Spec{
 		Name:         name,
+		Group:        group,
 		Label:        r.Label,
 		Target:       job.Target(r.Target),
 		Command:      r.Command,
@@ -86,8 +102,6 @@ func (r rawJob) toSpec(name string) job.Spec {
 			Kind: job.ScheduleKind(r.Schedule),
 		},
 		Trigger:    job.TriggerKind(r.Trigger),
-		StdoutPath: r.StdoutPath,
-		StderrPath: r.StderrPath,
 		WatchPaths: r.WatchPaths,
 		Enabled:    true,
 	}
@@ -122,6 +136,11 @@ func (r rawJob) toSpec(name string) job.Spec {
 		spec.ThrottleIntervalSeconds = *r.ThrottleIntervalSeconds
 	}
 	return spec
+}
+
+func defaultGroup(path string) string {
+	sum := sha256.Sum256([]byte(path))
+	return hex.EncodeToString(sum[:6])
 }
 
 func resolvePaths(spec *job.Spec, baseDir string) {

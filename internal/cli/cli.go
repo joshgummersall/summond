@@ -873,8 +873,11 @@ func (a *App) listManagedJobs() ([]managedSpec, error) {
 		specs = append(specs, managedSpec{spec: spec, store: a.daemonStore})
 	}
 	sort.Slice(specs, func(i, j int) bool {
-		if specs[i].spec.Name == specs[j].spec.Name {
+		if specs[i].spec.Group == specs[j].spec.Group && specs[i].spec.Name == specs[j].spec.Name {
 			return specs[i].spec.Target < specs[j].spec.Target
+		}
+		if specs[i].spec.Group != specs[j].spec.Group {
+			return specs[i].spec.Group < specs[j].spec.Group
 		}
 		return specs[i].spec.Name < specs[j].spec.Name
 	})
@@ -882,16 +885,15 @@ func (a *App) listManagedJobs() ([]managedSpec, error) {
 }
 
 func (a *App) loadManagedSpec(name string) (managedSpec, error) {
-	var matches []managedSpec
-	if spec, err := a.store.Load(name); err == nil {
-		matches = append(matches, managedSpec{spec: spec, store: a.store})
-	} else if !errors.Is(err, os.ErrNotExist) {
+	specs, err := a.listManagedJobs()
+	if err != nil {
 		return managedSpec{}, err
 	}
-	if spec, err := a.daemonStore.Load(name); err == nil {
-		matches = append(matches, managedSpec{spec: spec, store: a.daemonStore})
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return managedSpec{}, err
+	var matches []managedSpec
+	for _, managed := range specs {
+		if managed.spec.Name == name || managed.spec.ManagedKey() == name {
+			matches = append(matches, managed)
+		}
 	}
 	switch len(matches) {
 	case 0:
@@ -899,14 +901,16 @@ func (a *App) loadManagedSpec(name string) (managedSpec, error) {
 	case 1:
 		return matches[0], nil
 	default:
-		return managedSpec{}, fmt.Errorf("duplicate managed job name %q across targets", name)
+		return managedSpec{}, fmt.Errorf("duplicate managed job name %q across groups or targets; use a unique group", name)
 	}
 }
 
 func (a *App) orphanedManagedJobs(desiredSpecs []job.Spec) ([]managedSpec, error) {
 	desired := make(map[string]struct{}, len(desiredSpecs))
+	groupFilter := make(map[string]struct{}, len(desiredSpecs))
 	for _, spec := range desiredSpecs {
-		desired[spec.Name] = struct{}{}
+		desired[spec.ManagedKey()] = struct{}{}
+		groupFilter[spec.Group] = struct{}{}
 	}
 	existingSpecs, err := a.listManagedJobs()
 	if err != nil {
@@ -914,7 +918,10 @@ func (a *App) orphanedManagedJobs(desiredSpecs []job.Spec) ([]managedSpec, error
 	}
 	var orphaned []managedSpec
 	for _, managed := range existingSpecs {
-		if _, ok := desired[managed.spec.Name]; !ok {
+		if _, ok := groupFilter[managed.spec.Group]; !ok {
+			continue
+		}
+		if _, ok := desired[managed.spec.ManagedKey()]; !ok {
 			orphaned = append(orphaned, managed)
 		}
 	}
@@ -1042,7 +1049,7 @@ func (a *App) installDaemonSpecWithSudo(spec job.Spec, runtimeSource string) (jo
 		plistPath,
 		installed.PlistPath,
 		metadataPath,
-		a.daemonStore.MetadataPath(installed.Name),
+		a.daemonStore.MetadataPathForSpec(installed),
 		installed.Enabled,
 	); err != nil {
 		return job.Spec{}, err
@@ -1302,8 +1309,8 @@ func appendIfMissing(values []string, value string) []string {
 
 func managedCleanupPaths(store *state.Store, spec job.Spec) []string {
 	paths := []string{
-		store.MetadataPath(spec.Name),
-		store.MetadataPath(spec.Name) + ".lock",
+		store.MetadataPathForSpec(spec),
+		store.MetadataPathForSpec(spec) + ".lock",
 		spec.StdoutPath,
 		spec.StderrPath,
 	}

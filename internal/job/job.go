@@ -64,6 +64,7 @@ type ExecutionRecord struct {
 
 type Spec struct {
 	Name                    string            `json:"name"`
+	Group                   string            `json:"group,omitempty"`
 	Label                   string            `json:"label"`
 	Target                  Target            `json:"target"`
 	Command                 string            `json:"command,omitempty"`
@@ -93,6 +94,7 @@ type Spec struct {
 
 var invalidNameChars = regexp.MustCompile(`[^a-z0-9.-]+`)
 var validJobName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var validGroup = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var validLabel = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 const DefaultPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -105,8 +107,12 @@ func (s *Spec) Normalize() error {
 	if !validJobName.MatchString(s.Name) {
 		return fmt.Errorf("job name must match %q, got %q", validJobName.String(), s.Name)
 	}
+	s.Group = strings.TrimSpace(s.Group)
+	if s.Group != "" && !validGroup.MatchString(s.Group) {
+		return fmt.Errorf("group must match %q, got %q", validGroup.String(), s.Group)
+	}
 	if s.Label == "" {
-		s.Label = DefaultLabel(s.Name)
+		s.Label = DefaultLabel(s.Group, s.Name)
 	}
 	if !validLabel.MatchString(s.Label) {
 		return fmt.Errorf("label must match %q, got %q", validLabel.String(), s.Label)
@@ -264,6 +270,7 @@ func (s Spec) scheduleSeed() ([32]byte, error) {
 	}
 	type seedSpec struct {
 		Name         string       `json:"name"`
+		Group        string       `json:"group,omitempty"`
 		Label        string       `json:"label"`
 		Target       Target       `json:"target"`
 		Command      string       `json:"command,omitempty"`
@@ -308,6 +315,7 @@ func (s Spec) scheduleSeed() ([32]byte, error) {
 
 	payload, err := json.Marshal(seedSpec{
 		Name:         s.Name,
+		Group:        s.Group,
 		Label:        s.Label,
 		Target:       s.Target,
 		Command:      s.Command,
@@ -337,14 +345,30 @@ func (s *Spec) normalizeTrigger() error {
 	}
 }
 
-func DefaultLabel(name string) string {
-	safe := strings.ToLower(strings.TrimSpace(name))
-	safe = invalidNameChars.ReplaceAllString(safe, "-")
-	safe = strings.Trim(safe, "-.")
-	if safe == "" {
-		safe = "job"
+func DefaultLabel(group, name string) string {
+	parts := []string{"com", "standardlabs", "summond"}
+	if safe := normalizeLabelPart(group); safe != "" {
+		parts = append(parts, safe)
 	}
-	return "com.standardlabs.summond." + safe
+	if safe := normalizeLabelPart(name); safe != "" {
+		parts = append(parts, safe)
+	} else {
+		parts = append(parts, "job")
+	}
+	return strings.Join(parts, ".")
+}
+
+func normalizeLabelPart(value string) string {
+	safe := strings.ToLower(strings.TrimSpace(value))
+	safe = invalidNameChars.ReplaceAllString(safe, "-")
+	return strings.Trim(safe, "-.")
+}
+
+func (s Spec) ManagedKey() string {
+	if s.Group == "" {
+		return s.Name
+	}
+	return s.Group + "." + s.Name
 }
 
 func (s Schedule) NormalizeForTarget(target Target) error {
@@ -428,6 +452,7 @@ func (s Spec) SpecChecksum() (string, error) {
 	}
 	type checksumSpec struct {
 		Name                    string      `json:"name"`
+		Group                   string      `json:"group,omitempty"`
 		Label                   string      `json:"label"`
 		Target                  Target      `json:"target"`
 		Command                 string      `json:"command,omitempty"`
@@ -458,6 +483,7 @@ func (s Spec) SpecChecksum() (string, error) {
 
 	payload, err := json.Marshal(checksumSpec{
 		Name:                    s.Name,
+		Group:                   s.Group,
 		Label:                   s.Label,
 		Target:                  s.Target,
 		Command:                 s.Command,
