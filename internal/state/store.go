@@ -194,6 +194,10 @@ func (s *Store) RuntimeBinaryPath() string {
 	return s.runtimeBinaryPath()
 }
 
+func (s *Store) EnvFilePath() string {
+	return filepath.Join(s.paths.Home, "env.sh")
+}
+
 func (s *Store) PrepareRuntimeBinary(sourcePath string) (string, error) {
 	if sourcePath == "" {
 		return "", errors.New("runtime binary source path is required")

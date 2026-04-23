@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -72,6 +71,7 @@ type Spec struct {
 	ShellCommand            string            `json:"shell_command,omitempty"`
 	WorkingDir              string            `json:"working_dir,omitempty"`
 	Environment             map[string]string `json:"environment,omitempty"`
+	EnvironmentFilePath     string            `json:"environment_file_path,omitempty"`
 	Schedule                Schedule          `json:"schedule"`
 	Trigger                 TriggerKind       `json:"trigger,omitempty"`
 	WatchPaths              []string          `json:"watch_paths,omitempty"`
@@ -95,8 +95,6 @@ var invalidNameChars = regexp.MustCompile(`[^a-z0-9.-]+`)
 var validJobName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var validGroup = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var validLabel = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-
-const DefaultPath = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 func (s *Spec) Normalize() error {
 	s.Name = strings.TrimSpace(s.Name)
@@ -134,16 +132,6 @@ func (s *Spec) Normalize() error {
 	if s.Environment == nil {
 		s.Environment = map[string]string{}
 	}
-	if _, ok := s.Environment["PATH"]; !ok {
-		s.Environment["PATH"] = DefaultPath
-	}
-	if s.Command != "" && !filepath.IsAbs(s.Command) {
-		resolved, err := resolveCommandPath(s.Command, s.WorkingDir, s.Environment["PATH"])
-		if err != nil {
-			return err
-		}
-		s.Command = resolved
-	}
 	if err := s.normalizeTrigger(); err != nil {
 		return err
 	}
@@ -178,33 +166,6 @@ func (s *Spec) Normalize() error {
 		return errors.New("either schedule or trigger is required")
 	}
 	return nil
-}
-
-func resolveCommandPath(command string, workingDir string, pathEnv string) (string, error) {
-	if strings.ContainsRune(command, filepath.Separator) {
-		if workingDir == "" {
-			abs, err := filepath.Abs(command)
-			if err != nil {
-				return "", fmt.Errorf("resolve command path %q: %w", command, err)
-			}
-			return filepath.Clean(abs), nil
-		}
-		return filepath.Clean(filepath.Join(workingDir, command)), nil
-	}
-	for _, dir := range filepath.SplitList(pathEnv) {
-		if dir == "" {
-			continue
-		}
-		candidate := filepath.Join(dir, command)
-		info, err := os.Stat(candidate)
-		if err != nil {
-			continue
-		}
-		if info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
-			return filepath.Clean(candidate), nil
-		}
-	}
-	return "", fmt.Errorf("command must be an absolute path or resolvable on PATH: %q", command)
 }
 
 func (s *Spec) applyScheduleDefaults() error {
@@ -268,18 +229,19 @@ func (s Spec) scheduleSeed() ([32]byte, error) {
 		Month           *int         `json:"month,omitempty"`
 	}
 	type seedSpec struct {
-		Name         string       `json:"name"`
-		Group        string       `json:"group,omitempty"`
-		Label        string       `json:"label"`
-		Target       Target       `json:"target"`
-		Command      string       `json:"command,omitempty"`
-		Args         []string     `json:"args,omitempty"`
-		ShellCommand string       `json:"shell_command,omitempty"`
-		WorkingDir   string       `json:"working_dir,omitempty"`
-		Environment  []envPair    `json:"environment,omitempty"`
-		Schedule     scheduleSeed `json:"schedule"`
-		Trigger      TriggerKind  `json:"trigger,omitempty"`
-		WatchPaths   []string     `json:"watch_paths,omitempty"`
+		Name                string       `json:"name"`
+		Group               string       `json:"group,omitempty"`
+		Label               string       `json:"label"`
+		Target              Target       `json:"target"`
+		Command             string       `json:"command,omitempty"`
+		Args                []string     `json:"args,omitempty"`
+		ShellCommand        string       `json:"shell_command,omitempty"`
+		WorkingDir          string       `json:"working_dir,omitempty"`
+		Environment         []envPair    `json:"environment,omitempty"`
+		EnvironmentFilePath string       `json:"environment_file_path,omitempty"`
+		Schedule            scheduleSeed `json:"schedule"`
+		Trigger             TriggerKind  `json:"trigger,omitempty"`
+		WatchPaths          []string     `json:"watch_paths,omitempty"`
 	}
 
 	keys := make([]string, 0, len(s.Environment))
@@ -312,18 +274,19 @@ func (s Spec) scheduleSeed() ([32]byte, error) {
 	}
 
 	payload, err := json.Marshal(seedSpec{
-		Name:         s.Name,
-		Group:        s.Group,
-		Label:        s.Label,
-		Target:       s.Target,
-		Command:      s.Command,
-		Args:         s.Args,
-		ShellCommand: s.ShellCommand,
-		WorkingDir:   s.WorkingDir,
-		Environment:  env,
-		Schedule:     seedSchedule,
-		Trigger:      s.Trigger,
-		WatchPaths:   s.WatchPaths,
+		Name:                s.Name,
+		Group:               s.Group,
+		Label:               s.Label,
+		Target:              s.Target,
+		Command:             s.Command,
+		Args:                s.Args,
+		ShellCommand:        s.ShellCommand,
+		WorkingDir:          s.WorkingDir,
+		Environment:         env,
+		EnvironmentFilePath: s.EnvironmentFilePath,
+		Schedule:            seedSchedule,
+		Trigger:             s.Trigger,
+		WatchPaths:          s.WatchPaths,
 	})
 	if err != nil {
 		return [32]byte{}, err
@@ -457,6 +420,7 @@ func (s Spec) SpecChecksum() (string, error) {
 		ShellCommand            string      `json:"shell_command,omitempty"`
 		WorkingDir              string      `json:"working_dir,omitempty"`
 		Environment             []envPair   `json:"environment,omitempty"`
+		EnvironmentFilePath     string      `json:"environment_file_path,omitempty"`
 		Schedule                Schedule    `json:"schedule"`
 		Trigger                 TriggerKind `json:"trigger,omitempty"`
 		WatchPaths              []string    `json:"watch_paths,omitempty"`
@@ -487,6 +451,7 @@ func (s Spec) SpecChecksum() (string, error) {
 		ShellCommand:            s.ShellCommand,
 		WorkingDir:              s.WorkingDir,
 		Environment:             env,
+		EnvironmentFilePath:     s.EnvironmentFilePath,
 		Schedule:                s.Schedule,
 		Trigger:                 s.Trigger,
 		WatchPaths:              s.WatchPaths,

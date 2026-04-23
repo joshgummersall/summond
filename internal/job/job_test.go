@@ -1,10 +1,6 @@
 package job
 
-import (
-	"os"
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestNormalizeLoginRequiresAgent(t *testing.T) {
 	spec := Spec{
@@ -36,8 +32,8 @@ func TestNormalizeHourly(t *testing.T) {
 	if spec.Label == "" {
 		t.Fatal("expected label")
 	}
-	if got, want := spec.Environment["PATH"], DefaultPath; got != want {
-		t.Fatalf("PATH = %q, want %q", got, want)
+	if len(spec.Environment) != 0 {
+		t.Fatalf("Environment = %#v, want empty", spec.Environment)
 	}
 }
 
@@ -142,7 +138,7 @@ func TestNormalizeOnChangeTriggerWithoutSchedule(t *testing.T) {
 	}
 }
 
-func TestNormalizeRespectsExplicitPathAndThrottle(t *testing.T) {
+func TestNormalizePreservesEnvironmentAndThrottle(t *testing.T) {
 	spec := Spec{
 		Name:    "watcher",
 		Target:  TargetAgent,
@@ -185,63 +181,6 @@ func TestNormalizePreservesExplicitScheduleFields(t *testing.T) {
 	}
 	if spec.Schedule.Weekday != 5 || spec.Schedule.Hour != 9 || spec.Schedule.Minute != 30 {
 		t.Fatalf("unexpected schedule: %+v", spec.Schedule)
-	}
-}
-
-func TestNormalizeResolvesCommandFromPath(t *testing.T) {
-	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	commandPath := filepath.Join(binDir, "chezmoi")
-	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	spec := Spec{
-		Name:       "job",
-		Target:     TargetAgent,
-		Command:    "chezmoi",
-		WorkingDir: dir,
-		Environment: map[string]string{
-			"PATH": binDir,
-		},
-		Schedule: Schedule{
-			Kind: ScheduleDaily,
-		},
-	}
-
-	if err := spec.Normalize(); err != nil {
-		t.Fatalf("Normalize() error = %v", err)
-	}
-	if got, want := spec.Command, commandPath; got != want {
-		t.Fatalf("Command = %q, want %q", got, want)
-	}
-}
-
-func TestNormalizeResolvesRelativeCommandFromWorkingDir(t *testing.T) {
-	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "script.sh")
-	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	spec := Spec{
-		Name:       "job",
-		Target:     TargetAgent,
-		Command:    "./script.sh",
-		WorkingDir: dir,
-		Schedule: Schedule{
-			Kind: ScheduleDaily,
-		},
-	}
-
-	if err := spec.Normalize(); err != nil {
-		t.Fatalf("Normalize() error = %v", err)
-	}
-	if got, want := spec.Command, scriptPath; got != want {
-		t.Fatalf("Command = %q, want %q", got, want)
 	}
 }
 

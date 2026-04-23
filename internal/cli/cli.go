@@ -115,6 +115,8 @@ func (a *App) Run(args []string) error {
 		return a.runLogs(remaining[1:])
 	case "exec":
 		return a.runExec(remaining[1:])
+	case "env":
+		return a.runEnv(remaining[1:])
 	case "cd":
 		return a.runCd(remaining[1:])
 	case "version":
@@ -357,7 +359,9 @@ func (a *App) runApply(args []string) error {
 		return err
 	}
 	daemonRuntimePath := a.daemonStore.RuntimeBinaryPath()
+	envFilePath := a.store.EnvFilePath()
 	for _, spec := range specs {
+		spec.EnvironmentFilePath = envFilePath
 		if spec.Target == job.TargetDaemon {
 			spec.RuntimeBinaryPath = daemonRuntimePath
 			installedSpec, applyErr := a.applyDaemonSpec(spec, runtimeSource)
@@ -631,6 +635,50 @@ func (a *App) runExec(args []string) error {
 	return nil
 }
 
+func (a *App) runEnv(args []string) error {
+	if isHelpArg(args) {
+		printCommandUsage(a.stdout, "env")
+		return nil
+	}
+	if len(args) != 0 {
+		return errors.New("env does not accept positional arguments")
+	}
+	path := a.store.EnvFilePath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create env file directory: %w", err)
+	}
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		if err := os.WriteFile(path, []byte(bootstrap.RenderEnvFile()), 0o644); err != nil {
+			return fmt.Errorf("write env file: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("stat env file: %w", err)
+	}
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if editor == "" {
+		return errors.New("env requires $EDITOR or $VISUAL to be set")
+	}
+	cmd := exec.Command("/bin/sh", "-lc", `exec ${EDITOR:-${VISUAL:-}} "$1"`, "sh", path)
+	cmd.Stdin = a.stdin
+	cmd.Stdout = a.stdout
+	cmd.Stderr = a.stderr
+	cmd.Env = mergeEnvironment(os.Environ(), map[string]string{
+		"EDITOR": editor,
+		"VISUAL": os.Getenv("VISUAL"),
+	})
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return ExitError{Code: exitErr.ExitCode()}
+		}
+		return err
+	}
+	return nil
+}
+
 func (a *App) runCd(args []string) error {
 	if isHelpArg(args) {
 		printCommandUsage(a.stdout, "cd")
@@ -796,6 +844,7 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  history <name>             Show recent execution history")
 	fmt.Fprintln(stdout, "  logs [flags] <name>        Print job logs")
 	fmt.Fprintln(stdout, "  exec <name>                Run a managed job immediately")
+	fmt.Fprintln(stdout, "  env                        Edit the shared job environment file")
 	fmt.Fprintln(stdout, "  cd <name>                  Open a shell in the job's state directory")
 	fmt.Fprintln(stdout, "  version                    Print the CLI version")
 	fmt.Fprintln(stdout, "")
@@ -850,6 +899,11 @@ func printCommandUsage(stdout io.Writer, command string) {
 		fmt.Fprintln(stdout, "  summond exec <name>")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Run a managed job immediately and record its execution result.")
+	case "env":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond env")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Open the shared shell env file in $EDITOR or $VISUAL.")
 	case "cd":
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond cd <name>")
@@ -997,10 +1051,13 @@ func (a *App) configureLogger(verbosity int) {
 
 func (a *App) executeSpec(spec job.Spec) (int, error) {
 	var cmd *exec.Cmd
+	envFilePath := a.environmentFilePath(spec)
 	if spec.ShellCommand != "" {
-		cmd = exec.Command("/bin/bash", "-lc", shellPreamble+spec.ShellCommand)
+		cmd = exec.Command("/bin/bash", "-lc", shellPreamble+shellSourcePreamble(envFilePath)+spec.ShellCommand)
 	} else {
-		cmd = exec.Command(spec.Command, spec.Args...)
+		args := []string{"-lc", shellPreamble + shellSourcePreamble(envFilePath) + `exec "$@"`, "bash", spec.Command}
+		args = append(args, spec.Args...)
+		cmd = exec.Command("/bin/bash", args...)
 	}
 	cmd.Dir = spec.WorkingDir
 	cmd.Env = mergeEnvironment(os.Environ(), spec.Environment)
@@ -1015,6 +1072,16 @@ func (a *App) executeSpec(spec job.Spec) (int, error) {
 		return 1, err
 	}
 	return 0, nil
+}
+
+func (a *App) environmentFilePath(spec job.Spec) string {
+	if spec.EnvironmentFilePath != "" {
+		return spec.EnvironmentFilePath
+	}
+	if spec.Target == job.TargetDaemon {
+		return a.daemonStore.EnvFilePath()
+	}
+	return a.store.EnvFilePath()
 }
 
 func (a *App) applySpec(store *state.Store, spec job.Spec) (job.Spec, string, error) {
@@ -1252,6 +1319,13 @@ func mergeEnvironment(base []string, overrides map[string]string) []string {
 		result = append(result, key+"="+values[key])
 	}
 	return result
+}
+
+func shellSourcePreamble(path string) string {
+	if path == "" {
+		return ""
+	}
+	return fmt.Sprintf("if [ -f %q ]; then . %q; fi\n", path, path)
 }
 
 type multiValueFlag []string

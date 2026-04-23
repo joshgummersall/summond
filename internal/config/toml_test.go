@@ -128,17 +128,8 @@ schedule = "weekly"
 	}
 }
 
-func TestLoadFileResolvesCommandFromJobPath(t *testing.T) {
+func TestLoadFilePreservesCommandForRuntimeResolution(t *testing.T) {
 	dir := t.TempDir()
-	binDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	commandPath := filepath.Join(binDir, "chezmoi")
-	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
 	path := filepath.Join(dir, "summond.toml")
 	data := []byte(`
 [jobs.chezmoi-update]
@@ -148,7 +139,7 @@ target = "agent"
 schedule = "daily"
 
 [jobs.chezmoi-update.env]
-PATH = "` + binDir + `"
+PATH = "/custom/bin"
 `)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -157,7 +148,7 @@ PATH = "` + binDir + `"
 	if err != nil {
 		t.Fatalf("LoadFile() error = %v", err)
 	}
-	if got, want := specs[0].Command, commandPath; got != want {
+	if got, want := specs[0].Command, "chezmoi"; got != want {
 		t.Fatalf("Command = %q, want %q", got, want)
 	}
 }

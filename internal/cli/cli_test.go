@@ -143,6 +143,20 @@ func TestHelpLogsExitsCleanly(t *testing.T) {
 	}
 }
 
+func TestHelpEnv(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"env", "--help"}); err != nil {
+		t.Fatalf("env --help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond env") || !strings.Contains(got, "$EDITOR") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
 func TestHelpUninstall(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
@@ -275,6 +289,13 @@ func TestApplyConfig(t *testing.T) {
 	}
 	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "cleanup" {
 		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
+	}
+	spec, err := app.store.Load("cleanup")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got, want := spec.EnvironmentFilePath, app.store.EnvFilePath(); got != want {
+		t.Fatalf("EnvironmentFilePath = %q, want %q", got, want)
 	}
 	if got := stdout.String(); got != "applied 1 job(s)\n" {
 		t.Fatalf("stdout = %q", got)
@@ -1341,6 +1362,72 @@ func TestUninstallCancelSkipsChanges(t *testing.T) {
 	}
 	if got := stdout.String(); !strings.Contains(got, "Proceed with uninstall? [y/N]: ") || !strings.Contains(got, "uninstall cancelled\n") {
 		t.Fatalf("unexpected prompt output: %q", got)
+	}
+}
+
+func TestRunEnvCreatesFileAndLaunchesEditor(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	app.stdout = &stdout
+	app.stderr = &stderr
+	editorPath := filepath.Join(t.TempDir(), "editor.sh")
+	if err := os.WriteFile(editorPath, []byte("#!/bin/sh\nprintf opened >> \"$1\"\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	t.Setenv("EDITOR", editorPath)
+
+	if err := app.Run([]string{"env"}); err != nil {
+		t.Fatalf("env error = %v", err)
+	}
+	data, err := os.ReadFile(app.store.EnvFilePath())
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "/opt/homebrew/bin") || !strings.Contains(text, "opened") {
+		t.Fatalf("env file = %q", text)
+	}
+}
+
+func TestExecuteSpecSourcesEnvFileForCommandJobs(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	app.stdout = &stdout
+	app.stderr = &stderr
+
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	commandPath := filepath.Join(binDir, "hello")
+	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nprintf sourced\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	envPath := filepath.Join(dir, "env.sh")
+	if err := os.WriteFile(envPath, []byte("export PATH="+binDir+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	exitCode, err := app.executeSpec(job.Spec{
+		Name:                "hello",
+		Target:              job.TargetAgent,
+		Command:             "hello",
+		EnvironmentFilePath: envPath,
+		Schedule: job.Schedule{
+			Kind: job.ScheduleDaily,
+		},
+	})
+	if err != nil {
+		t.Fatalf("executeSpec() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d", exitCode)
+	}
+	if got := stdout.String(); got != "sourced" {
+		t.Fatalf("stdout = %q", got)
 	}
 }
 

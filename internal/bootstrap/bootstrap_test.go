@@ -72,11 +72,24 @@ func TestInitCreatesFilesAndInstalls(t *testing.T) {
 	if result.ConfigStatus != "created" {
 		t.Fatalf("ConfigStatus = %q", result.ConfigStatus)
 	}
+	if result.EnvStatus != "created" {
+		t.Fatalf("EnvStatus = %q", result.EnvStatus)
+	}
 	if result.NewsyslogGenerateStatus != "created" {
 		t.Fatalf("NewsyslogGenerateStatus = %q", result.NewsyslogGenerateStatus)
 	}
+	if result.EnvPath != filepath.Join(dir, "state", "env.sh") {
+		t.Fatalf("EnvPath = %q", result.EnvPath)
+	}
 	if result.NewsyslogGeneratedPath != filepath.Join(dir, "state", newsyslogFilename) {
 		t.Fatalf("NewsyslogGeneratedPath = %q", result.NewsyslogGeneratedPath)
+	}
+	envData, err := os.ReadFile(result.EnvPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if !strings.Contains(string(envData), "/opt/homebrew/bin") || !strings.Contains(string(envData), "/usr/local/bin") {
+		t.Fatalf("unexpected env file: %q", string(envData))
 	}
 	if !result.NewsyslogInstalled {
 		t.Fatal("expected newsyslog installed")
@@ -115,6 +128,9 @@ func TestInitReturnsPermissionErrorForRetry(t *testing.T) {
 	if result.ConfigStatus != "created" {
 		t.Fatalf("ConfigStatus = %q", result.ConfigStatus)
 	}
+	if result.EnvStatus != "created" {
+		t.Fatalf("EnvStatus = %q", result.EnvStatus)
+	}
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("Getwd() error = %v", err)
@@ -135,6 +151,23 @@ func TestRenderConfigContainsTemplates(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("renderConfig missing %q", want)
 		}
+	}
+}
+
+func TestRenderEnvFileContainsDefaultPath(t *testing.T) {
+	text := RenderEnvFile()
+	for _, want := range []string{
+		"/opt/homebrew/bin",
+		"/usr/local/bin",
+		"/usr/bin",
+		"/bin",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("RenderEnvFile missing %q", want)
+		}
+	}
+	if strings.Contains(text, "$HOME") {
+		t.Fatalf("RenderEnvFile unexpectedly references HOME: %q", text)
 	}
 }
 
@@ -250,8 +283,14 @@ func TestInstallAndUninstallUseCurrentWorkingDirectoryForConfig(t *testing.T) {
 	if result.ConfigPath != filepath.Join(wd, "summond.toml") {
 		t.Fatalf("ConfigPath = %q", result.ConfigPath)
 	}
+	if result.EnvPath != filepath.Join(dir, "state", "env.sh") {
+		t.Fatalf("EnvPath = %q", result.EnvPath)
+	}
 	if _, err := os.Stat(filepath.Join(wd, "summond.toml")); err != nil {
 		t.Fatalf("Stat() error = %v", err)
+	}
+	if _, err := os.Stat(result.EnvPath); err != nil {
+		t.Fatalf("Stat(env) error = %v", err)
 	}
 
 	uninstallResult, err := manager.Uninstall()

@@ -23,6 +23,8 @@ type Options struct {
 type Result struct {
 	ConfigPath              string
 	ConfigStatus            string
+	EnvPath                 string
+	EnvStatus               string
 	NewsyslogGeneratedPath  string
 	NewsyslogGenerateStatus string
 	NewsyslogInstallPath    string
@@ -86,6 +88,7 @@ func (m *Manager) Install(opts Options) (Result, error) {
 	}
 	result := Result{
 		ConfigPath:             configPath,
+		EnvPath:                m.EnvFilePath(),
 		NewsyslogGeneratedPath: m.GeneratedNewsyslogPath(),
 		NewsyslogInstallPath:   m.SystemNewsyslogPath(),
 	}
@@ -95,6 +98,11 @@ func (m *Manager) Install(opts Options) (Result, error) {
 		return result, err
 	}
 	result.ConfigStatus = configStatus
+	envStatus, err := writeFile(result.EnvPath, []byte(RenderEnvFile()), opts.Overwrite)
+	if err != nil {
+		return result, err
+	}
+	result.EnvStatus = envStatus
 
 	if opts.SkipNewsyslog {
 		if err := m.writeInstallMarker(); err != nil {
@@ -177,6 +185,10 @@ func (m *Manager) UninstallNewsyslogWithSudo(result *UninstallResult) error {
 
 func (m *Manager) GeneratedNewsyslogPath() string {
 	return filepath.Join(m.paths.Home, newsyslogFilename)
+}
+
+func (m *Manager) EnvFilePath() string {
+	return filepath.Join(m.paths.Home, "env.sh")
 }
 
 func (m *Manager) SystemNewsyslogPath() string {
@@ -338,6 +350,15 @@ func renderConfig() string {
 # Daemon note
 # Use target = "daemon" with schedule = "boot" for a system LaunchDaemon.
 # Managed stdout/stderr log paths are assigned automatically.
+`) + "\n"
+}
+
+func RenderEnvFile() string {
+	return strings.TrimSpace(`
+# Summond evaluates this file before every job.
+# Export PATH and any other environment variables your jobs need.
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"
 `) + "\n"
 }
 

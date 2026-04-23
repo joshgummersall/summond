@@ -29,9 +29,6 @@ func TestRenderIntervalPlist(t *testing.T) {
 		"<string>checksum-123</string>",
 		"<key>LimitLoadToSessionType</key>",
 		"<string>Aqua</string>",
-		"<key>EnvironmentVariables</key>",
-		"<key>PATH</key>",
-		"<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>",
 		"<key>StartInterval</key>",
 		"<integer>1800</integer>",
 		"<string>/tmp/summond</string>",
@@ -41,6 +38,9 @@ func TestRenderIntervalPlist(t *testing.T) {
 		if !strings.Contains(text, needle) {
 			t.Fatalf("plist missing %q: %s", needle, text)
 		}
+	}
+	if strings.Contains(text, "<key>EnvironmentVariables</key>") {
+		t.Fatalf("unexpected EnvironmentVariables in plist: %s", text)
 	}
 }
 
