@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joshgummersall/summond/internal/state"
+	"github.com/standardlabs/summond/internal/state"
 )
 
 type fakeInstaller struct {

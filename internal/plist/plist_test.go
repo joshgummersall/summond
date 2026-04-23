@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joshgummersall/summond/internal/job"
+	"github.com/standardlabs/summond/internal/job"
 )
 
 func TestRenderIntervalPlist(t *testing.T) {

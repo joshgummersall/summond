@@ -8,14 +8,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/joshgummersall/summond/internal/state"
+	"github.com/standardlabs/summond/internal/state"
 )
 
-const newsyslogFilename = "com.joshgummersall.summond.conf"
+const newsyslogFilename = "com.standardlabs.summond.conf"
+const installMarkerFilename = ".installed"
 
 type Options struct {
 	SkipNewsyslog    bool
-	Force            bool
+	Overwrite        bool
 }
 
 type Result struct {
@@ -83,22 +84,28 @@ func (m *Manager) Install(opts Options) (Result, error) {
 		NewsyslogInstallPath:   m.SystemNewsyslogPath(),
 	}
 
-	configStatus, err := writeFile(configPath, []byte(renderConfig()), opts.Force)
+	configStatus, err := writeFile(configPath, []byte(renderConfig()), opts.Overwrite)
 	if err != nil {
 		return result, err
 	}
 	result.ConfigStatus = configStatus
 
 	if opts.SkipNewsyslog {
+		if err := m.writeInstallMarker(); err != nil {
+			return result, err
+		}
 		result.NewsyslogGenerateStatus = "skipped"
 		return result, nil
 	}
 
-	newsyslogStatus, err := writeFile(result.NewsyslogGeneratedPath, []byte(renderNewsyslog(m.paths.Home)), opts.Force)
+	newsyslogStatus, err := writeFile(result.NewsyslogGeneratedPath, []byte(renderNewsyslog(m.paths.Home)), opts.Overwrite)
 	if err != nil {
 		return result, err
 	}
 	result.NewsyslogGenerateStatus = newsyslogStatus
+	if err := m.writeInstallMarker(); err != nil {
+		return result, err
+	}
 
 	if err := m.installer.Install(result.NewsyslogGeneratedPath, result.NewsyslogInstallPath); err != nil {
 		return result, err
@@ -142,12 +149,26 @@ func (m *Manager) Uninstall() (UninstallResult, error) {
 		return result, err
 	}
 	result.NewsyslogGenerateStatus = status
+	if err := removeIfExists(m.installMarkerPath()); err != nil {
+		return result, err
+	}
 
 	if err := m.installer.Remove(result.NewsyslogInstallPath); err != nil {
 		return result, err
 	}
 	result.NewsyslogInstallStatus = "removed"
 	return result, nil
+}
+
+func (m *Manager) IsInstalled() (bool, error) {
+	_, err := os.Stat(m.installMarkerPath())
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 func (m *Manager) UninstallNewsyslogWithSudo(result *UninstallResult) error {
@@ -165,6 +186,17 @@ func (m *Manager) GeneratedNewsyslogPath() string {
 
 func (m *Manager) SystemNewsyslogPath() string {
 	return filepath.Join(m.paths.NewsyslogDir, newsyslogFilename)
+}
+
+func (m *Manager) installMarkerPath() string {
+	return filepath.Join(m.paths.Home, installMarkerFilename)
+}
+
+func (m *Manager) writeInstallMarker() error {
+	if err := os.MkdirAll(m.paths.Home, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(m.installMarkerPath(), []byte("installed\n"), 0o644)
 }
 
 func currentConfigPath() (string, error) {
@@ -241,6 +273,13 @@ func writeFile(path string, content []byte, force bool) (string, error) {
 		return "overwritten", nil
 	}
 	return "created", nil
+}
+
+func removeIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func removePath(path string) (string, error) {

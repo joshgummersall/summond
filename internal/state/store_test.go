@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joshgummersall/summond/internal/job"
+	"github.com/standardlabs/summond/internal/job"
 )
 
 func TestInstallCreatesManagedLogFiles(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/joshgummersall/summond/internal/job"
+	"github.com/standardlabs/summond/internal/job"
 )
 
 type fileConfig struct {

@@ -1,4 +1,4 @@
-module github.com/joshgummersall/summond
+module github.com/standardlabs/summond
 
 go 1.24.2
 

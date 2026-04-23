@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/joshgummersall/summond/internal/job"
+	"github.com/standardlabs/summond/internal/job"
 )
 
 const checksumKey = "SummondSpecChecksum"

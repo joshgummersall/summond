@@ -15,11 +15,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/joshgummersall/summond/internal/bootstrap"
-	"github.com/joshgummersall/summond/internal/config"
-	"github.com/joshgummersall/summond/internal/job"
-	"github.com/joshgummersall/summond/internal/launchd"
-	"github.com/joshgummersall/summond/internal/state"
+	"github.com/standardlabs/summond/internal/bootstrap"
+	"github.com/standardlabs/summond/internal/config"
+	"github.com/standardlabs/summond/internal/job"
+	"github.com/standardlabs/summond/internal/launchd"
+	"github.com/standardlabs/summond/internal/state"
 )
 
 const version = "0.4.0"
@@ -119,7 +119,8 @@ func (a *App) runInstall(args []string) error {
 	fs.Usage = func() {
 		printCommandUsage(a.stdout, "install")
 	}
-	force := fs.Bool("force", false, "overwrite generated files")
+	yes := fs.Bool("yes", false, "automatically accept prompts")
+	overwrite := fs.Bool("overwrite", false, "overwrite generated files")
 	skipNewsyslog := fs.Bool("skip-newsyslog", false, "skip generating newsyslog config")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -133,15 +134,19 @@ func (a *App) runInstall(args []string) error {
 
 	result, err := a.boot.Install(bootstrap.Options{
 		SkipNewsyslog: *skipNewsyslog,
-		Force:         *force,
+		Overwrite:     *overwrite,
 	})
 	if err != nil {
 		a.logger.Debug("install failed", "error", err)
 		var permissionErr *bootstrap.PermissionError
 		if errors.As(err, &permissionErr) && !*skipNewsyslog {
-			approved, promptErr := a.confirm("newsyslog install requires sudo. Retry with sudo? [Y/n]: ")
-			if promptErr != nil {
-				return promptErr
+			approved := *yes
+			if !approved {
+				var promptErr error
+				approved, promptErr = a.confirm("newsyslog install requires sudo. Retry with sudo? [Y/n]: ")
+				if promptErr != nil {
+					return promptErr
+				}
 			}
 			if approved {
 				if retryErr := a.boot.InstallNewsyslogWithSudo(&result); retryErr != nil {
@@ -234,9 +239,13 @@ func (a *App) runUninstall(args []string) error {
 	}
 
 	if len(sudoPlists) > 0 || needsSudoNewsyslog {
-		approved, err := a.confirm("some system-owned files require sudo to remove. Retry with sudo? [Y/n]: ")
-		if err != nil {
-			return err
+		approved := *yes
+		if !approved {
+			var err error
+			approved, err = a.confirm("some system-owned files require sudo to remove. Retry with sudo? [Y/n]: ")
+			if err != nil {
+				return err
+			}
 		}
 		if approved {
 			for _, plistPath := range sudoPlists {
@@ -284,6 +293,13 @@ func (a *App) runApply(args []string) error {
 		filePath = fs.Args()[0]
 	default:
 		return errors.New("apply accepts at most one config path")
+	}
+	installed, err := a.boot.IsInstalled()
+	if err != nil {
+		return err
+	}
+	if !installed {
+		return errors.New("apply requires install to be run first")
 	}
 	runtimeSource, err := os.Executable()
 	if err != nil {
@@ -459,7 +475,8 @@ func (a *App) runInspect(args []string) error {
 		_, err = fmt.Fprintf(a.stdout, "command: %s %s\n", spec.Command, strings.Join(spec.Args, " "))
 		return err
 	}
-	_, err = fmt.Fprintf(a.stdout, "shell:\n  %s\n", strings.ReplaceAll(spec.ShellCommand, "\n", "\n  "))
+	shellDisplay := strings.TrimRight(spec.ShellCommand, "\r\n")
+	_, err = fmt.Fprintf(a.stdout, "shell:\n  %s\n", strings.ReplaceAll(shellDisplay, "\n", "\n  "))
 	return err
 }
 
@@ -644,14 +661,15 @@ func printCommandUsage(stdout io.Writer, command string) {
 		fmt.Fprintln(stdout, "  summond install [flags]")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Flags:")
-		fmt.Fprintln(stdout, "  --force                    Overwrite generated files")
+		fmt.Fprintln(stdout, "  --yes                      Automatically accept prompts")
+		fmt.Fprintln(stdout, "  --overwrite                Overwrite generated files")
 		fmt.Fprintln(stdout, "  --skip-newsyslog           Skip generating and installing newsyslog config")
 	case "uninstall":
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond uninstall [flags]")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Flags:")
-		fmt.Fprintln(stdout, "  --yes                      Skip confirmation")
+		fmt.Fprintln(stdout, "  --yes                      Automatically accept prompts")
 	case "apply":
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond apply [file]")

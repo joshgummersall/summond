@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joshgummersall/summond/internal/bootstrap"
-	"github.com/joshgummersall/summond/internal/config"
-	"github.com/joshgummersall/summond/internal/job"
-	"github.com/joshgummersall/summond/internal/state"
+	"github.com/standardlabs/summond/internal/bootstrap"
+	"github.com/standardlabs/summond/internal/config"
+	"github.com/standardlabs/summond/internal/job"
+	"github.com/standardlabs/summond/internal/state"
 )
 
 type fakeRunner struct {
@@ -122,7 +122,7 @@ func TestHelpInstall(t *testing.T) {
 		t.Fatalf("install --help error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "summond install [flags]") || !strings.Contains(got, "--skip-newsyslog") {
+	if !strings.Contains(got, "summond install [flags]") || !strings.Contains(got, "--skip-newsyslog") || !strings.Contains(got, "--yes") {
 		t.Fatalf("stdout = %q", got)
 	}
 	if strings.Contains(got, "--install-newsyslog") || strings.Contains(got, "--no-prompt") || strings.Contains(got, "--config-path") {
@@ -157,6 +157,31 @@ func TestHelpUninstall(t *testing.T) {
 	}
 	if strings.Contains(got, "--no-prompt") || strings.Contains(got, "--config-path") {
 		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestApplyFailsWithoutInstall(t *testing.T) {
+	app := newRawTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	wd := testHome(t)
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(wd); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
+	if err := os.WriteFile("summond.toml", []byte("[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err = app.Run([]string{"apply"})
+	if err == nil || err.Error() != "apply requires install to be run first" {
+		t.Fatalf("apply error = %v", err)
 	}
 }
 
@@ -327,7 +352,7 @@ func TestApplySkipsBootoutWhenServiceIsMissing(t *testing.T) {
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 	runner := app.runner.(*fakeRunner)
-	runner.printErr = map[string]error{"cleanup": errors.New("Could not find service \"com.joshgummersall.summond.cleanup\" in domain")}
+	runner.printErr = map[string]error{"cleanup": errors.New("Could not find service \"com.standardlabs.summond.cleanup\" in domain")}
 
 	configPath := filepath.Join(testHome(t), "summond.toml")
 	data := strings.Join([]string{
@@ -399,7 +424,7 @@ func TestApplyReportsVerificationWarningsButSucceeds(t *testing.T) {
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 	runner := app.runner.(*fakeRunner)
-	runner.printText = map[string]string{"cleanup": "com.joshgummersall.summond.cleanup\n/bin/echo\n"}
+	runner.printText = map[string]string{"cleanup": "com.standardlabs.summond.cleanup\n/bin/echo\n"}
 
 	configPath := filepath.Join(testHome(t), "summond.toml")
 	data := strings.Join([]string{
@@ -585,6 +610,9 @@ func TestInspectShowsShellScriptOnNewLine(t *testing.T) {
 	got := stdout.String()
 	if !strings.Contains(got, "shell:\n  echo hello\n  echo world\n") {
 		t.Fatalf("stdout = %q", got)
+	}
+	if strings.Contains(got, "shell:\n  echo hello\n  echo world\n  \n") {
+		t.Fatalf("stdout has extra blank shell line: %q", got)
 	}
 }
 
@@ -773,6 +801,41 @@ func TestInstallPermissionDeniedCanUseSudoRetry(t *testing.T) {
 	}
 }
 
+func TestInstallYesAutoAcceptsSudoRetry(t *testing.T) {
+	home := testHome(t)
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(home); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
+	store := state.NewStore(state.Paths{
+		Home:         filepath.Join(home, "managed"),
+		ConfigDir:    filepath.Join(home, "config"),
+		AgentsDir:    filepath.Join(home, "LaunchAgents"),
+		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
+		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
+	})
+	installer := &fakeBootstrapInstaller{err: &bootstrap.PermissionError{Err: os.ErrPermission}}
+	app := NewApp(strings.NewReader(""), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"install", "--yes"}); err != nil {
+		t.Fatalf("install error = %v", err)
+	}
+	if len(installer.sudoCalls) != 1 {
+		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
+	}
+	if got := stdout.String(); strings.Contains(got, "Retry with sudo?") {
+		t.Fatalf("unexpected prompt output: %q", got)
+	}
+}
+
 func TestInstallSkipNewsyslogAvoidsPromptAndManualSudo(t *testing.T) {
 	home := testHome(t)
 	prevWD, err := os.Getwd()
@@ -891,7 +954,7 @@ func TestUninstallPermissionDeniedPromptsForNewsyslogCleanup(t *testing.T) {
 	installer.removeErr = &bootstrap.PermissionError{Err: os.ErrPermission}
 	stdout.Reset()
 
-	if err := app.Run([]string{"uninstall", "--yes"}); err != nil {
+	if err := app.Run([]string{"uninstall"}); err != nil {
 		t.Fatalf("uninstall error = %v", err)
 	}
 	if len(installer.sudoCalls) != 1 {
@@ -902,7 +965,70 @@ func TestUninstallPermissionDeniedPromptsForNewsyslogCleanup(t *testing.T) {
 	}
 }
 
+func TestUninstallYesAutoAcceptsSudoCleanup(t *testing.T) {
+	home := testHome(t)
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(home); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
+	store := state.NewStore(state.Paths{
+		Home:         filepath.Join(home, "managed"),
+		ConfigDir:    filepath.Join(home, "config"),
+		AgentsDir:    filepath.Join(home, "LaunchAgents"),
+		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
+		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
+	})
+	installer := &fakeBootstrapInstaller{}
+	app := NewApp(strings.NewReader(""), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	app.priv = &fakePrivilegedOperator{}
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
+		t.Fatalf("install error = %v", err)
+	}
+	installer.removeErr = &bootstrap.PermissionError{Err: os.ErrPermission}
+	stdout.Reset()
+
+	if err := app.Run([]string{"uninstall", "--yes"}); err != nil {
+		t.Fatalf("uninstall error = %v", err)
+	}
+	if len(installer.sudoCalls) != 1 {
+		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
+	}
+	if got := stdout.String(); strings.Contains(got, "Retry with sudo?") {
+		t.Fatalf("unexpected prompt output: %q", got)
+	}
+}
+
 func newTestApp(t *testing.T) *App {
+	t.Helper()
+	home := testHome(t)
+	store := state.NewStore(state.Paths{
+		Home:         filepath.Join(home, "managed"),
+		ConfigDir:    filepath.Join(home, "config"),
+		AgentsDir:    filepath.Join(home, "LaunchAgents"),
+		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
+		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
+	})
+	app := NewApp(strings.NewReader(""), ioDiscard{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), &fakeBootstrapInstaller{}))
+	app.priv = &fakePrivilegedOperator{}
+	if err := os.MkdirAll(store.Paths().Home, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(store.Paths().Home, ".installed"), []byte("installed\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	return app
+}
+
+func newRawTestApp(t *testing.T) *App {
 	t.Helper()
 	home := testHome(t)
 	store := state.NewStore(state.Paths{

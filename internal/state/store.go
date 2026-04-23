@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/joshgummersall/summond/internal/job"
-	"github.com/joshgummersall/summond/internal/plist"
+	"github.com/standardlabs/summond/internal/job"
+	"github.com/standardlabs/summond/internal/plist"
 )
 
 type Paths struct {

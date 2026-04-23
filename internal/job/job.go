@@ -336,7 +336,7 @@ func DefaultLabel(name string) string {
 	if safe == "" {
 		safe = "job"
 	}
-	return "com.joshgummersall.summond." + safe
+	return "com.standardlabs.summond." + safe
 }
 
 func (s Schedule) NormalizeForTarget(target Target) error {
