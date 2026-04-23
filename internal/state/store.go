@@ -71,6 +71,11 @@ func (s *Store) Install(spec job.Spec) (job.Spec, error) {
 	spec.StdoutPath = defaultIfEmpty(spec.StdoutPath, s.logPath(spec.Name, "out"))
 	spec.StderrPath = defaultIfEmpty(spec.StderrPath, s.logPath(spec.Name, "err"))
 	spec.PlistPath = s.plistInstallPath(spec)
+	checksum, err := spec.SpecChecksum()
+	if err != nil {
+		return job.Spec{}, fmt.Errorf("compute checksum: %w", err)
+	}
+	spec.Checksum = checksum
 
 	if err := s.ensureDirs(spec); err != nil {
 		return job.Spec{}, err

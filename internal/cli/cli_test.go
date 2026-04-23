@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/joshgummersall/summond/internal/bootstrap"
+	"github.com/joshgummersall/summond/internal/config"
 	"github.com/joshgummersall/summond/internal/job"
 	"github.com/joshgummersall/summond/internal/state"
 )
@@ -268,6 +269,46 @@ func TestApplyReportsVerificationWarningsButSucceeds(t *testing.T) {
 		t.Fatalf("apply error = %v", err)
 	}
 	if got := stdout.String(); !strings.Contains(got, "warning: cleanup: loaded job verification failed:") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestApplyUsesChecksumForVerificationWhenAvailable(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["clean"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+		"enabled = true",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	specs, err := config.LoadFile(configPath)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	installed, err := app.store.Install(specs[0])
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	runner.printText = map[string]string{"cleanup": "loaded checksum " + installed.Checksum}
+	stdout.Reset()
+
+	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	if got := stdout.String(); strings.Contains(got, "warning: cleanup: loaded job verification failed:") {
 		t.Fatalf("stdout = %q", got)
 	}
 }

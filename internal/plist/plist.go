@@ -9,6 +9,8 @@ import (
 	"github.com/joshgummersall/summond/internal/job"
 )
 
+const checksumKey = "SummondSpecChecksum"
+
 func Render(spec job.Spec) ([]byte, error) {
 	if err := spec.Normalize(); err != nil {
 		return nil, err
@@ -20,6 +22,9 @@ func Render(spec job.Spec) ([]byte, error) {
 	buf.WriteString(`<plist version="1.0">` + "\n")
 	buf.WriteString("<dict>\n")
 	writeString(&buf, "Label", spec.Label)
+	if spec.Checksum != "" {
+		writeString(&buf, checksumKey, spec.Checksum)
+	}
 	writeBool(&buf, "RunAtLoad", runAtLoad(spec.Schedule))
 	if spec.WorkingDir != "" {
 		writeString(&buf, "WorkingDirectory", spec.WorkingDir)

@@ -1,10 +1,14 @@
 package job
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -51,6 +55,7 @@ type Spec struct {
 	StdoutPath   string            `json:"stdout_path,omitempty"`
 	StderrPath   string            `json:"stderr_path,omitempty"`
 	PlistPath    string            `json:"plist_path,omitempty"`
+	Checksum     string            `json:"checksum,omitempty"`
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-z0-9.-]+`)
@@ -172,4 +177,57 @@ func validateClock(hour, minute int) error {
 		return fmt.Errorf("minute must be between 0 and 59, got %d", minute)
 	}
 	return nil
+}
+
+func (s Spec) SpecChecksum() (string, error) {
+	type envPair struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	type checksumSpec struct {
+		Name         string    `json:"name"`
+		Label        string    `json:"label"`
+		Target       Target    `json:"target"`
+		Command      string    `json:"command,omitempty"`
+		Args         []string  `json:"args,omitempty"`
+		ShellCommand string    `json:"shell_command,omitempty"`
+		WorkingDir   string    `json:"working_dir,omitempty"`
+		Environment  []envPair `json:"environment,omitempty"`
+		Schedule     Schedule  `json:"schedule"`
+		Enabled      bool      `json:"enabled"`
+		StdoutPath   string    `json:"stdout_path,omitempty"`
+		StderrPath   string    `json:"stderr_path,omitempty"`
+		PlistPath    string    `json:"plist_path,omitempty"`
+	}
+
+	keys := make([]string, 0, len(s.Environment))
+	for key := range s.Environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	env := make([]envPair, 0, len(keys))
+	for _, key := range keys {
+		env = append(env, envPair{Key: key, Value: s.Environment[key]})
+	}
+
+	payload, err := json.Marshal(checksumSpec{
+		Name:         s.Name,
+		Label:        s.Label,
+		Target:       s.Target,
+		Command:      s.Command,
+		Args:         s.Args,
+		ShellCommand: s.ShellCommand,
+		WorkingDir:   s.WorkingDir,
+		Environment:  env,
+		Schedule:     s.Schedule,
+		Enabled:      s.Enabled,
+		StdoutPath:   s.StdoutPath,
+		StderrPath:   s.StderrPath,
+		PlistPath:    s.PlistPath,
+	})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:]), nil
 }

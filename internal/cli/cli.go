@@ -379,6 +379,9 @@ func (a *App) verifyLoadedJob(spec job.Spec) error {
 	if err != nil {
 		return fmt.Errorf("launchctl print: %w", err)
 	}
+	if spec.Checksum != "" && strings.Contains(text, spec.Checksum) {
+		return nil
+	}
 	expected := []string{spec.Label, spec.StdoutPath, spec.StderrPath}
 	if spec.ShellCommand != "" {
 		expected = append(expected, spec.ShellCommand)

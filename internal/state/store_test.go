@@ -38,6 +38,9 @@ func TestInstallCreatesManagedLogFiles(t *testing.T) {
 			t.Fatalf("log file %q size = %d, want 0", path, info.Size())
 		}
 	}
+	if spec.Checksum == "" {
+		t.Fatal("expected checksum")
+	}
 }
 
 func TestInstallCreatesCustomLogDirectoriesAndFiles(t *testing.T) {
