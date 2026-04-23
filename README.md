@@ -70,7 +70,6 @@ Apply jobs from TOML:
 [jobs.cleanup]
 command = "/bin/echo"
 args = ["cleanup"]
-target = "agent"
 schedule = "daily"
 hour = 3
 minute = 45
@@ -105,10 +104,11 @@ Use `trigger = "on_change"` with `watch_paths` to run a job when files change. R
 [jobs.watcher]
 command = "/bin/echo"
 args = ["config changed"]
-target = "agent"
 trigger = "on_change"
 watch_paths = ["../fixtures/input.txt"]
 ```
+
+`target` defaults to `"agent"` when omitted. Set `target = "daemon"` for system LaunchDaemon jobs.
 
 ## Supported schedules
 

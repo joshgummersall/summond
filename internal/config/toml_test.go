@@ -40,6 +40,32 @@ MODE = "fast"
 	}
 }
 
+func TestLoadFileDefaultsTargetToAgentWhenOmitted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[jobs.cleanup]
+command = "/bin/echo"
+args = ["cleanup"]
+schedule = "daily"
+hour = 3
+minute = 45
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	specs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("len(specs) = %d", len(specs))
+	}
+	if got, want := specs[0].Target, "agent"; string(got) != want {
+		t.Fatalf("Target = %q, want %q", got, want)
+	}
+}
+
 func TestLoadFileResolvesRelativeWatchPaths(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "configs", "summond.toml")

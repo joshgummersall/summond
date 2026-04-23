@@ -320,14 +320,12 @@ func renderConfig() string {
 # [jobs.cleanup]
 # command = "/bin/echo"
 # args = ["cleanup"]
-# target = "agent"
 # schedule = "hourly"
 # minute = 15
 
 # Daily example
 # [jobs.backup]
 # shell_command = "cd ~/src/my-project && git pull --ff-only"
-# target = "agent"
 # schedule = "daily"
 # hour = 3
 # minute = 30
@@ -336,19 +334,17 @@ func renderConfig() string {
 # [jobs.startup]
 # command = "/usr/bin/open"
 # args = ["-a", "Messages"]
-# target = "agent"
 # schedule = "login"
 
 # Interval example
 # [jobs.sync]
 # command = "/usr/bin/env"
 # args = ["bash", "-lc", "echo syncing"]
-# target = "agent"
 # schedule = "interval"
 # interval_minutes = 30
 
 # Daemon note
-# Use target = "daemon" with schedule = "boot" for a system LaunchDaemon.
+# target defaults to "agent"; use target = "daemon" with schedule = "boot" for a system LaunchDaemon.
 # Managed stdout/stderr log paths are assigned automatically.
 `) + "\n"
 }
