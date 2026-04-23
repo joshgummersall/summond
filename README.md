@@ -84,7 +84,6 @@ Summond writes stdout and stderr to managed log files under `~/Library/Applicati
 
 ```sh
 summond logs cleanup
-summond logs --follow cleanup
 ```
 
 ## File Watch Triggers

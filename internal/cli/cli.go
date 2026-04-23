@@ -67,24 +67,12 @@ func (a *App) Run(args []string) error {
 		return a.runInstall(args[1:])
 	case "uninstall":
 		return a.runUninstall(args[1:])
-	case "add":
-		return a.runAdd(args[1:])
 	case "apply":
 		return a.runApply(args[1:])
 	case "list":
 		return a.runList(args[1:])
 	case "inspect":
 		return a.runInspect(args[1:])
-	case "enable":
-		return a.runEnableDisable(args[1:], true)
-	case "disable":
-		return a.runEnableDisable(args[1:], false)
-	case "start":
-		return a.runStart(args[1:])
-	case "stop":
-		return a.runStop(args[1:])
-	case "restart":
-		return a.runRestart(args[1:])
 	case "remove":
 		return a.runRemove(args[1:])
 	case "logs":
@@ -245,87 +233,6 @@ func (a *App) runUninstall(args []string) error {
 	return nil
 }
 
-func (a *App) runAdd(args []string) error {
-	if len(args) == 0 {
-		return errors.New("add requires a job name")
-	}
-	name := ""
-	if !strings.HasPrefix(args[0], "-") {
-		name = args[0]
-		args = args[1:]
-	}
-
-	fs := flag.NewFlagSet("add", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-
-	target := fs.String("target", string(job.TargetAgent), "agent or daemon")
-	schedule := fs.String("schedule", "", "hourly, daily, weekly, login, boot, interval, calendar")
-	command := fs.String("command", "", "absolute executable path")
-	shellCommand := fs.String("shell", "", "shell command")
-	workingDir := fs.String("working-dir", "", "working directory")
-	minute := fs.Int("minute", 0, "calendar minute")
-	hour := fs.Int("hour", 0, "calendar hour")
-	weekday := fs.Int("weekday", 0, "launchd weekday 1-7")
-	day := fs.Int("day", 0, "calendar day")
-	month := fs.Int("month", 0, "calendar month")
-	intervalMinutes := fs.Int("interval-minutes", 0, "interval minutes")
-	enabled := fs.Bool("enabled", true, "enable the job after install")
-	stdoutPath := fs.String("stdout-path", "", "stdout log path")
-	stderrPath := fs.String("stderr-path", "", "stderr log path")
-	envPairs := multiValueFlag{}
-	fs.Var(&envPairs, "env", "KEY=VALUE environment variable")
-
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	rest := fs.Args()
-	if name == "" {
-		if len(rest) == 0 {
-			return errors.New("add requires a job name")
-		}
-		name = rest[0]
-		rest = rest[1:]
-	}
-	if name == "" {
-		return errors.New("add requires a job name")
-	}
-	spec := job.Spec{
-		Name:         name,
-		Target:       job.Target(*target),
-		Command:      *command,
-		ShellCommand: *shellCommand,
-		WorkingDir:   *workingDir,
-		Schedule: job.Schedule{
-			Kind:            job.ScheduleKind(*schedule),
-			IntervalMinutes: *intervalMinutes,
-			Minute:          *minute,
-			Hour:            *hour,
-			Weekday:         *weekday,
-			Day:             *day,
-			Month:           *month,
-		},
-		Enabled:     *enabled,
-		StdoutPath:  *stdoutPath,
-		StderrPath:  *stderrPath,
-		Environment: envPairs.Map(),
-	}
-	if len(rest) > 0 {
-		spec.Args = rest
-	}
-
-	installed, err := a.store.Install(spec)
-	if err != nil {
-		return err
-	}
-	if installed.Enabled {
-		if err := a.runner.Bootstrap(installed); err != nil {
-			return err
-		}
-	}
-	_, err = fmt.Fprintf(a.stdout, "installed %s (%s)\n", installed.Name, installed.Label)
-	return err
-}
-
 func (a *App) runApply(args []string) error {
 	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -471,64 +378,6 @@ func (a *App) runInspect(args []string) error {
 	return err
 }
 
-func (a *App) runEnableDisable(args []string, enabled bool) error {
-	if len(args) != 1 {
-		return errors.New("enable/disable requires a job name")
-	}
-	spec, err := a.store.UpdateEnabled(args[0], enabled)
-	if err != nil {
-		return err
-	}
-	if enabled {
-		if err := a.runner.Bootstrap(spec); err != nil {
-			return err
-		}
-		_, err = fmt.Fprintf(a.stdout, "enabled %s\n", spec.Name)
-		return err
-	}
-	if err := a.runner.Bootout(spec); err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(a.stdout, "disabled %s\n", spec.Name)
-	return err
-}
-
-func (a *App) runStart(args []string) error {
-	spec, err := a.requireSingleSpec(args, "start")
-	if err != nil {
-		return err
-	}
-	if err := a.runner.Kickstart(spec); err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(a.stdout, "started %s\n", spec.Name)
-	return err
-}
-
-func (a *App) runStop(args []string) error {
-	spec, err := a.requireSingleSpec(args, "stop")
-	if err != nil {
-		return err
-	}
-	if err := a.runner.Stop(spec); err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(a.stdout, "stopped %s\n", spec.Name)
-	return err
-}
-
-func (a *App) runRestart(args []string) error {
-	spec, err := a.requireSingleSpec(args, "restart")
-	if err != nil {
-		return err
-	}
-	if err := a.runner.Kickstart(spec); err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(a.stdout, "restarted %s\n", spec.Name)
-	return err
-}
-
 func (a *App) runRemove(args []string) error {
 	spec, err := a.requireSingleSpec(args, "remove")
 	if err != nil {
@@ -545,7 +394,6 @@ func (a *App) runRemove(args []string) error {
 func (a *App) runLogs(args []string) error {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	follow := fs.Bool("follow", false, "follow the log file")
 	stream := fs.String("stream", "stdout", "stdout or stderr")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -563,10 +411,6 @@ func (a *App) runLogs(args []string) error {
 	}
 	if path == "" {
 		return errors.New("no log path configured")
-	}
-	_, err = fmt.Fprintf(a.stdout, "%s\n", path)
-	if err != nil || !*follow {
-		return err
 	}
 	cmd := exec.Command("tail", "-n", "40", "-f", path)
 	cmd.Stdout = a.stdout
@@ -590,17 +434,11 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "Commands:")
 	fmt.Fprintln(stdout, "  install                    Scaffold config and newsyslog setup")
 	fmt.Fprintln(stdout, "  uninstall                  Remove Summond-managed jobs and setup")
-	fmt.Fprintln(stdout, "  add <name> [args...]       Create or update a managed job")
 	fmt.Fprintln(stdout, "  apply -f <file>            Apply jobs from a TOML file")
 	fmt.Fprintln(stdout, "  list                       List managed jobs")
 	fmt.Fprintln(stdout, "  inspect <name>             Show job details")
-	fmt.Fprintln(stdout, "  enable <name>              Enable and load a job")
-	fmt.Fprintln(stdout, "  disable <name>             Disable and unload a job")
-	fmt.Fprintln(stdout, "  start <name>               Kickstart a job")
-	fmt.Fprintln(stdout, "  stop <name>                Stop a running job")
-	fmt.Fprintln(stdout, "  restart <name>             Restart a job")
 	fmt.Fprintln(stdout, "  remove <name>              Remove a managed job")
-	fmt.Fprintln(stdout, "  logs [--follow] <name>     Show log path or follow logs")
+	fmt.Fprintln(stdout, "  logs <name>                Follow logs")
 	fmt.Fprintln(stdout, "  version                    Print the CLI version")
 }
 

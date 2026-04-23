@@ -105,36 +105,6 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
-func TestAddAndList(t *testing.T) {
-	app := newTestApp(t)
-	var stdout bytes.Buffer
-	app.stdout = &stdout
-	runner := app.runner.(*fakeRunner)
-
-	err := app.Run([]string{
-		"add", "backup",
-		"--command", "/bin/echo",
-		"--schedule", "hourly",
-		"--minute", "15",
-		"hello",
-		"world",
-	})
-	if err != nil {
-		t.Fatalf("add error = %v", err)
-	}
-	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "backup" {
-		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
-	}
-
-	stdout.Reset()
-	if err := app.Run([]string{"list"}); err != nil {
-		t.Fatalf("list error = %v", err)
-	}
-	if got := stdout.String(); !strings.Contains(got, "backup\tagent\thourly at minute 15\tenabled=true") {
-		t.Fatalf("unexpected list output: %q", got)
-	}
-}
-
 func TestApplyConfig(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
@@ -385,32 +355,6 @@ func TestInspectOnChangeJobShowsWatchPaths(t *testing.T) {
 	}
 }
 
-func TestEnableDisable(t *testing.T) {
-	app := newTestApp(t)
-	runner := app.runner.(*fakeRunner)
-	if err := app.Run([]string{
-		"add", "archive",
-		"--command", "/bin/echo",
-		"--schedule", "daily",
-		"--hour", "1",
-		"--minute", "5",
-	}); err != nil {
-		t.Fatalf("add error = %v", err)
-	}
-	if err := app.Run([]string{"disable", "archive"}); err != nil {
-		t.Fatalf("disable error = %v", err)
-	}
-	if err := app.Run([]string{"enable", "archive"}); err != nil {
-		t.Fatalf("enable error = %v", err)
-	}
-	if len(runner.bootedOut) == 0 || runner.bootedOut[len(runner.bootedOut)-1] != "archive" {
-		t.Fatalf("bootedOut = %#v", runner.bootedOut)
-	}
-	if len(runner.bootstrapped) < 2 || runner.bootstrapped[len(runner.bootstrapped)-1] != "archive" {
-		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
-	}
-}
-
 func TestInstallCreatesStarterFiles(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
@@ -476,13 +420,21 @@ func TestUninstallRemovesManagedArtifacts(t *testing.T) {
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
-	if err := app.Run([]string{
-		"add", "cleanup",
-		"--command", "/bin/echo",
-		"--schedule", "hourly",
-		"--minute", "5",
-	}); err != nil {
-		t.Fatalf("add error = %v", err)
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["cleanup"]`,
+		`target = "agent"`,
+		`schedule = "hourly"`,
+		"minute = 5",
+		"enabled = true",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", "-f", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
 	}
 	stdout.Reset()
 	if err := app.Run([]string{"install", "--install-newsyslog=false"}); err != nil {
