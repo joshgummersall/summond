@@ -36,6 +36,9 @@ MODE = "fast"
 	if got, want := specs[0].Environment["MODE"], "fast"; got != want {
 		t.Fatalf("MODE = %q, want %q", got, want)
 	}
+	if got, want := specs[0].WorkingDir, dir; got != want {
+		t.Fatalf("WorkingDir = %q, want %q", got, want)
+	}
 }
 
 func TestLoadFileResolvesRelativeWatchPaths(t *testing.T) {
@@ -67,5 +70,36 @@ enabled = true
 	}
 	if got[1] != "/tmp/absolute.txt" {
 		t.Fatalf("WatchPaths[1] = %q", got[1])
+	}
+	if got, want := specs[0].WorkingDir, filepath.Dir(path); got != want {
+		t.Fatalf("WorkingDir = %q, want %q", got, want)
+	}
+}
+
+func TestLoadFileRespectsExplicitWorkingDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "configs", "summond.toml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	data := []byte(`
+[jobs.worker]
+command = "/bin/echo"
+args = ["work"]
+target = "agent"
+schedule = "hourly"
+minute = 5
+working_dir = "/tmp/custom-working-dir"
+enabled = true
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	specs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if got, want := specs[0].WorkingDir, "/tmp/custom-working-dir"; got != want {
+		t.Fatalf("WorkingDir = %q, want %q", got, want)
 	}
 }

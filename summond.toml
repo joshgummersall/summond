@@ -1,7 +1,7 @@
 [jobs.hello-world]
-command = "/bin/echo"
-args = ["hello", "world"]
+command = "/opt/homebrew/bin/bat"
+args = ["README.md"]
 target = "agent"
 trigger = "on_change"
-watch_paths = ["summond.toml"]
+watch_paths = ["README.md"]
 enabled = true

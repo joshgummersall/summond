@@ -12,6 +12,10 @@ import (
 )
 
 func LoadFile(path string) ([]job.Spec, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -69,8 +73,9 @@ func LoadFile(path string) ([]job.Spec, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
+	baseDir := filepath.Dir(absPath)
 	for i := range specs {
-		resolvePaths(&specs[i], filepath.Dir(path))
+		resolvePaths(&specs[i], baseDir)
 		if err := specs[i].Normalize(); err != nil {
 			return nil, fmt.Errorf("job %s: %w", specs[i].Name, err)
 		}
@@ -203,6 +208,9 @@ func applyField(spec *job.Spec, key, raw string) error {
 }
 
 func resolvePaths(spec *job.Spec, baseDir string) {
+	if spec.WorkingDir == "" {
+		spec.WorkingDir = filepath.Clean(baseDir)
+	}
 	for i, path := range spec.WatchPaths {
 		if filepath.IsAbs(path) {
 			spec.WatchPaths[i] = filepath.Clean(path)
