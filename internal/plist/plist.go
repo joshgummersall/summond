@@ -62,9 +62,6 @@ func Render(spec job.Spec) ([]byte, error) {
 	if spec.StderrPath != "" {
 		writeString(&buf, "StandardErrorPath", spec.StderrPath)
 	}
-	if !spec.Enabled {
-		writeBool(&buf, "Disabled", true)
-	}
 	buf.WriteString("</dict>\n")
 	buf.WriteString("</plist>\n")
 	return buf.Bytes(), nil

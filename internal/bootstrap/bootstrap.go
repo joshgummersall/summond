@@ -311,7 +311,6 @@ func renderConfig() string {
 # target = "agent"
 # schedule = "hourly"
 # minute = 15
-# enabled = true
 
 # Daily example
 # [jobs.backup]
@@ -320,7 +319,6 @@ func renderConfig() string {
 # schedule = "daily"
 # hour = 3
 # minute = 30
-# enabled = true
 
 # Login example
 # [jobs.startup]
@@ -328,7 +326,6 @@ func renderConfig() string {
 # args = ["-a", "Messages"]
 # target = "agent"
 # schedule = "login"
-# enabled = true
 
 # Interval example
 # [jobs.sync]
@@ -337,11 +334,10 @@ func renderConfig() string {
 # target = "agent"
 # schedule = "interval"
 # interval_minutes = 30
-# enabled = true
 
 # Daemon note
 # Use target = "daemon" with schedule = "boot" for a system LaunchDaemon.
-# Managed stdout/stderr log paths are assigned automatically unless overridden.
+# Managed stdout/stderr log paths are assigned automatically.
 `) + "\n"
 }
 

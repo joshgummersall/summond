@@ -19,7 +19,6 @@ func TestRenderIntervalPlist(t *testing.T) {
 			Kind:            job.ScheduleInterval,
 			IntervalMinutes: 30,
 		},
-		Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
@@ -54,7 +53,6 @@ func TestRenderOnChangePlist(t *testing.T) {
 		Trigger:           job.TriggerOnChange,
 		WatchPaths:        []string{"/tmp/watch.txt"},
 		RuntimeBinaryPath: "/tmp/summond",
-		Enabled:           true,
 	})
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
@@ -87,7 +85,6 @@ func TestRenderDaemonPlistDoesNotSetAquaSessionLimit(t *testing.T) {
 		Schedule: job.Schedule{
 			Kind: job.ScheduleBoot,
 		},
-		Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)
@@ -107,7 +104,6 @@ func TestRenderShellCommandUsesBashStrictMode(t *testing.T) {
 		Schedule: job.Schedule{
 			Kind: job.ScheduleLogin,
 		},
-		Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Render() error = %v", err)

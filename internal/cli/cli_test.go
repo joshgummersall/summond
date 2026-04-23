@@ -324,7 +324,6 @@ func TestApplyReportsBootstrapWarningsButSucceeds(t *testing.T) {
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
-		"enabled = true",
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -363,7 +362,6 @@ func TestApplySkipsBootoutWhenServiceIsMissing(t *testing.T) {
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
-		"enabled = true",
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -399,7 +397,6 @@ func TestApplyReportsBootoutWarningsButSucceeds(t *testing.T) {
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
-		"enabled = false",
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -435,7 +432,6 @@ func TestApplyReportsVerificationWarningsButSucceeds(t *testing.T) {
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
-		"enabled = true",
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -464,7 +460,6 @@ func TestApplyUsesChecksumForVerificationWhenAvailable(t *testing.T) {
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
-		"enabled = true",
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -617,7 +612,6 @@ func TestApplyPrunesPerJobLogsAndLockFiles(t *testing.T) {
 		Name:     "stale",
 		Command:  "/bin/echo",
 		Schedule: job.Schedule{Kind: job.ScheduleDaily, Hour: 3, HourSet: true, Minute: 45, MinuteSet: true},
-		Enabled:  true,
 	})
 	if err != nil {
 		t.Fatalf("Install(stale) error = %v", err)
@@ -762,7 +756,6 @@ func TestLogsWritesStdoutAndStderrSeparately(t *testing.T) {
 		Name:     "cleanup",
 		Command:  "/bin/echo",
 		Schedule: job.Schedule{Kind: job.ScheduleDaily, Hour: 3, HourSet: true, Minute: 45, MinuteSet: true},
-		Enabled:  true,
 	})
 	if err != nil {
 		t.Fatalf("Install() error = %v", err)
@@ -798,7 +791,6 @@ func TestInspectOnChangeJobShowsWatchPaths(t *testing.T) {
 		`target = "agent"`,
 		`trigger = "on_change"`,
 		`watch_paths = ["/tmp/watch.txt"]`,
-		"enabled = true",
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -831,7 +823,6 @@ func TestInspectShowsShellScriptOnNewLine(t *testing.T) {
 		`"""`,
 		`target = "agent"`,
 		`schedule = "login"`,
-		"enabled = true",
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -867,7 +858,6 @@ func TestListOutputsTSV(t *testing.T) {
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
-		"enabled = true",
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -881,10 +871,10 @@ func TestListOutputsTSV(t *testing.T) {
 		t.Fatalf("list error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "NAME") || !strings.Contains(got, "TARGET") || !strings.Contains(got, "SCHEDULE") || !strings.Contains(got, "ENABLED") || !strings.Contains(got, "STATUS") {
+	if !strings.Contains(got, "NAME") || !strings.Contains(got, "TARGET") || !strings.Contains(got, "SCHEDULE") || !strings.Contains(got, "STATUS") {
 		t.Fatalf("stdout missing headers: %q", got)
 	}
-	if !strings.Contains(got, "cleanup") || !strings.Contains(got, "agent") || !strings.Contains(got, "daily at 03:45") || !strings.Contains(got, "true") || !strings.Contains(got, "never") {
+	if !strings.Contains(got, "cleanup") || !strings.Contains(got, "agent") || !strings.Contains(got, "daily at 03:45") || !strings.Contains(got, "never") {
 		t.Fatalf("stdout = %q", got)
 	}
 	if strings.Contains(got, "\t") {
@@ -906,7 +896,6 @@ func TestExecRecordsSuccessfulRun(t *testing.T) {
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
-		"enabled = true",
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -948,7 +937,6 @@ func TestExecRecordsFailingRun(t *testing.T) {
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
-		"enabled = true",
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -1158,7 +1146,6 @@ func TestUninstallRemovesManagedArtifacts(t *testing.T) {
 		`target = "agent"`,
 		`schedule = "hourly"`,
 		"minute = 5",
-		"enabled = true",
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -1363,18 +1350,14 @@ type fakePrivilegedOperator struct {
 	err          error
 }
 
-func (f *fakePrivilegedOperator) InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string, enabled bool) error {
+func (f *fakePrivilegedOperator) InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string) error {
 	f.created = append(f.created, dirs...)
 	f.installed = append(f.installed,
 		[2]string{runtimeSource, runtimeDest},
 		[2]string{plistSource, plistDest},
 		[2]string{metadataSource, metadataDest},
 	)
-	if enabled {
-		f.bootstrapped = append(f.bootstrapped, plistDest)
-	} else {
-		f.bootout = append(f.bootout, plistDest)
-	}
+	f.bootstrapped = append(f.bootstrapped, plistDest)
 	return f.err
 }
 

@@ -74,7 +74,6 @@ target = "agent"
 schedule = "daily"
 hour = 3
 minute = 45
-enabled = true
 
 [jobs.cleanup.env]
 MODE = "nightly"
@@ -109,7 +108,6 @@ args = ["config changed"]
 target = "agent"
 trigger = "on_change"
 watch_paths = ["../fixtures/input.txt"]
-enabled = true
 ```
 
 ## Supported schedules

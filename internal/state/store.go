@@ -184,15 +184,6 @@ func (s *Store) RuntimeBinaryPath() string {
 	return s.runtimeBinaryPath()
 }
 
-func (s *Store) UpdateEnabled(name string, enabled bool) (job.Spec, error) {
-	spec, err := s.Load(name)
-	if err != nil {
-		return job.Spec{}, err
-	}
-	spec.Enabled = enabled
-	return s.Install(spec)
-}
-
 func (s *Store) PrepareRuntimeBinary(sourcePath string) (string, error) {
 	if sourcePath == "" {
 		return "", errors.New("runtime binary source path is required")

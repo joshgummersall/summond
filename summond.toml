@@ -2,14 +2,12 @@
 shell_command = "brew update && brew upgrade && brew cleanup"
 target = "agent"
 schedule = "weekly"
-enabled = true
 
 [jobs.chezmoi]
 command = "chezmoi"
 args = ["update"]
 target = "agent"
 schedule = "daily"
-enabled = true
 
 [jobs.podman]
 shell_command = """
@@ -23,4 +21,3 @@ fi
 """
 target = "agent"
 schedule = "login"
-enabled = true

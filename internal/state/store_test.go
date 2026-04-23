@@ -53,7 +53,6 @@ func TestInstallCreatesManagedLogFiles(t *testing.T) {
 		Schedule: job.Schedule{
 			Kind: job.ScheduleLogin,
 		},
-		Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Install() error = %v", err)
@@ -92,7 +91,6 @@ func TestInstallAlwaysUsesManagedLogPaths(t *testing.T) {
 		Schedule: job.Schedule{
 			Kind: job.ScheduleLogin,
 		},
-		Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Install() error = %v", err)
@@ -123,7 +121,6 @@ func TestInstallPreservesRuntimeState(t *testing.T) {
 		Schedule: job.Schedule{
 			Kind: job.ScheduleLogin,
 		},
-		Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Install() error = %v", err)
@@ -151,7 +148,6 @@ func TestInstallPreservesRuntimeState(t *testing.T) {
 		Schedule: job.Schedule{
 			Kind: job.ScheduleLogin,
 		},
-		Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Install() error = %v", err)
@@ -179,7 +175,6 @@ func TestRecordExecutionUpdatesMetadata(t *testing.T) {
 		Schedule: job.Schedule{
 			Kind: job.ScheduleLogin,
 		},
-		Enabled: true,
 	})
 	if err != nil {
 		t.Fatalf("Install() error = %v", err)

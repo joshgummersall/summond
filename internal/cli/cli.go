@@ -50,7 +50,7 @@ type App struct {
 }
 
 type privilegedOperator interface {
-	InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string, enabled bool) error
+	InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string) error
 	RemoveDaemonArtifactsWithSudo(plistPaths []string, metadataPaths []string, home string) error
 	RemovePathWithSudo(path string) error
 	BootoutDaemonWithSudo(plistPath string) error
@@ -501,12 +501,12 @@ func (a *App) runList(args []string) error {
 		return err
 	}
 	writer := tabwriter.NewWriter(a.stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(writer, "NAME\tTARGET\tSCHEDULE\tENABLED\tSTATUS"); err != nil {
+	if _, err := fmt.Fprintln(writer, "NAME\tTARGET\tSCHEDULE\tSTATUS"); err != nil {
 		return err
 	}
 	for _, managed := range managedSpecs {
 		spec := managed.spec
-		_, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%t\t%s\n", spec.Name, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled, describeLastRunStatus(spec))
+		_, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", spec.Name, spec.Target, describeTriggerOrSchedule(spec), describeLastRunStatus(spec))
 		if err != nil {
 			return err
 		}
@@ -528,8 +528,8 @@ func (a *App) runInspect(args []string) error {
 		return err
 	}
 	spec := managed.spec
-	_, err = fmt.Fprintf(a.stdout, "name: %s\nlabel: %s\ntarget: %s\ntrigger: %s\nenabled: %t\nstatus: %s\nruns: %d (success=%d failure=%d)\n",
-		spec.Name, spec.Label, spec.Target, describeTriggerOrSchedule(spec), spec.Enabled, describeLastRunStatus(spec), spec.RunCount, spec.SuccessCount, spec.FailureCount)
+	_, err = fmt.Fprintf(a.stdout, "name: %s\ntarget: %s\ntrigger: %s\nstatus: %s\nruns: %d (success=%d failure=%d)\n",
+		spec.Name, spec.Target, describeTriggerOrSchedule(spec), describeLastRunStatus(spec), spec.RunCount, spec.SuccessCount, spec.FailureCount)
 	if err != nil {
 		return err
 	}
@@ -744,7 +744,7 @@ func printCommandUsage(stdout io.Writer, command string) {
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond list")
 		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "List all managed jobs with target, schedule, enabled state, and status.")
+		fmt.Fprintln(stdout, "List all managed jobs with target, schedule, and status.")
 	case "inspect":
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond inspect <name>")
@@ -925,31 +925,23 @@ func (a *App) applySpec(store *state.Store, spec job.Spec) (job.Spec, string, er
 	if err != nil {
 		return job.Spec{}, "", err
 	}
-	if installed.Enabled {
-		if loaded, err := a.isLoaded(installed); err != nil {
-			a.logger.Debug("load-state check failed", "name", installed.Name, "error", err)
-			return installed, fmt.Sprintf("%s: load-state check failed: %v", installed.Name, err), nil
-		} else if loaded {
-			a.logger.Debug("job already loaded, bootout before bootstrap", "name", installed.Name)
-			if err := a.runner.Bootout(installed); err != nil {
-				a.logger.Debug("bootout before bootstrap failed", "name", installed.Name, "error", err)
-				return installed, fmt.Sprintf("%s: bootout before bootstrap failed: %v", installed.Name, err), nil
-			}
+	if loaded, err := a.isLoaded(installed); err != nil {
+		a.logger.Debug("load-state check failed", "name", installed.Name, "error", err)
+		return installed, fmt.Sprintf("%s: load-state check failed: %v", installed.Name, err), nil
+	} else if loaded {
+		a.logger.Debug("job already loaded, bootout before bootstrap", "name", installed.Name)
+		if err := a.runner.Bootout(installed); err != nil {
+			a.logger.Debug("bootout before bootstrap failed", "name", installed.Name, "error", err)
+			return installed, fmt.Sprintf("%s: bootout before bootstrap failed: %v", installed.Name, err), nil
 		}
-		if err := a.runner.Bootstrap(installed); err != nil {
-			a.logger.Debug("bootstrap failed", "name", installed.Name, "error", err)
-			return installed, fmt.Sprintf("%s: bootstrap failed: %v", installed.Name, err), nil
-		}
-		if err := a.verifyLoadedJob(installed); err != nil {
-			a.logger.Debug("loaded job verification failed", "name", installed.Name, "error", err)
-			return installed, fmt.Sprintf("%s: loaded job verification failed: %v", installed.Name, err), nil
-		}
-		return installed, "", nil
 	}
-	a.logger.Debug("job disabled, bootout", "name", installed.Name)
-	if err := a.runner.Bootout(installed); err != nil {
-		a.logger.Debug("bootout failed", "name", installed.Name, "error", err)
-		return installed, fmt.Sprintf("%s: bootout failed: %v", installed.Name, err), nil
+	if err := a.runner.Bootstrap(installed); err != nil {
+		a.logger.Debug("bootstrap failed", "name", installed.Name, "error", err)
+		return installed, fmt.Sprintf("%s: bootstrap failed: %v", installed.Name, err), nil
+	}
+	if err := a.verifyLoadedJob(installed); err != nil {
+		a.logger.Debug("loaded job verification failed", "name", installed.Name, "error", err)
+		return installed, fmt.Sprintf("%s: loaded job verification failed: %v", installed.Name, err), nil
 	}
 	return installed, "", nil
 }
@@ -1005,7 +997,6 @@ func (a *App) installDaemonSpecWithSudo(spec job.Spec, runtimeSource string) (jo
 		installed.PlistPath,
 		metadataPath,
 		a.daemonStore.MetadataPathForSpec(installed),
-		installed.Enabled,
 	); err != nil {
 		return job.Spec{}, err
 	}
@@ -1401,11 +1392,10 @@ func runSudoScript(script string, args ...string) error {
 	return nil
 }
 
-func (osPrivilegedOperator) InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string, enabled bool) error {
+func (osPrivilegedOperator) InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string) error {
 	script := `
 dir_count="$1"
-enabled="$2"
-shift 2
+shift 1
 i=0
 while [ "$i" -lt "$dir_count" ]; do
   install -d -m 0755 "$1"
@@ -1422,11 +1412,9 @@ install -m 0755 "$runtime_source" "$runtime_dest"
 install -m 0644 "$plist_source" "$plist_dest"
 install -m 0644 "$metadata_source" "$metadata_dest"
 launchctl bootout system "$plist_dest" >/dev/null 2>&1 || true
-if [ "$enabled" = "true" ]; then
-  launchctl bootstrap system "$plist_dest"
-fi
+launchctl bootstrap system "$plist_dest"
 `
-	args := []string{fmt.Sprintf("%d", len(dirs)), fmt.Sprintf("%t", enabled)}
+	args := []string{fmt.Sprintf("%d", len(dirs))}
 	args = append(args, dirs...)
 	args = append(args, runtimeSource, runtimeDest, plistSource, plistDest, metadataSource, metadataDest)
 	return runSudoScript(script, args...)

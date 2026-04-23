@@ -14,7 +14,6 @@ func TestNormalizeLoginRequiresAgent(t *testing.T) {
 		Schedule: Schedule{
 			Kind: ScheduleLogin,
 		},
-		Enabled: true,
 	}
 	if err := spec.Normalize(); err == nil {
 		t.Fatal("expected error")
@@ -30,7 +29,6 @@ func TestNormalizeHourly(t *testing.T) {
 			Kind:   ScheduleHourly,
 			Minute: 10,
 		},
-		Enabled: true,
 	}
 	if err := spec.Normalize(); err != nil {
 		t.Fatalf("Normalize() error = %v", err)
@@ -51,7 +49,6 @@ func TestNormalizeDerivesStableHourlyMinute(t *testing.T) {
 		Schedule: Schedule{
 			Kind: ScheduleHourly,
 		},
-		Enabled: true,
 	}
 	specB := specA
 
@@ -77,7 +74,6 @@ func TestNormalizeDerivesStableWeeklyFields(t *testing.T) {
 		Schedule: Schedule{
 			Kind: ScheduleWeekly,
 		},
-		Enabled: true,
 	}
 	if err := spec.Normalize(); err != nil {
 		t.Fatalf("Normalize() error = %v", err)
@@ -107,7 +103,6 @@ func TestSpecChecksumStableAcrossMapOrder(t *testing.T) {
 			Kind:   ScheduleHourly,
 			Minute: 10,
 		},
-		Enabled:    true,
 		StdoutPath: "/tmp/job.out.log",
 		StderrPath: "/tmp/job.err.log",
 		PlistPath:  "/tmp/job.plist",
@@ -138,7 +133,6 @@ func TestNormalizeOnChangeTriggerWithoutSchedule(t *testing.T) {
 		Command:    "/bin/echo",
 		Trigger:    TriggerOnChange,
 		WatchPaths: []string{"/tmp/watch.txt"},
-		Enabled:    true,
 	}
 	if err := spec.Normalize(); err != nil {
 		t.Fatalf("Normalize() error = %v", err)
@@ -159,7 +153,6 @@ func TestNormalizeRespectsExplicitPathAndThrottle(t *testing.T) {
 		Trigger:                 TriggerOnChange,
 		WatchPaths:              []string{"/tmp/watch.txt"},
 		ThrottleIntervalSeconds: 10,
-		Enabled:                 true,
 	}
 	if err := spec.Normalize(); err != nil {
 		t.Fatalf("Normalize() error = %v", err)
@@ -186,7 +179,6 @@ func TestNormalizePreservesExplicitScheduleFields(t *testing.T) {
 			Minute:     30,
 			MinuteSet:  true,
 		},
-		Enabled: true,
 	}
 	if err := spec.Normalize(); err != nil {
 		t.Fatalf("Normalize() error = %v", err)
@@ -218,7 +210,6 @@ func TestNormalizeResolvesCommandFromPath(t *testing.T) {
 		Schedule: Schedule{
 			Kind: ScheduleDaily,
 		},
-		Enabled: true,
 	}
 
 	if err := spec.Normalize(); err != nil {
@@ -244,7 +235,6 @@ func TestNormalizeResolvesRelativeCommandFromWorkingDir(t *testing.T) {
 		Schedule: Schedule{
 			Kind: ScheduleDaily,
 		},
-		Enabled: true,
 	}
 
 	if err := spec.Normalize(); err != nil {
@@ -263,7 +253,6 @@ func TestNormalizeRejectsPathLikeJobName(t *testing.T) {
 		Schedule: Schedule{
 			Kind: ScheduleDaily,
 		},
-		Enabled: true,
 	}
 
 	if err := spec.Normalize(); err == nil {
@@ -280,7 +269,6 @@ func TestNormalizeRejectsPathLikeLabel(t *testing.T) {
 		Schedule: Schedule{
 			Kind: ScheduleDaily,
 		},
-		Enabled: true,
 	}
 
 	if err := spec.Normalize(); err == nil {

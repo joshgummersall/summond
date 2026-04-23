@@ -76,7 +76,6 @@ type Spec struct {
 	Trigger                 TriggerKind       `json:"trigger,omitempty"`
 	WatchPaths              []string          `json:"watch_paths,omitempty"`
 	ThrottleIntervalSeconds int               `json:"throttle_interval_seconds,omitempty"`
-	Enabled                 bool              `json:"enabled"`
 	StdoutPath              string            `json:"stdout_path,omitempty"`
 	StderrPath              string            `json:"stderr_path,omitempty"`
 	PlistPath               string            `json:"plist_path,omitempty"`
@@ -281,7 +280,6 @@ func (s Spec) scheduleSeed() ([32]byte, error) {
 		Schedule     scheduleSeed `json:"schedule"`
 		Trigger      TriggerKind  `json:"trigger,omitempty"`
 		WatchPaths   []string     `json:"watch_paths,omitempty"`
-		Enabled      bool         `json:"enabled"`
 	}
 
 	keys := make([]string, 0, len(s.Environment))
@@ -326,7 +324,6 @@ func (s Spec) scheduleSeed() ([32]byte, error) {
 		Schedule:     seedSchedule,
 		Trigger:      s.Trigger,
 		WatchPaths:   s.WatchPaths,
-		Enabled:      s.Enabled,
 	})
 	if err != nil {
 		return [32]byte{}, err
@@ -464,7 +461,6 @@ func (s Spec) SpecChecksum() (string, error) {
 		Trigger                 TriggerKind `json:"trigger,omitempty"`
 		WatchPaths              []string    `json:"watch_paths,omitempty"`
 		ThrottleIntervalSeconds int         `json:"throttle_interval_seconds,omitempty"`
-		Enabled                 bool        `json:"enabled"`
 		StdoutPath              string      `json:"stdout_path,omitempty"`
 		StderrPath              string      `json:"stderr_path,omitempty"`
 		PlistPath               string      `json:"plist_path,omitempty"`
@@ -495,7 +491,6 @@ func (s Spec) SpecChecksum() (string, error) {
 		Trigger:                 s.Trigger,
 		WatchPaths:              s.WatchPaths,
 		ThrottleIntervalSeconds: s.ThrottleIntervalSeconds,
-		Enabled:                 s.Enabled,
 		StdoutPath:              s.StdoutPath,
 		StderrPath:              s.StderrPath,
 		PlistPath:               s.PlistPath,

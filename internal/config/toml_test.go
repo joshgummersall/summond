@@ -18,7 +18,6 @@ schedule = "weekly"
 weekday = 2
 hour = 1
 minute = 30
-enabled = true
 
 [jobs.backup.env]
 MODE = "fast"
@@ -54,7 +53,6 @@ args = ["watch"]
 target = "agent"
 trigger = "on_change"
 watch_paths = ["../data/input.txt", "/tmp/absolute.txt"]
-enabled = true
 `)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -90,7 +88,6 @@ target = "agent"
 schedule = "hourly"
 minute = 5
 working_dir = "/tmp/custom-working-dir"
-enabled = true
 `)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -116,7 +113,6 @@ brew cleanup
 """
 target = "agent"
 schedule = "weekly"
-enabled = true
 `)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -150,7 +146,6 @@ command = "chezmoi"
 args = ["update"]
 target = "agent"
 schedule = "daily"
-enabled = true
 
 [jobs.chezmoi-update.env]
 PATH = "` + binDir + `"

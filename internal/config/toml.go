@@ -29,7 +29,6 @@ type rawJob struct {
 	Environment             map[string]string `toml:"env"`
 	Schedule                string            `toml:"schedule"`
 	Trigger                 string            `toml:"trigger"`
-	Enabled                 *bool             `toml:"enabled"`
 	IntervalMinutes         *int              `toml:"interval_minutes"`
 	Minute                  *int              `toml:"minute"`
 	Hour                    *int              `toml:"hour"`
@@ -103,10 +102,6 @@ func (r rawJob) toSpec(name string, group string) job.Spec {
 		},
 		Trigger:    job.TriggerKind(r.Trigger),
 		WatchPaths: r.WatchPaths,
-		Enabled:    true,
-	}
-	if r.Enabled != nil {
-		spec.Enabled = *r.Enabled
 	}
 	if r.IntervalMinutes != nil {
 		spec.Schedule.IntervalMinutes = *r.IntervalMinutes
