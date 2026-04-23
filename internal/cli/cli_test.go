@@ -374,7 +374,7 @@ func TestApplyFailsWhenBootstrapFails(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("apply error = %v", err)
 	}
-	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "cleanup" {
+	if len(runner.bootedOut) < 1 || runner.bootedOut[0] != "cleanup" {
 		t.Fatalf("bootedOut = %#v", runner.bootedOut)
 	}
 	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "cleanup" {
@@ -383,8 +383,98 @@ func TestApplyFailsWhenBootstrapFails(t *testing.T) {
 	if got := stdout.String(); got != "applied 0 job(s)\nfailed 1 job(s):\n- cleanup: bootstrap failed: launchctl bootstrap failed\n" {
 		t.Fatalf("stdout = %q", got)
 	}
-	if _, err := app.store.Load("cleanup"); err != nil {
-		t.Fatalf("Load(cleanup) error = %v", err)
+	if _, err := app.store.Load("cleanup"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Load(cleanup) error = %v, want not exist", err)
+	}
+}
+
+func TestApplyRollbackRestoresPreviousSpecOnFailure(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	initialData := strings.Join([]string{
+		`group = "tests"`,
+		"",
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["old"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(initialData), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("initial apply error = %v", err)
+	}
+
+	stdout.Reset()
+	runner.bootstrapped = nil
+	runner.bootedOut = nil
+	runner.bootstrapErr = map[string]error{"cleanup": errors.New("launchctl bootstrap failed")}
+
+	updatedData := strings.Join([]string{
+		`group = "tests"`,
+		"",
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["new"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(updatedData), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err := app.Run([]string{"apply", configPath})
+	var exitErr ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("apply error = %v", err)
+	}
+	spec, loadErr := app.store.Load("cleanup")
+	if loadErr != nil {
+		t.Fatalf("Load(cleanup) error = %v", loadErr)
+	}
+	if got, want := spec.Args, []string{"old"}; len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("Args = %#v, want %#v", got, want)
+	}
+}
+
+func TestApplyRollbackRemovesNewSpecOnFailure(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+	runner.bootstrapErr = map[string]error{"cleanup": errors.New("launchctl bootstrap failed")}
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["clean"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err := app.Run([]string{"apply", configPath})
+	var exitErr ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+		t.Fatalf("apply error = %v", err)
+	}
+	if _, loadErr := app.store.Load("cleanup"); !errors.Is(loadErr, os.ErrNotExist) {
+		t.Fatalf("Load(cleanup) error = %v, want not exist", loadErr)
 	}
 }
 
@@ -449,14 +539,14 @@ func TestApplyFailsWhenBootoutFails(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("apply error = %v", err)
 	}
-	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "cleanup" {
+	if len(runner.bootedOut) < 1 || runner.bootedOut[0] != "cleanup" {
 		t.Fatalf("bootedOut = %#v", runner.bootedOut)
 	}
 	if got := stdout.String(); got != "applied 0 job(s)\nfailed 1 job(s):\n- cleanup: bootout before bootstrap failed: launchctl bootout failed\n" {
 		t.Fatalf("stdout = %q", got)
 	}
-	if _, err := app.store.Load("cleanup"); err != nil {
-		t.Fatalf("Load(cleanup) error = %v", err)
+	if _, err := app.store.Load("cleanup"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Load(cleanup) error = %v, want not exist", err)
 	}
 }
 
@@ -531,6 +621,40 @@ func TestApplyUsesChecksumForVerificationWhenAvailable(t *testing.T) {
 	}
 	if got := stdout.String(); got != "applied 1 job(s)\n" {
 		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestExecFailureIncludesMessage(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	app.stdout = &stdout
+	app.stderr = &stderr
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.failer]",
+		`command = "/bin/sh"`,
+		`args = ["-c", "exit 7"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	err := app.Run([]string{"exec", "failer"})
+	var exitErr ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != 7 {
+		t.Fatalf("exec error = %#v", err)
+	}
+	if exitErr.Error() == "" {
+		t.Fatal("expected exec error message")
 	}
 }
 

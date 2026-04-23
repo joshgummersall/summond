@@ -29,11 +29,12 @@ const version = "1.0.0"
 const shellPreamble = "set -euo pipefail\n"
 
 type ExitError struct {
-	Code int
+	Code    int
+	Message string
 }
 
 func (e ExitError) Error() string {
-	return ""
+	return e.Message
 }
 
 type App struct {
@@ -605,7 +606,7 @@ func (a *App) runExec(args []string) error {
 		return err
 	}
 	if runErr != nil {
-		return ExitError{Code: exitCode}
+		return ExitError{Code: exitCode, Message: runErr.Error()}
 	}
 	return nil
 }
@@ -1061,29 +1062,79 @@ func (a *App) environmentFilePath(spec job.Spec) string {
 
 func (a *App) applySpec(store *state.Store, spec job.Spec) (job.Spec, error) {
 	a.logger.Debug("reconciling job", "name", spec.Name, "target", spec.Target, "trigger", spec.Trigger, "schedule", spec.Schedule.Kind)
+	previous, hadPrevious, previousLoaded, err := a.captureApplyState(store, spec.Name)
+	if err != nil {
+		return job.Spec{}, err
+	}
 	installed, err := store.Install(spec)
 	if err != nil {
 		return job.Spec{}, err
 	}
 	if loaded, err := a.isLoaded(installed); err != nil {
 		a.logger.Debug("load-state check failed", "name", installed.Name, "error", err)
-		return installed, fmt.Errorf("load-state check failed: %w", err)
+		return installed, a.rollbackApplyFailure(store, installed, previous, hadPrevious, previousLoaded, false, fmt.Errorf("load-state check failed: %w", err))
 	} else if loaded {
 		a.logger.Debug("job already loaded, bootout before bootstrap", "name", installed.Name)
 		if err := a.runner.Bootout(installed); err != nil {
 			a.logger.Debug("bootout before bootstrap failed", "name", installed.Name, "error", err)
-			return installed, fmt.Errorf("bootout before bootstrap failed: %w", err)
+			return installed, a.rollbackApplyFailure(store, installed, previous, hadPrevious, previousLoaded, false, fmt.Errorf("bootout before bootstrap failed: %w", err))
 		}
 	}
 	if err := a.runner.Bootstrap(installed); err != nil {
 		a.logger.Debug("bootstrap failed", "name", installed.Name, "error", err)
-		return installed, fmt.Errorf("bootstrap failed: %w", err)
+		return installed, a.rollbackApplyFailure(store, installed, previous, hadPrevious, previousLoaded, false, fmt.Errorf("bootstrap failed: %w", err))
 	}
 	if err := a.verifyLoadedJob(installed); err != nil {
 		a.logger.Debug("loaded job verification failed", "name", installed.Name, "error", err)
-		return installed, fmt.Errorf("loaded job verification failed: %w", err)
+		return installed, a.rollbackApplyFailure(store, installed, previous, hadPrevious, previousLoaded, true, fmt.Errorf("loaded job verification failed: %w", err))
 	}
 	return installed, nil
+}
+
+func (a *App) captureApplyState(store *state.Store, name string) (job.Spec, bool, bool, error) {
+	previous, err := store.Load(name)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return job.Spec{}, false, false, nil
+		}
+		return job.Spec{}, false, false, err
+	}
+	loaded, err := a.isLoaded(previous)
+	if err != nil {
+		return job.Spec{}, false, false, fmt.Errorf("load-state check failed before update: %w", err)
+	}
+	return previous, true, loaded, nil
+}
+
+func (a *App) rollbackApplyFailure(store *state.Store, installed job.Spec, previous job.Spec, hadPrevious bool, previousLoaded bool, unloadInstalled bool, applyErr error) error {
+	if rollbackErr := a.rollbackApplyState(store, installed, previous, hadPrevious, previousLoaded, unloadInstalled); rollbackErr != nil {
+		return fmt.Errorf("%v (rollback failed: %w)", applyErr, rollbackErr)
+	}
+	return applyErr
+}
+
+func (a *App) rollbackApplyState(store *state.Store, installed job.Spec, previous job.Spec, hadPrevious bool, previousLoaded bool, unloadInstalled bool) error {
+	if unloadInstalled {
+		if err := a.runner.Bootout(installed); err != nil && !isMissingServiceError(err) {
+			return fmt.Errorf("bootout failed job: %w", err)
+		}
+	}
+	if hadPrevious {
+		restored, err := store.Install(previous)
+		if err != nil {
+			return fmt.Errorf("restore previous managed state: %w", err)
+		}
+		if previousLoaded {
+			if err := a.runner.Bootstrap(restored); err != nil {
+				return fmt.Errorf("restore previous launchd job: %w", err)
+			}
+		}
+		return nil
+	}
+	if _, err := store.Remove(installed.Name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove failed managed state: %w", err)
+	}
+	return nil
 }
 
 func (a *App) applyDaemonSpec(spec job.Spec, runtimeSource string) (job.Spec, error) {

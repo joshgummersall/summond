@@ -44,27 +44,7 @@ Apply and automatically remove managed jobs that were removed from the config:
 summond apply --prune
 ```
 
-Create an hourly user job directly:
-
-```sh
-summond add cleanup \
-  --command /bin/echo \
-  --schedule hourly \
-  --minute 15 \
-  "hello from summond"
-```
-
-Create a daily shell-based job:
-
-```sh
-summond add rotate-logs \
-  --shell 'find /tmp -type f -mtime +7 -delete' \
-  --schedule daily \
-  --hour 3 \
-  --minute 30
-```
-
-Apply jobs from TOML:
+Define jobs in TOML and apply them:
 
 ```toml
 [jobs.cleanup]
