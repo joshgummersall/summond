@@ -106,6 +106,8 @@ func (a *App) Run(args []string) error {
 		return a.runUninstall(remaining[1:])
 	case "apply":
 		return a.runApply(remaining[1:])
+	case "remove":
+		return a.runRemove(remaining[1:])
 	case "list":
 		return a.runList(remaining[1:])
 	case "state":
@@ -416,6 +418,26 @@ func (a *App) runApply(args []string) error {
 	return nil
 }
 
+func (a *App) runRemove(args []string) error {
+	a.logger.Debug("remove start", "args", args)
+	if isHelpArg(args) {
+		printCommandUsage(a.stdout, "remove")
+		return nil
+	}
+	if len(args) != 1 {
+		return errors.New("remove requires a job name")
+	}
+	managed, err := a.loadManagedSpec(args[0])
+	if err != nil {
+		return err
+	}
+	if err := a.removeManagedSpec(managed); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(a.stdout, "removed %s\n", managed.spec.Name)
+	return err
+}
+
 func (a *App) pruneManagedSpecs(pruneSpecs []managedSpec, autoApprove bool) (int, error) {
 	if len(pruneSpecs) == 0 {
 		return 0, nil
@@ -441,21 +463,7 @@ func (a *App) pruneManagedSpecs(pruneSpecs []managedSpec, autoApprove bool) (int
 	}
 
 	for _, managed := range pruneSpecs {
-		spec := managed.spec
-		_ = a.runner.Bootout(spec)
-		if _, err := managed.store.Remove(spec.Name); err != nil {
-			if spec.Target == job.TargetDaemon && errors.Is(err, os.ErrPermission) {
-				approved, promptErr := a.confirmWithDefault("removing daemon jobs requires sudo. Retry with sudo? [Y/n]: ", true)
-				if promptErr != nil {
-					return 0, promptErr
-				}
-				if approved {
-					if err := a.removeDaemonSpecWithSudo(spec); err != nil {
-						return 0, err
-					}
-					continue
-				}
-			}
+		if err := a.removeManagedSpec(managed); err != nil {
 			return 0, err
 		}
 	}
@@ -805,6 +813,31 @@ func (a *App) requireSingleSpec(args []string, name string) (managedSpec, error)
 	return a.loadManagedSpec(args[0])
 }
 
+func (a *App) removeManagedSpec(managed managedSpec) error {
+	spec := managed.spec
+	needsSudo := false
+	if err := a.runner.Bootout(spec); err != nil && spec.Target == job.TargetDaemon {
+		needsSudo = true
+	}
+	if _, err := managed.store.Remove(spec.Name); err != nil {
+		if spec.Target == job.TargetDaemon && errors.Is(err, os.ErrPermission) {
+			needsSudo = true
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if needsSudo {
+		approved, promptErr := a.confirmWithDefault("removing daemon jobs requires sudo. Retry with sudo? [Y/n]: ", true)
+		if promptErr != nil {
+			return promptErr
+		}
+		if approved {
+			return a.removeDaemonSpecWithSudo(spec)
+		}
+	}
+	return nil
+}
+
 func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "summond")
 	fmt.Fprintln(stdout, "")
@@ -815,6 +848,7 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  install                    Scaffold config and newsyslog setup")
 	fmt.Fprintln(stdout, "  uninstall                  Remove Summond-managed jobs and setup")
 	fmt.Fprintln(stdout, "  apply [file]               Apply jobs from a TOML file")
+	fmt.Fprintln(stdout, "  remove <name>              Remove a managed job and all state")
 	fmt.Fprintln(stdout, "  list                       List managed jobs")
 	fmt.Fprintln(stdout, "  state <name>               Print the job state.json file")
 	fmt.Fprintln(stdout, "  plist <name>               Print the job plist file")
@@ -848,6 +882,11 @@ func printCommandUsage(stdout io.Writer, command string) {
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Flags:")
 		fmt.Fprintln(stdout, "  --prune                    Remove managed jobs missing from the config without prompting")
+	case "remove":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond remove <name>")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Remove the managed job, its plist, logs, and persisted state.")
 	case "list":
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond list")

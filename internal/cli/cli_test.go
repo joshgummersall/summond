@@ -118,6 +118,20 @@ func TestHelpApply(t *testing.T) {
 	}
 }
 
+func TestHelpRemove(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"remove", "--help"}); err != nil {
+		t.Fatalf("remove --help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond remove <name>") || !strings.Contains(got, "persisted state") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
 func TestHelpInstall(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
@@ -817,6 +831,84 @@ func TestApplyPrunesPerJobLogsAndLockFiles(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("expected %s to be removed, stat err = %v", path, err)
 		}
+	}
+}
+
+func TestRemoveDeletesAgentJobAndState(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+
+	spec, err := app.store.Install(job.Spec{
+		Group:    "tests",
+		Name:     "cleanup",
+		Command:  "/bin/echo",
+		Schedule: job.Schedule{Kind: job.ScheduleDaily, Hour: 3, HourSet: true, Minute: 45, MinuteSet: true},
+	})
+	if err != nil {
+		t.Fatalf("Install(cleanup) error = %v", err)
+	}
+	if err := os.WriteFile(spec.StdoutPath, []byte("stdout\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(stdout) error = %v", err)
+	}
+	if err := os.WriteFile(spec.StderrPath, []byte("stderr\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(stderr) error = %v", err)
+	}
+
+	if err := app.Run([]string{"remove", "cleanup"}); err != nil {
+		t.Fatalf("remove error = %v", err)
+	}
+	if got := stdout.String(); got != "removed cleanup\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	if !containsString(runner.bootedOut, "cleanup") {
+		t.Fatalf("bootedOut = %#v", runner.bootedOut)
+	}
+	for _, path := range []string{
+		spec.StdoutPath,
+		spec.StderrPath,
+		app.store.MetadataPathForSpec(spec),
+		app.store.MetadataPathForSpec(spec) + ".lock",
+		spec.PlistPath,
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be removed, stat err = %v", path, err)
+		}
+	}
+}
+
+func TestRemoveDaemonJobRetriesWithSudo(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	app.stdin = strings.NewReader("y\n")
+	runner := app.runner.(*fakeRunner)
+	runner.bootoutErr = map[string]error{"cleanup": errors.New("launchctl bootout failed")}
+	priv := app.priv.(*fakePrivilegedOperator)
+
+	spec, err := app.daemonStore.Install(job.Spec{
+		Group:    "tests",
+		Name:     "cleanup",
+		Target:   job.TargetDaemon,
+		Command:  "/bin/echo",
+		Schedule: job.Schedule{Kind: job.ScheduleBoot},
+	})
+	if err != nil {
+		t.Fatalf("Install(cleanup daemon) error = %v", err)
+	}
+
+	if err := app.Run([]string{"remove", "cleanup"}); err != nil {
+		t.Fatalf("remove error = %v", err)
+	}
+	if got := stdout.String(); !strings.Contains(got, "removing daemon jobs requires sudo. Retry with sudo? [Y/n]: ") || !strings.Contains(got, "removed cleanup\n") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if !containsString(priv.bootout, spec.PlistPath) {
+		t.Fatalf("priv.bootout = %#v", priv.bootout)
+	}
+	if !containsString(priv.removed, spec.PlistPath) || !containsString(priv.removed, app.daemonStore.MetadataPathForSpec(spec)) {
+		t.Fatalf("priv.removed = %#v", priv.removed)
 	}
 }
 
