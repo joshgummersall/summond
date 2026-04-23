@@ -216,30 +216,30 @@ func TestHelpLogs(t *testing.T) {
 	}
 }
 
-func TestHelpInspect(t *testing.T) {
+func TestHelpState(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
-	if err := app.Run([]string{"inspect", "--help"}); err != nil {
-		t.Fatalf("inspect --help error = %v", err)
+	if err := app.Run([]string{"state", "--help"}); err != nil {
+		t.Fatalf("state --help error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "summond inspect <name>") || !strings.Contains(got, "stored configuration") {
+	if !strings.Contains(got, "summond state <name>") || !strings.Contains(got, "persisted state.json") {
 		t.Fatalf("stdout = %q", got)
 	}
 }
 
-func TestHelpHistory(t *testing.T) {
+func TestHelpPlist(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
-	if err := app.Run([]string{"history", "--help"}); err != nil {
-		t.Fatalf("history --help error = %v", err)
+	if err := app.Run([]string{"plist", "--help"}); err != nil {
+		t.Fatalf("plist --help error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "summond history <name>") || !strings.Contains(got, "execution history") {
+	if !strings.Contains(got, "summond plist <name>") || !strings.Contains(got, "installed plist file") {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -813,7 +813,7 @@ func TestLogsWritesStdoutAndStderrSeparately(t *testing.T) {
 	}
 }
 
-func TestInspectOnChangeJobShowsWatchPaths(t *testing.T) {
+func TestStatePrintsStateJSON(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -835,16 +835,16 @@ func TestInspectOnChangeJobShowsWatchPaths(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"inspect", "watcher"}); err != nil {
-		t.Fatalf("inspect error = %v", err)
+	if err := app.Run([]string{"state", "watcher"}); err != nil {
+		t.Fatalf("state error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "trigger: on_change") || !strings.Contains(got, "watch_paths: /tmp/watch.txt") {
+	if !strings.Contains(got, `"name": "watcher"`) || !strings.Contains(got, `"trigger": "on_change"`) || !strings.Contains(got, `"/tmp/watch.txt"`) {
 		t.Fatalf("stdout = %q", got)
 	}
 }
 
-func TestInspectShowsShellScriptOnNewLine(t *testing.T) {
+func TestStatePrintsShellCommandJSON(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -867,19 +867,16 @@ func TestInspectShowsShellScriptOnNewLine(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"inspect", "scripted"}); err != nil {
-		t.Fatalf("inspect error = %v", err)
+	if err := app.Run([]string{"state", "scripted"}); err != nil {
+		t.Fatalf("state error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "shell:\n  echo hello\n  echo world\n") {
+	if !strings.Contains(got, "\"shell_command\": \"echo hello\\necho world\\n\"") {
 		t.Fatalf("stdout = %q", got)
-	}
-	if strings.Contains(got, "shell:\n  echo hello\n  echo world\n  \n") {
-		t.Fatalf("stdout has extra blank shell line: %q", got)
 	}
 }
 
-func TestHistoryShowsNoRecordedRuns(t *testing.T) {
+func TestStateShowsNoRecentRunsBeforeExecution(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -902,15 +899,15 @@ func TestHistoryShowsNoRecordedRuns(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"history", "cleanup"}); err != nil {
-		t.Fatalf("history error = %v", err)
+	if err := app.Run([]string{"state", "cleanup"}); err != nil {
+		t.Fatalf("state error = %v", err)
 	}
-	if got := stdout.String(); got != "no recorded runs\n" {
+	if got := stdout.String(); strings.Contains(got, `"recent_runs":`) {
 		t.Fatalf("stdout = %q", got)
 	}
 }
 
-func TestHistoryShowsRecentRunsTable(t *testing.T) {
+func TestStateShowsRecentRunsAfterExecution(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -937,14 +934,43 @@ func TestHistoryShowsRecentRunsTable(t *testing.T) {
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"history", "cleanup"}); err != nil {
-		t.Fatalf("history error = %v", err)
+	if err := app.Run([]string{"state", "cleanup"}); err != nil {
+		t.Fatalf("state error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "STARTED") || !strings.Contains(got, "FINISHED") || !strings.Contains(got, "RESULT") || !strings.Contains(got, "ERROR") {
+	if !strings.Contains(got, `"run_count": 1`) || !strings.Contains(got, `"success_count": 1`) || !strings.Contains(got, `"recent_runs": [`) || !strings.Contains(got, `"exit_code": 0`) {
 		t.Fatalf("stdout = %q", got)
 	}
-	if !strings.Contains(got, "exit 0") {
+}
+
+func TestPlistPrintsJobPlist(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["clean"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	stdout.Reset()
+	if err := app.Run([]string{"plist", "cleanup"}); err != nil {
+		t.Fatalf("plist error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "<plist") || !strings.Contains(got, "<key>Label</key>") || !strings.Contains(got, "<string>com.standardlabs.summond.") || !strings.Contains(got, "<key>ProgramArguments</key>") {
 		t.Fatalf("stdout = %q", got)
 	}
 }

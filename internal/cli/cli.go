@@ -107,10 +107,10 @@ func (a *App) Run(args []string) error {
 		return a.runApply(remaining[1:])
 	case "list":
 		return a.runList(remaining[1:])
-	case "inspect":
-		return a.runInspect(remaining[1:])
-	case "history":
-		return a.runHistory(remaining[1:])
+	case "state":
+		return a.runState(remaining[1:])
+	case "plist":
+		return a.runPlist(remaining[1:])
 	case "logs":
 		return a.runLogs(remaining[1:])
 	case "exec":
@@ -522,82 +522,46 @@ func (a *App) runList(args []string) error {
 	return writer.Flush()
 }
 
-func (a *App) runInspect(args []string) error {
-	a.logger.Debug("inspect start", "args", args)
+func (a *App) runState(args []string) error {
+	a.logger.Debug("state start", "args", args)
 	if isHelpArg(args) {
-		printCommandUsage(a.stdout, "inspect")
+		printCommandUsage(a.stdout, "state")
 		return nil
 	}
 	if len(args) != 1 {
-		return errors.New("inspect requires a job name")
+		return errors.New("state requires a job name")
 	}
 	managed, err := a.loadManagedSpec(args[0])
 	if err != nil {
 		return err
 	}
-	spec := managed.spec
-	_, err = fmt.Fprintf(a.stdout, "name: %s\ntarget: %s\ntrigger: %s\nstatus: %s\nruns: %d (success=%d failure=%d)\n",
-		spec.Name, spec.Target, describeTriggerOrSchedule(spec), describeLastRunStatus(spec), spec.RunCount, spec.SuccessCount, spec.FailureCount)
+	data, err := os.ReadFile(managed.store.MetadataPathForSpec(managed.spec))
 	if err != nil {
-		return err
+		return fmt.Errorf("read job metadata: %w", err)
 	}
-	if spec.LastError != "" {
-		if _, err := fmt.Fprintf(a.stdout, "last_error: %s\n", spec.LastError); err != nil {
-			return err
-		}
-	}
-	if len(spec.WatchPaths) > 0 {
-		if _, err := fmt.Fprintf(a.stdout, "watch_paths: %s\n", strings.Join(spec.WatchPaths, ", ")); err != nil {
-			return err
-		}
-	}
-	if spec.Command != "" {
-		_, err = fmt.Fprintf(a.stdout, "command: %s %s\n", spec.Command, strings.Join(spec.Args, " "))
-		return err
-	}
-	shellDisplay := strings.TrimRight(spec.ShellCommand, "\r\n")
-	_, err = fmt.Fprintf(a.stdout, "shell:\n  %s\n", strings.ReplaceAll(shellDisplay, "\n", "\n  "))
+	_, err = a.stdout.Write(data)
 	return err
 }
 
-func (a *App) runHistory(args []string) error {
-	a.logger.Debug("history start", "args", args)
+func (a *App) runPlist(args []string) error {
+	a.logger.Debug("plist start", "args", args)
 	if isHelpArg(args) {
-		printCommandUsage(a.stdout, "history")
+		printCommandUsage(a.stdout, "plist")
 		return nil
 	}
 	if len(args) != 1 {
-		return errors.New("history requires a job name")
+		return errors.New("plist requires a job name")
 	}
 	managed, err := a.loadManagedSpec(args[0])
 	if err != nil {
 		return err
 	}
-	spec := managed.spec
-	if len(spec.RecentRuns) == 0 {
-		_, err := fmt.Fprintln(a.stdout, "no recorded runs")
-		return err
+	data, err := os.ReadFile(managed.spec.PlistPath)
+	if err != nil {
+		return fmt.Errorf("read job plist: %w", err)
 	}
-	writer := tabwriter.NewWriter(a.stdout, 0, 0, 2, ' ', 0)
-	if _, err := fmt.Fprintln(writer, "STARTED\tFINISHED\tRESULT\tERROR"); err != nil {
-		return err
-	}
-	for _, run := range spec.RecentRuns {
-		finished := "-"
-		if run.FinishedAt != nil {
-			finished = formatTimestamp(*run.FinishedAt)
-		}
-		result := "running"
-		if run.ExitCode != nil {
-			result = fmt.Sprintf("exit %d", *run.ExitCode)
-		} else if run.FinishedAt != nil {
-			result = "finished"
-		}
-		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", formatTimestamp(run.StartedAt), finished, result, run.Error); err != nil {
-			return err
-		}
-	}
-	return writer.Flush()
+	_, err = a.stdout.Write(data)
+	return err
 }
 
 func (a *App) runExec(args []string) error {
@@ -840,8 +804,8 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  uninstall                  Remove Summond-managed jobs and setup")
 	fmt.Fprintln(stdout, "  apply [file]               Apply jobs from a TOML file")
 	fmt.Fprintln(stdout, "  list                       List managed jobs")
-	fmt.Fprintln(stdout, "  inspect <name>             Show job details")
-	fmt.Fprintln(stdout, "  history <name>             Show recent execution history")
+	fmt.Fprintln(stdout, "  state <name>               Print the job state.json file")
+	fmt.Fprintln(stdout, "  plist <name>               Print the job plist file")
 	fmt.Fprintln(stdout, "  logs [flags] <name>        Print job logs")
 	fmt.Fprintln(stdout, "  exec <name>                Run a managed job immediately")
 	fmt.Fprintln(stdout, "  env                        Edit the shared job environment file")
@@ -877,16 +841,16 @@ func printCommandUsage(stdout io.Writer, command string) {
 		fmt.Fprintln(stdout, "  summond list")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "List all managed jobs with target, schedule, and status.")
-	case "inspect":
+	case "state":
 		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond inspect <name>")
+		fmt.Fprintln(stdout, "  summond state <name>")
 		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Show the stored configuration and recent run state for a managed job.")
-	case "history":
+		fmt.Fprintln(stdout, "Print the managed job's persisted state.json file.")
+	case "plist":
 		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond history <name>")
+		fmt.Fprintln(stdout, "  summond plist <name>")
 		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Show recent execution history for a managed job.")
+		fmt.Fprintln(stdout, "Print the managed job's installed plist file.")
 	case "logs":
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond logs [flags] <name>")
