@@ -22,7 +22,7 @@ import (
 	"github.com/standardlabs/summond/internal/state"
 )
 
-const version = "0.4.0"
+const version = "1.0.0"
 const shellPreamble = "set -euo pipefail\n"
 
 type ExitError struct {

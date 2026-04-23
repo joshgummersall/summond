@@ -94,7 +94,7 @@ func TestRunVersion(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	if got, want := stdout.String(), "summond 0.4.0\n"; got != want {
+	if got, want := stdout.String(), "summond 1.0.0\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
