@@ -92,3 +92,29 @@ func TestRenderDaemonPlistDoesNotSetAquaSessionLimit(t *testing.T) {
 		t.Fatalf("unexpected LimitLoadToSessionType in daemon plist: %s", text)
 	}
 }
+
+func TestRenderShellCommandUsesBashStrictMode(t *testing.T) {
+	data, err := Render(job.Spec{
+		Name:         "shell-job",
+		Target:       job.TargetAgent,
+		ShellCommand: "echo hello",
+		Schedule: job.Schedule{
+			Kind: job.ScheduleLogin,
+		},
+		Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(data)
+	for _, needle := range []string{
+		"<string>/bin/bash</string>",
+		"<string>-lc</string>",
+		"<string>set -euo pipefail",
+		"echo hello</string>",
+	} {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("plist missing %q: %s", needle, text)
+		}
+	}
+}

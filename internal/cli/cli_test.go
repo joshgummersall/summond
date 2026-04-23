@@ -78,6 +78,9 @@ func (f *fakeRunner) Print(spec job.Spec) (string, error) {
 		b.WriteString("\n")
 	}
 	if spec.ShellCommand != "" {
+		b.WriteString("/bin/bash\n")
+		b.WriteString("-lc\n")
+		b.WriteString("set -euo pipefail\n")
 		b.WriteString(spec.ShellCommand)
 		b.WriteString("\n")
 	} else {
