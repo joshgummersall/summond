@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,10 +24,12 @@ const version = "0.4.0"
 type App struct {
 	stdin  io.Reader
 	stdout io.Writer
+	stderr io.Writer
 	store  *state.Store
 	runner launchd.Runner
 	boot   *bootstrap.Manager
 	priv   privilegedOperator
+	logger *slog.Logger
 }
 
 type privilegedOperator interface {
@@ -44,6 +47,7 @@ func Run(args []string, stdout io.Writer) error {
 	app := &App{
 		stdin:  os.Stdin,
 		stdout: stdout,
+		stderr: os.Stderr,
 		store:  state.NewStore(paths),
 		runner: launchd.LaunchCtl{},
 		boot:   bootstrap.NewManager(paths, bootstrap.OSInstaller{}),
@@ -53,30 +57,36 @@ func Run(args []string, stdout io.Writer) error {
 }
 
 func NewApp(stdin io.Reader, stdout io.Writer, store *state.Store, runner launchd.Runner, boot *bootstrap.Manager) *App {
-	return &App{stdin: stdin, stdout: stdout, store: store, runner: runner, boot: boot, priv: osPrivilegedOperator{}}
+	return &App{stdin: stdin, stdout: stdout, stderr: io.Discard, store: store, runner: runner, boot: boot, priv: osPrivilegedOperator{}}
 }
 
 func (a *App) Run(args []string) error {
-	if len(args) == 0 {
+	verbosity, remaining, err := parseGlobalFlags(args)
+	if err != nil {
+		return err
+	}
+	a.configureLogger(verbosity)
+	if len(remaining) == 0 {
 		printUsage(a.stdout)
 		return nil
 	}
+	a.logger.Debug("running command", "args", remaining)
 
-	switch args[0] {
+	switch remaining[0] {
 	case "install":
-		return a.runInstall(args[1:])
+		return a.runInstall(remaining[1:])
 	case "uninstall":
-		return a.runUninstall(args[1:])
+		return a.runUninstall(remaining[1:])
 	case "apply":
-		return a.runApply(args[1:])
+		return a.runApply(remaining[1:])
 	case "list":
-		return a.runList(args[1:])
+		return a.runList(remaining[1:])
 	case "inspect":
-		return a.runInspect(args[1:])
+		return a.runInspect(remaining[1:])
 	case "remove":
-		return a.runRemove(args[1:])
+		return a.runRemove(remaining[1:])
 	case "logs":
-		return a.runLogs(args[1:])
+		return a.runLogs(remaining[1:])
 	case "version":
 		_, err := fmt.Fprintf(a.stdout, "summond %s\n", version)
 		return err
@@ -84,11 +94,12 @@ func (a *App) Run(args []string) error {
 		printUsage(a.stdout)
 		return nil
 	default:
-		return fmt.Errorf("unknown command %q", args[0])
+		return fmt.Errorf("unknown command %q", remaining[0])
 	}
 }
 
 func (a *App) runInstall(args []string) error {
+	a.logger.Debug("install start")
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config-path", "", "starter config path")
@@ -110,6 +121,7 @@ func (a *App) runInstall(args []string) error {
 		Force:            *force,
 	})
 	if err != nil {
+		a.logger.Debug("install failed", "error", err)
 		var permissionErr *bootstrap.PermissionError
 		if errors.As(err, &permissionErr) && !*noPrompt {
 			approved, promptErr := a.confirm("newsyslog install requires sudo. Retry with sudo? [Y/n]: ")
@@ -137,10 +149,12 @@ func (a *App) runInstall(args []string) error {
 		}
 		return err
 	}
+	a.logger.Info("install completed")
 	return a.printInstallSummary(result)
 }
 
 func (a *App) runUninstall(args []string) error {
+	a.logger.Debug("uninstall start")
 	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	configPath := fs.String("config-path", "", "starter config path")
@@ -167,6 +181,7 @@ func (a *App) runUninstall(args []string) error {
 	if err != nil {
 		return err
 	}
+	a.logger.Debug("loaded managed jobs", "count", len(specs))
 	var sudoPlists []string
 	removedJobs := 0
 	for _, spec := range specs {
@@ -230,10 +245,12 @@ func (a *App) runUninstall(args []string) error {
 	if needsSudoNewsyslog && !uninstallResult.UsedSudo {
 		return a.printUninstallManual(uninstallResult, sudoPlists)
 	}
+	a.logger.Info("uninstall completed", "removed_jobs", removedJobs)
 	return nil
 }
 
 func (a *App) runApply(args []string) error {
+	a.logger.Debug("apply start")
 	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	filePath := fs.String("f", "", "TOML config file")
@@ -247,8 +264,10 @@ func (a *App) runApply(args []string) error {
 	if err != nil {
 		return err
 	}
+	a.logger.Debug("loaded config", "path", *filePath, "jobs", len(specs))
 	var runtimeWarnings []string
 	for _, spec := range specs {
+		a.logger.Debug("reconciling job", "name", spec.Name, "trigger", spec.Trigger, "schedule", spec.Schedule.Kind)
 		installed, err := a.store.Install(spec)
 		if err != nil {
 			return err
@@ -256,21 +275,28 @@ func (a *App) runApply(args []string) error {
 		if installed.Enabled {
 			if loaded, err := a.isLoaded(installed); err != nil {
 				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: load-state check failed: %v", installed.Name, err))
+				a.logger.Debug("load-state check failed", "name", installed.Name, "error", err)
 			} else if loaded {
+				a.logger.Debug("job already loaded, bootout before bootstrap", "name", installed.Name)
 				if err := a.runner.Bootout(installed); err != nil {
 					runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: bootout before bootstrap failed: %v", installed.Name, err))
+					a.logger.Debug("bootout before bootstrap failed", "name", installed.Name, "error", err)
 				}
 			}
 			if err := a.runner.Bootstrap(installed); err != nil {
 				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: bootstrap failed: %v", installed.Name, err))
+				a.logger.Debug("bootstrap failed", "name", installed.Name, "error", err)
 				continue
 			}
 			if err := a.verifyLoadedJob(installed); err != nil {
 				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: loaded job verification failed: %v", installed.Name, err))
+				a.logger.Debug("loaded job verification failed", "name", installed.Name, "error", err)
 			}
 		} else {
+			a.logger.Debug("job disabled, bootout", "name", installed.Name)
 			if err := a.runner.Bootout(installed); err != nil {
 				runtimeWarnings = append(runtimeWarnings, fmt.Sprintf("%s: bootout failed: %v", installed.Name, err))
+				a.logger.Debug("bootout failed", "name", installed.Name, "error", err)
 			}
 		}
 	}
@@ -282,6 +308,7 @@ func (a *App) runApply(args []string) error {
 			return err
 		}
 	}
+	a.logger.Info("apply completed", "jobs", len(specs), "warnings", len(runtimeWarnings))
 	return nil
 }
 
@@ -332,6 +359,7 @@ func (a *App) verifyLoadedJob(spec job.Spec) error {
 }
 
 func (a *App) runList(args []string) error {
+	a.logger.Debug("list start")
 	if len(args) != 0 {
 		return errors.New("list does not accept arguments")
 	}
@@ -353,6 +381,7 @@ func (a *App) runList(args []string) error {
 }
 
 func (a *App) runInspect(args []string) error {
+	a.logger.Debug("inspect start", "args", args)
 	if len(args) != 1 {
 		return errors.New("inspect requires a job name")
 	}
@@ -379,6 +408,7 @@ func (a *App) runInspect(args []string) error {
 }
 
 func (a *App) runRemove(args []string) error {
+	a.logger.Debug("remove start", "args", args)
 	spec, err := a.requireSingleSpec(args, "remove")
 	if err != nil {
 		return err
@@ -392,6 +422,7 @@ func (a *App) runRemove(args []string) error {
 }
 
 func (a *App) runLogs(args []string) error {
+	a.logger.Debug("logs start", "args", args)
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	stream := fs.String("stream", "stdout", "stdout or stderr")
@@ -412,6 +443,7 @@ func (a *App) runLogs(args []string) error {
 	if path == "" {
 		return errors.New("no log path configured")
 	}
+	a.logger.Debug("following log", "path", path, "stream", *stream)
 	cmd := exec.Command("tail", "-n", "40", "-f", path)
 	cmd.Stdout = a.stdout
 	cmd.Stderr = os.Stderr
@@ -429,7 +461,7 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "summond")
 	fmt.Fprintln(stdout, "")
 	fmt.Fprintln(stdout, "Usage:")
-	fmt.Fprintln(stdout, "  summond <command> [arguments]")
+	fmt.Fprintln(stdout, "  summond [-v|-vv] <command> [arguments]")
 	fmt.Fprintln(stdout, "")
 	fmt.Fprintln(stdout, "Commands:")
 	fmt.Fprintln(stdout, "  install                    Scaffold config and newsyslog setup")
@@ -440,6 +472,40 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  remove <name>              Remove a managed job")
 	fmt.Fprintln(stdout, "  logs <name>                Follow logs")
 	fmt.Fprintln(stdout, "  version                    Print the CLI version")
+}
+
+func parseGlobalFlags(args []string) (int, []string, error) {
+	verbosity := 0
+	for len(args) > 0 {
+		switch args[0] {
+		case "-v":
+			verbosity++
+			args = args[1:]
+		case "-vv":
+			verbosity += 2
+			args = args[1:]
+		case "--verbose":
+			verbosity++
+			args = args[1:]
+		default:
+			return verbosity, args, nil
+		}
+	}
+	return verbosity, args, nil
+}
+
+func (a *App) configureLogger(verbosity int) {
+	if a.stderr == nil {
+		a.stderr = io.Discard
+	}
+	level := slog.LevelWarn
+	switch {
+	case verbosity >= 2:
+		level = slog.LevelDebug
+	case verbosity == 1:
+		level = slog.LevelInfo
+	}
+	a.logger = slog.New(slog.NewTextHandler(a.stderr, &slog.HandlerOptions{Level: level}))
 }
 
 func describeSchedule(schedule job.Schedule) string {

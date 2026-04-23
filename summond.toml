@@ -1,7 +1,9 @@
-[jobs.hello-world]
-command = "bat"
-args = ["README.md"]
+[jobs.brew-maintenance]
+shell_command = """
+brew update
+brew upgrade
+brew cleanup
+"""
 target = "agent"
-trigger = "on_change"
-watch_paths = ["README.md"]
+schedule = "weekly"
 enabled = true
