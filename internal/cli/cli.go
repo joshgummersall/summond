@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -106,6 +107,8 @@ func (a *App) Run(args []string) error {
 		return a.runUninstall(remaining[1:])
 	case "apply":
 		return a.runApply(remaining[1:])
+	case "add":
+		return a.runAdd(remaining[1:])
 	case "remove":
 		return a.runRemove(remaining[1:])
 	case "list":
@@ -416,6 +419,164 @@ func (a *App) runApply(args []string) error {
 	}
 	a.logger.Info("apply completed", "jobs", applied)
 	return nil
+}
+
+func (a *App) runAdd(args []string) error {
+	a.logger.Debug("add start", "args", args)
+	if isHelpArg(args) || len(args) == 0 {
+		printCommandUsage(a.stdout, "add")
+		return nil
+	}
+	switch args[0] {
+	case "agent":
+		return a.runAddTarget(job.TargetAgent, args[1:])
+	case "daemon":
+		return a.runAddTarget(job.TargetDaemon, args[1:])
+	case "help":
+		printCommandUsage(a.stdout, "add")
+		return nil
+	default:
+		return fmt.Errorf("add requires a subcommand: agent or daemon")
+	}
+}
+
+func (a *App) runAddTarget(target job.Target, args []string) error {
+	a.logger.Debug("add target start", "target", target, "args", args)
+	commandName := "add " + string(target)
+	if isHelpArg(args) {
+		printCommandUsage(a.stdout, commandName)
+		return nil
+	}
+	if len(args) == 0 || args[0] == "--" || strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf("%s requires a job name", commandName)
+	}
+	name := args[0]
+	args = args[1:]
+	fs := flag.NewFlagSet("add", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {
+		printCommandUsage(a.stdout, commandName)
+	}
+	schedule := fs.String("schedule", "", "schedule kind")
+	workingDir := fs.String("working-dir", "", "working directory")
+	var hour optionalIntFlag
+	var minute optionalIntFlag
+	var weekday optionalIntFlag
+	var intervalMinutes optionalIntFlag
+	fs.Var(&hour, "hour", "schedule hour")
+	fs.Var(&minute, "minute", "schedule minute")
+	fs.Var(&weekday, "weekday", "schedule weekday")
+	fs.Var(&intervalMinutes, "interval-minutes", "interval schedule minutes")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	commandArgs := append([]string(nil), fs.Args()...)
+	hasArgvCommand := len(commandArgs) > 0
+	hasShellStdin := !hasArgvCommand && stdinHasData(a.stdin)
+	commandModes := 0
+	for _, active := range []bool{hasArgvCommand, hasShellStdin} {
+		if active {
+			commandModes++
+		}
+	}
+	if commandModes == 0 {
+		return errors.New("add requires a command after -- or shell script input on stdin")
+	}
+	if commandModes > 1 {
+		return fmt.Errorf("%s accepts only one of command argv after -- or shell script input on stdin", commandName)
+	}
+	if *schedule == "" {
+		return fmt.Errorf("%s requires --schedule", commandName)
+	}
+	installed, err := a.boot.IsInstalled()
+	if err != nil {
+		return err
+	}
+	if !installed {
+		return fmt.Errorf("%s requires install to be run first", commandName)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("resolve current working directory: %w", err)
+	}
+	if _, err := a.loadManagedSpec(name); err == nil {
+		return fmt.Errorf("job %q already exists", name)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	spec := job.Spec{
+		Name:         name,
+		Target:       target,
+		WorkingDir:   *workingDir,
+		Schedule: job.Schedule{
+			Kind: job.ScheduleKind(*schedule),
+		},
+	}
+	switch {
+	case hasArgvCommand:
+		spec.Command = commandArgs[0]
+		spec.Args = append([]string(nil), commandArgs[1:]...)
+	case hasShellStdin:
+		data, err := io.ReadAll(a.stdin)
+		if err != nil {
+			return fmt.Errorf("read shell command from stdin: %w", err)
+		}
+		spec.ShellCommand = strings.TrimRight(string(data), "\n")
+		if strings.TrimSpace(spec.ShellCommand) == "" {
+			return errors.New("shell stdin produced an empty command")
+		}
+	}
+	if spec.WorkingDir == "" {
+		spec.WorkingDir = wd
+	}
+	if hour.set {
+		spec.Schedule.Hour = hour.value
+		spec.Schedule.HourSet = true
+	}
+	if minute.set {
+		spec.Schedule.Minute = minute.value
+		spec.Schedule.MinuteSet = true
+	}
+	if weekday.set {
+		spec.Schedule.Weekday = weekday.value
+		spec.Schedule.WeekdaySet = true
+	}
+	if intervalMinutes.set {
+		spec.Schedule.IntervalMinutes = intervalMinutes.value
+		spec.Schedule.IntervalSet = true
+	}
+	if err := spec.Normalize(); err != nil {
+		return err
+	}
+	runtimeSource, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve current executable: %w", err)
+	}
+	spec.EnvironmentFilePath = a.store.EnvFilePath()
+	if target == job.TargetDaemon {
+		spec.RuntimeBinaryPath = a.daemonStore.RuntimeBinaryPath()
+		installedSpec, err := a.applyDaemonSpec(spec, runtimeSource)
+		if err != nil {
+			return err
+		}
+		if err := a.reconcileDaemonRuntime(installedSpec); err != nil {
+			return err
+		}
+	} else {
+		agentRuntimePath, err := a.store.PrepareRuntimeBinary(runtimeSource)
+		if err != nil {
+			return err
+		}
+		spec.RuntimeBinaryPath = agentRuntimePath
+		if _, err := a.applySpec(a.store, spec); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintf(a.stdout, "added %s\n", spec.Name)
+	return err
 }
 
 func (a *App) runRemove(args []string) error {
@@ -848,6 +1009,7 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  install                    Scaffold config and newsyslog setup")
 	fmt.Fprintln(stdout, "  uninstall                  Remove Summond-managed jobs and setup")
 	fmt.Fprintln(stdout, "  apply [file]               Apply jobs from a TOML file")
+	fmt.Fprintln(stdout, "  add <target> ...           Add and install a managed job")
 	fmt.Fprintln(stdout, "  remove <name>              Remove a managed job and all state")
 	fmt.Fprintln(stdout, "  list                       List managed jobs")
 	fmt.Fprintln(stdout, "  state <name>               Print the job state.json file")
@@ -882,6 +1044,55 @@ func printCommandUsage(stdout io.Writer, command string) {
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Flags:")
 		fmt.Fprintln(stdout, "  --prune                    Remove managed jobs missing from the config without prompting")
+	case "add":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond add <target> ...")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Targets:")
+		fmt.Fprintln(stdout, "  agent                      Add a LaunchAgent job")
+		fmt.Fprintln(stdout, "  daemon                     Add a LaunchDaemon job")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Run 'summond add <target> --help' for target-specific usage.")
+	case "add agent":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond add agent <name> [flags]")
+		fmt.Fprintln(stdout, "  summond add agent <name> [flags] -- <command> [args]")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Add and install an agent job without editing summond.toml.")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Flags:")
+		fmt.Fprintln(stdout, "  --schedule <kind>          daily, hourly, weekly, login, boot, interval")
+		fmt.Fprintln(stdout, "  --hour <hour>              Hour for daily/weekly schedules")
+		fmt.Fprintln(stdout, "  --minute <minute>          Minute for hourly/daily/weekly schedules")
+		fmt.Fprintln(stdout, "  --weekday <weekday>        Weekday for weekly schedules")
+		fmt.Fprintln(stdout, "  --interval-minutes <n>     Interval minutes for interval schedules")
+		fmt.Fprintln(stdout, "  --working-dir <path>       Working directory")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Examples:")
+		fmt.Fprintln(stdout, "  summond add agent my-job -- /bin/echo hello --flag")
+		fmt.Fprintln(stdout, "  summond add agent my-script <<'EOF'")
+		fmt.Fprintln(stdout, "  echo hi")
+		fmt.Fprintln(stdout, "  EOF")
+	case "add daemon":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond add daemon <name> [flags]")
+		fmt.Fprintln(stdout, "  summond add daemon <name> [flags] -- <command> [args]")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Add and install a daemon job without editing summond.toml.")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Flags:")
+		fmt.Fprintln(stdout, "  --schedule <kind>          daily, hourly, weekly, boot, interval")
+		fmt.Fprintln(stdout, "  --hour <hour>              Hour for daily/weekly schedules")
+		fmt.Fprintln(stdout, "  --minute <minute>          Minute for hourly/daily/weekly schedules")
+		fmt.Fprintln(stdout, "  --weekday <weekday>        Weekday for weekly schedules")
+		fmt.Fprintln(stdout, "  --interval-minutes <n>     Interval minutes for interval schedules")
+		fmt.Fprintln(stdout, "  --working-dir <path>       Working directory")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Examples:")
+		fmt.Fprintln(stdout, "  summond add daemon my-daemon --schedule boot -- /usr/local/bin/task")
+		fmt.Fprintln(stdout, "  summond add daemon my-script --schedule daily <<'EOF'")
+		fmt.Fprintln(stdout, "  echo hi")
+		fmt.Fprintln(stdout, "  EOF")
 	case "remove":
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond remove <name>")
@@ -1419,6 +1630,40 @@ func (m multiValueFlag) Map() map[string]string {
 	return values
 }
 
+type optionalIntFlag struct {
+	value int
+	set   bool
+}
+
+func (f *optionalIntFlag) String() string {
+	if f == nil || !f.set {
+		return ""
+	}
+	return strconv.Itoa(f.value)
+}
+
+func (f *optionalIntFlag) Set(value string) error {
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return err
+	}
+	f.value = parsed
+	f.set = true
+	return nil
+}
+
+func stdinHasData(reader io.Reader) bool {
+	file, ok := reader.(*os.File)
+	if !ok {
+		return true
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice == 0
+}
+
 func (a *App) confirm(prompt string) (bool, error) {
 	return a.confirmWithDefault(prompt, true)
 }
@@ -1627,6 +1872,7 @@ func runSudoScript(script string, args ...string) error {
 	}
 	return nil
 }
+
 
 func (osPrivilegedOperator) InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string) error {
 	script := `

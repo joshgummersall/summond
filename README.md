@@ -44,6 +44,26 @@ Apply and automatically remove managed jobs that were removed from the config:
 summond apply --prune
 ```
 
+Add an agent job directly:
+
+```sh
+summond add agent cleanup --schedule daily --hour 3 --minute 45 -- /bin/echo cleanup
+```
+
+Add a shell-based job from stdin:
+
+```sh
+summond add agent rotate-logs --schedule daily --hour 3 --minute 30 <<'EOF'
+find /tmp -type f -mtime +7 -delete
+EOF
+```
+
+Add a daemon job directly:
+
+```sh
+summond add daemon boot-task --schedule boot -- /usr/local/bin/task
+```
+
 Define jobs in TOML and apply them:
 
 ```toml

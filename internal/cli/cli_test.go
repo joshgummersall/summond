@@ -118,6 +118,54 @@ func TestHelpApply(t *testing.T) {
 	}
 }
 
+func TestHelpAdd(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"add", "--help"}); err != nil {
+		t.Fatalf("add --help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond add <target> ...") || !strings.Contains(got, "agent") || !strings.Contains(got, "daemon") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestHelpAddAgent(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"add", "agent", "--help"}); err != nil {
+		t.Fatalf("add agent --help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond add agent <name> [flags]") || !strings.Contains(got, "schedule <kind>") || !strings.Contains(got, "summond add agent my-script <<'EOF'") || !strings.Contains(got, "summond add agent my-job -- /bin/echo hello --flag") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if strings.Contains(got, "--command <path>") || strings.Contains(got, "--shell-command <command>") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestHelpAddDaemon(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"add", "daemon", "--help"}); err != nil {
+		t.Fatalf("add daemon --help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond add daemon <name> [flags]") || !strings.Contains(got, "schedule <kind>") || !strings.Contains(got, "schedule boot") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if strings.Contains(got, "--command <path>") || strings.Contains(got, "--shell-command <command>") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
 func TestHelpRemove(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
@@ -215,6 +263,158 @@ func TestApplyFailsWithoutInstall(t *testing.T) {
 	err = app.Run([]string{"apply"})
 	if err == nil || err.Error() != "apply requires install to be run first" {
 		t.Fatalf("apply error = %v", err)
+	}
+}
+
+func TestAddFailsWithoutInstall(t *testing.T) {
+	app := newRawTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	err := app.Run([]string{"add", "agent", "echo-job", "--schedule", "daily", "--", "/bin/echo"})
+	if err == nil || err.Error() != "add agent requires install to be run first" {
+		t.Fatalf("add error = %v", err)
+	}
+}
+
+func TestAddInstallsManagedJobFromArgvWithoutConfig(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+	wd := testHome(t)
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(wd); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	actualWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() after chdir error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
+
+	if err := app.Run([]string{"add", "agent", "echo-job", "--schedule", "daily", "--hour", "0", "--minute", "15", "--", "/bin/echo", "hello", "--flag"}); err != nil {
+		t.Fatalf("add error = %v", err)
+	}
+	if got := stdout.String(); got != "added echo-job\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(wd, "summond.toml")); !os.IsNotExist(err) {
+		t.Fatalf("expected no summond.toml, stat err = %v", err)
+	}
+	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "echo-job" {
+		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
+	}
+	spec, err := app.store.Load("echo-job")
+	if err != nil {
+		t.Fatalf("Load(echo-job) error = %v", err)
+	}
+	if spec.Command != "/bin/echo" {
+		t.Fatalf("Command = %q", spec.Command)
+	}
+	if len(spec.Args) != 2 || spec.Args[0] != "hello" || spec.Args[1] != "--flag" {
+		t.Fatalf("Args = %#v", spec.Args)
+	}
+	if spec.WorkingDir != actualWD {
+		t.Fatalf("WorkingDir = %q, want %q", spec.WorkingDir, actualWD)
+	}
+	if !spec.Schedule.HourSet || spec.Schedule.Hour != 0 || !spec.Schedule.MinuteSet || spec.Schedule.Minute != 15 {
+		t.Fatalf("unexpected schedule: %+v", spec.Schedule)
+	}
+}
+
+func TestAddInstallsManagedJobFromShellStdin(t *testing.T) {
+	app := newTestApp(t)
+	app.stdin = strings.NewReader("echo from-stdin\nexit 0\n")
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"add", "agent", "script-job", "--schedule", "daily", "--hour", "3", "--minute", "45"}); err != nil {
+		t.Fatalf("add error = %v", err)
+	}
+	if got := stdout.String(); got != "added script-job\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	spec, err := app.store.Load("script-job")
+	if err != nil {
+		t.Fatalf("Load(script-job) error = %v", err)
+	}
+	if spec.ShellCommand != "echo from-stdin\nexit 0" {
+		t.Fatalf("ShellCommand = %q", spec.ShellCommand)
+	}
+}
+
+func TestAddRequiresJobName(t *testing.T) {
+	app := newTestApp(t)
+	err := app.Run([]string{"add", "agent", "--", "/bin/echo"})
+	if err == nil || err.Error() != "add agent requires a job name" {
+		t.Fatalf("add error = %v", err)
+	}
+}
+
+func TestAddRequiresSchedule(t *testing.T) {
+	app := newTestApp(t)
+	err := app.Run([]string{"add", "agent", "cleanup", "--", "/bin/echo"})
+	if err == nil || err.Error() != "add agent requires --schedule" {
+		t.Fatalf("add error = %v", err)
+	}
+}
+
+func TestAddRequiresSubcommand(t *testing.T) {
+	app := newTestApp(t)
+	err := app.Run([]string{"add", "cleanup", "--schedule", "daily", "--", "/bin/echo"})
+	if err == nil || err.Error() != "add requires a subcommand: agent or daemon" {
+		t.Fatalf("add error = %v", err)
+	}
+}
+
+func TestAddRejectsDuplicateJobName(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if _, err := app.store.Install(job.Spec{
+		Name:    "cleanup",
+		Command: "/bin/echo",
+		Schedule: job.Schedule{
+			Kind: job.ScheduleDaily,
+			Hour: 3, HourSet: true,
+			Minute: 45, MinuteSet: true,
+		},
+	}); err != nil {
+		t.Fatalf("Install(cleanup) error = %v", err)
+	}
+
+	err := app.Run([]string{"add", "agent", "cleanup", "--schedule", "daily", "--", "/bin/echo"})
+	if err == nil || !strings.Contains(err.Error(), `job "cleanup" already exists`) {
+		t.Fatalf("add error = %v", err)
+	}
+}
+
+func TestAddDaemonInstallsManagedJob(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"add", "daemon", "daemon-job", "--schedule", "boot", "--", "/bin/echo", "hello"}); err != nil {
+		t.Fatalf("add daemon error = %v", err)
+	}
+	if got := stdout.String(); got != "added daemon-job\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	spec, err := app.daemonStore.Load("daemon-job")
+	if err != nil {
+		t.Fatalf("Load(daemon-job) error = %v", err)
+	}
+	if spec.Target != job.TargetDaemon {
+		t.Fatalf("Target = %q", spec.Target)
+	}
+	if spec.Schedule.Kind != job.ScheduleBoot {
+		t.Fatalf("Schedule = %+v", spec.Schedule)
 	}
 }
 
