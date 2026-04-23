@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -387,21 +388,14 @@ func (a *App) runApply(args []string) error {
 		return err
 	}
 	for _, warning := range runtimeWarnings {
-		if _, err := fmt.Fprintf(a.stdout, "warning: %s\n", warning); err != nil {
-			return err
-		}
+		a.logger.Info("apply warning", "warning", warning)
 	}
 	if len(orphanedSpecs) > 0 {
 		names := make([]string, 0, len(orphanedSpecs))
 		for _, managed := range orphanedSpecs {
 			names = append(names, managed.spec.Name)
 		}
-		if _, err := fmt.Fprintf(a.stdout, "warning: orphaned managed jobs not present in %s: %s\n", filePath, strings.Join(names, ", ")); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintln(a.stdout, "warning: run 'summond prune' to remove them"); err != nil {
-			return err
-		}
+		a.logger.Info("orphaned managed jobs", "config_path", filePath, "jobs", strings.Join(names, ", "))
 	}
 	a.logger.Info("apply completed", "jobs", len(specs), "warnings", len(runtimeWarnings))
 	return nil
@@ -1321,9 +1315,7 @@ func (a *App) printUninstallSummary(result bootstrap.UninstallResult, removedJob
 	_ = result
 	_ = removedJobs
 	if needsNewsyslogWarning {
-		if _, err := fmt.Fprintf(a.stdout, "warning: could not remove system newsyslog config %s\n", result.NewsyslogInstallPath); err != nil {
-			return err
-		}
+		a.logger.Info("uninstall warning", "newsyslog_install_path", result.NewsyslogInstallPath)
 	}
 	return nil
 }
@@ -1469,41 +1461,71 @@ func describeInstallAction(path string, overwrite bool) (string, error) {
 }
 
 func (osPrivilegedOperator) CreateDirWithSudo(path string, mode os.FileMode) error {
+	var stderr bytes.Buffer
 	cmd := exec.Command("sudo", "install", "-d", "-m", fmt.Sprintf("%04o", mode.Perm()), path)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = &stderr
 	cmd.Stdin = os.Stdin
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("%w: %s", err, stderr.String())
+		}
+		return err
+	}
+	return nil
 }
 
 func (osPrivilegedOperator) InstallFileWithSudo(src string, dst string, mode os.FileMode) error {
+	var stderr bytes.Buffer
 	cmd := exec.Command("sudo", "install", "-m", fmt.Sprintf("%04o", mode.Perm()), src, dst)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = &stderr
 	cmd.Stdin = os.Stdin
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("%w: %s", err, stderr.String())
+		}
+		return err
+	}
+	return nil
 }
 
 func (osPrivilegedOperator) RemovePathWithSudo(path string) error {
+	var stderr bytes.Buffer
 	cmd := exec.Command("sudo", "rm", "-rf", path)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = &stderr
 	cmd.Stdin = os.Stdin
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("%w: %s", err, stderr.String())
+		}
+		return err
+	}
+	return nil
 }
 
 func (osPrivilegedOperator) BootstrapDaemonWithSudo(plistPath string) error {
+	var stderr bytes.Buffer
 	cmd := exec.Command("sudo", "launchctl", "bootstrap", "system", plistPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = &stderr
 	cmd.Stdin = os.Stdin
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("%w: %s", err, stderr.String())
+		}
+		return err
+	}
+	return nil
 }
 
 func (osPrivilegedOperator) BootoutDaemonWithSudo(plistPath string) error {
+	var stderr bytes.Buffer
 	cmd := exec.Command("sudo", "launchctl", "bootout", "system", plistPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = &stderr
 	cmd.Stdin = os.Stdin
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("%w: %s", err, stderr.String())
+		}
+		return err
+	}
+	return nil
 }

@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -224,11 +225,17 @@ func (OSInstaller) Install(src, dst string) error {
 }
 
 func (OSInstaller) InstallWithSudo(src, dst string) error {
+	var stderr bytes.Buffer
 	cmd := exec.Command("sudo", "install", "-m", "0644", src, dst)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = &stderr
 	cmd.Stdin = os.Stdin
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("%w: %s", err, stderr.String())
+		}
+		return err
+	}
+	return nil
 }
 
 func (OSInstaller) Remove(path string) error {
@@ -242,11 +249,17 @@ func (OSInstaller) Remove(path string) error {
 }
 
 func (OSInstaller) RemoveWithSudo(path string) error {
+	var stderr bytes.Buffer
 	cmd := exec.Command("sudo", "rm", "-f", path)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = &stderr
 	cmd.Stdin = os.Stdin
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("%w: %s", err, stderr.String())
+		}
+		return err
+	}
+	return nil
 }
 
 func writeFile(path string, content []byte, force bool) (string, error) {

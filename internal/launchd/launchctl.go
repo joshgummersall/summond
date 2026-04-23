@@ -47,10 +47,16 @@ func (LaunchCtl) Print(spec job.Spec) (string, error) {
 }
 
 func run(name string, args ...string) error {
+	var stderr bytes.Buffer
 	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("%w: %s", err, stderr.String())
+		}
+		return err
+	}
+	return nil
 }
 
 func domain(target job.Target) string {
