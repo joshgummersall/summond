@@ -1,17 +1,17 @@
-[jobs.brew-maintenance]
+[jobs.brew]
 shell_command = "brew update && brew upgrade && brew cleanup"
 target = "agent"
 schedule = "weekly"
 enabled = true
 
-[jobs.chezmoi-update]
+[jobs.chezmoi]
 command = "chezmoi"
 args = ["update"]
 target = "agent"
 schedule = "daily"
 enabled = true
 
-[jobs.start-podman]
+[jobs.podman]
 shell_command = """
 state=$(podman machine inspect --format '{{.State}}' 2>/dev/null || echo "unknown")
 if [ "$state" != "running" ]; then
