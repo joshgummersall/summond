@@ -342,7 +342,7 @@ func (a *App) verifyLoadedJob(spec job.Spec) error {
 	expected := []string{spec.Label, spec.StdoutPath, spec.StderrPath}
 	expected = append(expected, spec.WatchPaths...)
 	if spec.ShellCommand != "" {
-		expected = append(expected, spec.ShellCommand)
+		expected = append(expected, "/bin/sh", "-lc")
 	} else {
 		expected = append(expected, spec.Command)
 		expected = append(expected, spec.Args...)

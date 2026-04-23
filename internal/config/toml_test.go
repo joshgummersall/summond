@@ -103,3 +103,31 @@ enabled = true
 		t.Fatalf("WorkingDir = %q, want %q", got, want)
 	}
 }
+
+func TestLoadFileParsesMultilineShellCommand(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[jobs.brew-maintenance]
+shell_command = """
+brew update
+brew upgrade
+brew cleanup
+"""
+target = "agent"
+schedule = "weekly"
+enabled = true
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	specs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	got := specs[0].ShellCommand
+	want := "brew update\nbrew upgrade\nbrew cleanup\n"
+	if got != want {
+		t.Fatalf("ShellCommand = %q, want %q", got, want)
+	}
+}
