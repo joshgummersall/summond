@@ -1,6 +1,10 @@
 package job
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestNormalizeLoginRequiresAgent(t *testing.T) {
 	spec := Spec{
@@ -174,13 +178,13 @@ func TestNormalizePreservesExplicitScheduleFields(t *testing.T) {
 		Target:  TargetAgent,
 		Command: "/bin/echo",
 		Schedule: Schedule{
-			Kind:      ScheduleWeekly,
-			Weekday:   5,
+			Kind:       ScheduleWeekly,
+			Weekday:    5,
 			WeekdaySet: true,
-			Hour:      9,
-			HourSet:   true,
-			Minute:    30,
-			MinuteSet: true,
+			Hour:       9,
+			HourSet:    true,
+			Minute:     30,
+			MinuteSet:  true,
 		},
 		Enabled: true,
 	}
@@ -189,5 +193,64 @@ func TestNormalizePreservesExplicitScheduleFields(t *testing.T) {
 	}
 	if spec.Schedule.Weekday != 5 || spec.Schedule.Hour != 9 || spec.Schedule.Minute != 30 {
 		t.Fatalf("unexpected schedule: %+v", spec.Schedule)
+	}
+}
+
+func TestNormalizeResolvesCommandFromPath(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	commandPath := filepath.Join(binDir, "chezmoi")
+	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	spec := Spec{
+		Name:       "job",
+		Target:     TargetAgent,
+		Command:    "chezmoi",
+		WorkingDir: dir,
+		Environment: map[string]string{
+			"PATH": binDir,
+		},
+		Schedule: Schedule{
+			Kind: ScheduleDaily,
+		},
+		Enabled: true,
+	}
+
+	if err := spec.Normalize(); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	if got, want := spec.Command, commandPath; got != want {
+		t.Fatalf("Command = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeResolvesRelativeCommandFromWorkingDir(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "script.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	spec := Spec{
+		Name:       "job",
+		Target:     TargetAgent,
+		Command:    "./script.sh",
+		WorkingDir: dir,
+		Schedule: Schedule{
+			Kind: ScheduleDaily,
+		},
+		Enabled: true,
+	}
+
+	if err := spec.Normalize(); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	if got, want := spec.Command, scriptPath; got != want {
+		t.Fatalf("Command = %q, want %q", got, want)
 	}
 }

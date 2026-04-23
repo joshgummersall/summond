@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -97,9 +98,6 @@ func (s *Spec) Normalize() error {
 	if s.Command != "" && s.ShellCommand != "" {
 		return errors.New("command and shell command are mutually exclusive")
 	}
-	if s.Command != "" && !filepath.IsAbs(s.Command) {
-		return fmt.Errorf("command must be an absolute path: %q", s.Command)
-	}
 	if s.WorkingDir != "" && !filepath.IsAbs(s.WorkingDir) {
 		return fmt.Errorf("working directory must be an absolute path: %q", s.WorkingDir)
 	}
@@ -108,6 +106,13 @@ func (s *Spec) Normalize() error {
 	}
 	if _, ok := s.Environment["PATH"]; !ok {
 		s.Environment["PATH"] = DefaultPath
+	}
+	if s.Command != "" && !filepath.IsAbs(s.Command) {
+		resolved, err := resolveCommandPath(s.Command, s.WorkingDir, s.Environment["PATH"])
+		if err != nil {
+			return err
+		}
+		s.Command = resolved
 	}
 	if err := s.normalizeTrigger(); err != nil {
 		return err
@@ -143,6 +148,33 @@ func (s *Spec) Normalize() error {
 		return errors.New("either schedule or trigger is required")
 	}
 	return nil
+}
+
+func resolveCommandPath(command string, workingDir string, pathEnv string) (string, error) {
+	if strings.ContainsRune(command, filepath.Separator) {
+		if workingDir == "" {
+			abs, err := filepath.Abs(command)
+			if err != nil {
+				return "", fmt.Errorf("resolve command path %q: %w", command, err)
+			}
+			return filepath.Clean(abs), nil
+		}
+		return filepath.Clean(filepath.Join(workingDir, command)), nil
+	}
+	for _, dir := range filepath.SplitList(pathEnv) {
+		if dir == "" {
+			continue
+		}
+		candidate := filepath.Join(dir, command)
+		info, err := os.Stat(candidate)
+		if err != nil {
+			continue
+		}
+		if info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
+			return filepath.Clean(candidate), nil
+		}
+	}
+	return "", fmt.Errorf("command must be an absolute path or resolvable on PATH: %q", command)
 }
 
 func (s *Spec) applyScheduleDefaults() error {
@@ -206,18 +238,18 @@ func (s Spec) scheduleSeed() ([32]byte, error) {
 		Month           *int         `json:"month,omitempty"`
 	}
 	type seedSpec struct {
-		Name         string      `json:"name"`
-		Label        string      `json:"label"`
-		Target       Target      `json:"target"`
-		Command      string      `json:"command,omitempty"`
-		Args         []string    `json:"args,omitempty"`
-		ShellCommand string      `json:"shell_command,omitempty"`
-		WorkingDir   string      `json:"working_dir,omitempty"`
-		Environment  []envPair   `json:"environment,omitempty"`
+		Name         string       `json:"name"`
+		Label        string       `json:"label"`
+		Target       Target       `json:"target"`
+		Command      string       `json:"command,omitempty"`
+		Args         []string     `json:"args,omitempty"`
+		ShellCommand string       `json:"shell_command,omitempty"`
+		WorkingDir   string       `json:"working_dir,omitempty"`
+		Environment  []envPair    `json:"environment,omitempty"`
 		Schedule     scheduleSeed `json:"schedule"`
-		Trigger      TriggerKind `json:"trigger,omitempty"`
-		WatchPaths   []string    `json:"watch_paths,omitempty"`
-		Enabled      bool        `json:"enabled"`
+		Trigger      TriggerKind  `json:"trigger,omitempty"`
+		WatchPaths   []string     `json:"watch_paths,omitempty"`
+		Enabled      bool         `json:"enabled"`
 	}
 
 	keys := make([]string, 0, len(s.Environment))
