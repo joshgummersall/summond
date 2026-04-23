@@ -109,6 +109,8 @@ func (a *App) Run(args []string) error {
 		return a.runList(remaining[1:])
 	case "inspect":
 		return a.runInspect(remaining[1:])
+	case "history":
+		return a.runHistory(remaining[1:])
 	case "logs":
 		return a.runLogs(remaining[1:])
 	case "exec":
@@ -543,16 +545,6 @@ func (a *App) runInspect(args []string) error {
 			return err
 		}
 	}
-	if len(spec.RecentRuns) > 0 {
-		if _, err := fmt.Fprintln(a.stdout, "recent_runs:"); err != nil {
-			return err
-		}
-		for _, run := range spec.RecentRuns {
-			if _, err := fmt.Fprintf(a.stdout, "  %s\n", describeExecutionRecord(run)); err != nil {
-				return err
-			}
-		}
-	}
 	if spec.Command != "" {
 		_, err = fmt.Fprintf(a.stdout, "command: %s %s\n", spec.Command, strings.Join(spec.Args, " "))
 		return err
@@ -560,6 +552,46 @@ func (a *App) runInspect(args []string) error {
 	shellDisplay := strings.TrimRight(spec.ShellCommand, "\r\n")
 	_, err = fmt.Fprintf(a.stdout, "shell:\n  %s\n", strings.ReplaceAll(shellDisplay, "\n", "\n  "))
 	return err
+}
+
+func (a *App) runHistory(args []string) error {
+	a.logger.Debug("history start", "args", args)
+	if isHelpArg(args) {
+		printCommandUsage(a.stdout, "history")
+		return nil
+	}
+	if len(args) != 1 {
+		return errors.New("history requires a job name")
+	}
+	managed, err := a.loadManagedSpec(args[0])
+	if err != nil {
+		return err
+	}
+	spec := managed.spec
+	if len(spec.RecentRuns) == 0 {
+		_, err := fmt.Fprintln(a.stdout, "no recorded runs")
+		return err
+	}
+	writer := tabwriter.NewWriter(a.stdout, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(writer, "STARTED\tFINISHED\tRESULT\tERROR"); err != nil {
+		return err
+	}
+	for _, run := range spec.RecentRuns {
+		finished := "-"
+		if run.FinishedAt != nil {
+			finished = formatTimestamp(*run.FinishedAt)
+		}
+		result := "running"
+		if run.ExitCode != nil {
+			result = fmt.Sprintf("exit %d", *run.ExitCode)
+		} else if run.FinishedAt != nil {
+			result = "finished"
+		}
+		if _, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", formatTimestamp(run.StartedAt), finished, result, run.Error); err != nil {
+			return err
+		}
+	}
+	return writer.Flush()
 }
 
 func (a *App) runExec(args []string) error {
@@ -712,6 +744,7 @@ func printUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "  apply [file]               Apply jobs from a TOML file")
 	fmt.Fprintln(stdout, "  list                       List managed jobs")
 	fmt.Fprintln(stdout, "  inspect <name>             Show job details")
+	fmt.Fprintln(stdout, "  history <name>             Show recent execution history")
 	fmt.Fprintln(stdout, "  logs [flags] <name>        Print job logs")
 	fmt.Fprintln(stdout, "  exec <name>                Run a managed job immediately")
 	fmt.Fprintln(stdout, "  version                    Print the CLI version")
@@ -750,6 +783,11 @@ func printCommandUsage(stdout io.Writer, command string) {
 		fmt.Fprintln(stdout, "  summond inspect <name>")
 		fmt.Fprintln(stdout, "")
 		fmt.Fprintln(stdout, "Show the stored configuration and recent run state for a managed job.")
+	case "history":
+		fmt.Fprintln(stdout, "Usage:")
+		fmt.Fprintln(stdout, "  summond history <name>")
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Show recent execution history for a managed job.")
 	case "logs":
 		fmt.Fprintln(stdout, "Usage:")
 		fmt.Fprintln(stdout, "  summond logs [flags] <name>")

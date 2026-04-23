@@ -216,6 +216,20 @@ func TestHelpInspect(t *testing.T) {
 	}
 }
 
+func TestHelpHistory(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	if err := app.Run([]string{"history", "--help"}); err != nil {
+		t.Fatalf("history --help error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "summond history <name>") || !strings.Contains(got, "execution history") {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
 func TestTopLevelHelpMentionsCommandHelp(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
@@ -841,6 +855,76 @@ func TestInspectShowsShellScriptOnNewLine(t *testing.T) {
 	}
 	if strings.Contains(got, "shell:\n  echo hello\n  echo world\n  \n") {
 		t.Fatalf("stdout has extra blank shell line: %q", got)
+	}
+}
+
+func TestHistoryShowsNoRecordedRuns(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["clean"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	stdout.Reset()
+	if err := app.Run([]string{"history", "cleanup"}); err != nil {
+		t.Fatalf("history error = %v", err)
+	}
+	if got := stdout.String(); got != "no recorded runs\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestHistoryShowsRecentRunsTable(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`args = ["clean"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	stdout.Reset()
+	if err := app.Run([]string{"exec", "cleanup"}); err != nil {
+		t.Fatalf("exec error = %v", err)
+	}
+
+	stdout.Reset()
+	if err := app.Run([]string{"history", "cleanup"}); err != nil {
+		t.Fatalf("history error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "STARTED") || !strings.Contains(got, "FINISHED") || !strings.Contains(got, "RESULT") || !strings.Contains(got, "ERROR") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if !strings.Contains(got, "exit 0") {
+		t.Fatalf("stdout = %q", got)
 	}
 }
 
