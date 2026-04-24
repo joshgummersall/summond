@@ -4,5 +4,6 @@
 - [x] `summond env set KEY=VALUE` / `env get KEY` for manipulating env vars instead of editing file
 - [x] `summond env remove KEY` to clean up unused env vars
 - [x] Document exit codes in help text or a man page — currently only `exec` exit semantics are explained
+- [ ] `remove` does not delete job directory (at least for daemon jobs)
 - [ ] Consider renaming `agent` to `user` for commands, and `daemon` to `system`, as they are a bit more clear
 - [ ] `--dry-run` on `remove` and `apply --prune` — safe testing of automation scripts before destructive operations
