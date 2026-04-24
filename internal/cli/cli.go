@@ -85,6 +85,10 @@ type removeOptions struct {
 	name string
 }
 
+type listOptions struct {
+	json bool
+}
+
 type namedJobOptions struct {
 	name string
 }
@@ -562,12 +566,26 @@ func (a *App) verifyLoadedJob(spec job.Spec) error {
 	return nil
 }
 
-func (a *App) runList() error {
+func (a *App) runList(opts listOptions) error {
 	a.logger.Debug("list start")
 	managedSpecs, err := a.listManagedJobs()
 	if err != nil {
 		return err
 	}
+
+	if opts.json {
+		specs := make([]job.Spec, 0, len(managedSpecs))
+		for _, managed := range managedSpecs {
+			specs = append(specs, managed.spec)
+		}
+		data, err := json.MarshalIndent(specs, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal jobs: %w", err)
+		}
+		_, err = fmt.Fprintln(a.stdout, string(data))
+		return err
+	}
+
 	if len(managedSpecs) == 0 {
 		_, err = fmt.Fprintln(a.stdout, "no managed jobs")
 		return err

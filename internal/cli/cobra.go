@@ -257,7 +257,8 @@ Use 'summond list' to see job names.`,
 }
 
 func (a *App) newListCommand() *cobra.Command {
-	return &cobra.Command{
+	var jsonOutput bool
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List managed jobs",
 		Long: `List all managed jobs with their target, schedule, and last run status.
@@ -266,13 +267,19 @@ Output columns:
   NAME      job name (or group.name if the job belongs to a group)
   TARGET    agent or daemon
   SCHEDULE  schedule kind and parameters, or trigger type
-  STATUS    never / running / ok <timestamp> / exit <code> <timestamp>`,
-		Example: `  summond list`,
-		Args:    cobra.NoArgs,
+  STATUS    never / running / ok <timestamp> / exit <code> <timestamp>
+
+Use --json to output a JSON array of job objects instead of the table.`,
+		Example: `  summond list
+  summond list --json
+  summond list --json | jq '.[].name'`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runList()
+			return a.runList(listOptions{json: jsonOutput})
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output jobs as a JSON array")
+	return cmd
 }
 
 func (a *App) newStateCommand() *cobra.Command {
