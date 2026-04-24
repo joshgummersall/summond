@@ -16,7 +16,13 @@ func (a *App) newRootCommand() *cobra.Command {
 		Short:         "Manage friendly launchd jobs",
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Long:          "summond manages friendly launchd jobs with native LaunchAgents and LaunchDaemons.",
+		Long: `summond manages friendly launchd jobs with native LaunchAgents and LaunchDaemons.
+
+Exit codes:
+  0   success
+  1   error (bad arguments, job not found, command failed, etc.)
+  N   exec: exits with the job's own exit code (non-zero means the job failed, not summond)
+  N   cd: exits with the shell's exit code when used interactively`,
 	}
 	verbosity := root.PersistentFlags().CountP("verbose", "v", "increase verbosity")
 	root.PersistentPreRun = func(cmd *cobra.Command, args []string) {
@@ -114,7 +120,9 @@ config file path, or the 'group' key at the top of the config file. Apply only m
 jobs in groups present in the config — jobs in other groups are never pruned.
 
 If the config file removes a job that summond previously managed (within the same group),
-apply will prompt to prune it. Use --prune to remove orphaned jobs without prompting.`,
+apply will prompt to prune it. Use --prune to remove orphaned jobs without prompting.
+
+Exits with code 1 if any job fails to apply, even if other jobs succeeded.`,
 		Example: `  summond apply
   summond apply path/to/jobs.toml
   summond apply --prune`,
