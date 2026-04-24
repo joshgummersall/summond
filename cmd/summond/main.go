@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/standardlabs/summond/internal/cli"
+	"github.com/joshgummersall/summond/internal/cli"
 )
 
 func main() {

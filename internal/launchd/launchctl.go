@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/standardlabs/summond/internal/job"
+	"github.com/joshgummersall/summond/internal/job"
 )
 
 type Runner interface {

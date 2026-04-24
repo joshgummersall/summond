@@ -309,7 +309,7 @@ func (s *Spec) normalizeTrigger() error {
 }
 
 func DefaultLabel(group, name string) string {
-	parts := []string{"com", "standardlabs", "summond"}
+	parts := []string{"com", "joshgummersall", "summond"}
 	if safe := normalizeLabelPart(group); safe != "" {
 		parts = append(parts, safe)
 	}

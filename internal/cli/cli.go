@@ -17,11 +17,11 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/standardlabs/summond/internal/bootstrap"
-	"github.com/standardlabs/summond/internal/config"
-	"github.com/standardlabs/summond/internal/job"
-	"github.com/standardlabs/summond/internal/launchd"
-	"github.com/standardlabs/summond/internal/state"
+	"github.com/joshgummersall/summond/internal/bootstrap"
+	"github.com/joshgummersall/summond/internal/config"
+	"github.com/joshgummersall/summond/internal/job"
+	"github.com/joshgummersall/summond/internal/launchd"
+	"github.com/joshgummersall/summond/internal/state"
 )
 
 const version = "1.0.0"

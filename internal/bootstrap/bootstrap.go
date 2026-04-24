@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/standardlabs/summond/internal/state"
+	"github.com/joshgummersall/summond/internal/state"
 )
 
-const newsyslogFilename = "com.standardlabs.summond.conf"
+const newsyslogFilename = "com.joshgummersall.summond.conf"
 const installMarkerFilename = ".installed"
 
 type Options struct {

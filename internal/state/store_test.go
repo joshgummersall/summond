@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/standardlabs/summond/internal/job"
+	"github.com/joshgummersall/summond/internal/job"
 )
 
 func TestDiscoverPathSetUsesFixedPlatformPaths(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/standardlabs/summond/internal/job"
+	"github.com/joshgummersall/summond/internal/job"
 )
 
 func (a *App) newRootCommand() *cobra.Command {

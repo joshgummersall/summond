@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/standardlabs/summond/internal/bootstrap"
-	"github.com/standardlabs/summond/internal/config"
-	"github.com/standardlabs/summond/internal/job"
-	"github.com/standardlabs/summond/internal/state"
+	"github.com/joshgummersall/summond/internal/bootstrap"
+	"github.com/joshgummersall/summond/internal/config"
+	"github.com/joshgummersall/summond/internal/job"
+	"github.com/joshgummersall/summond/internal/state"
 )
 
 type fakeRunner struct {
@@ -588,7 +588,7 @@ func TestApplySkipsBootoutWhenServiceIsMissing(t *testing.T) {
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 	runner := app.runner.(*fakeRunner)
-	runner.printErr = map[string]error{"cleanup": errors.New("Could not find service \"com.standardlabs.summond.cleanup\" in domain")}
+	runner.printErr = map[string]error{"cleanup": errors.New("Could not find service \"com.joshgummersall.summond.cleanup\" in domain")}
 
 	configPath := filepath.Join(testHome(t), "summond.toml")
 	data := strings.Join([]string{
@@ -660,7 +660,7 @@ func TestApplyFailsWhenVerificationFails(t *testing.T) {
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 	runner := app.runner.(*fakeRunner)
-	runner.printText = map[string]string{"cleanup": "com.standardlabs.summond.cleanup\n/bin/echo\n"}
+	runner.printText = map[string]string{"cleanup": "com.joshgummersall.summond.cleanup\n/bin/echo\n"}
 
 	configPath := filepath.Join(testHome(t), "summond.toml")
 	data := strings.Join([]string{
@@ -1506,7 +1506,7 @@ func TestPlistPrintsJobPlist(t *testing.T) {
 		t.Fatalf("plist error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "<plist") || !strings.Contains(got, "<key>Label</key>") || !strings.Contains(got, "<string>com.standardlabs.summond.") || !strings.Contains(got, "<key>ProgramArguments</key>") {
+	if !strings.Contains(got, "<plist") || !strings.Contains(got, "<key>Label</key>") || !strings.Contains(got, "<string>com.joshgummersall.summond.") || !strings.Contains(got, "<key>ProgramArguments</key>") {
 		t.Fatalf("stdout = %q", got)
 	}
 }
