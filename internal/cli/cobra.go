@@ -344,22 +344,24 @@ func (a *App) newLogsCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs <name>",
 		Short: "Print job logs",
-		Long: `Print the last N lines of a managed job's stdout and stderr log files.
+		Long: `Print logs from the last execution of a managed job.
 
-Both stdout and stderr are printed in order. Use -f to stream new output as it is appended,
-similar to 'tail -f'. Press Ctrl-C to stop following.
+By default, only output from the most recent execution is shown. Use -n to show
+the last N lines of the full log file instead. Use -f to stream new output as it
+is appended, similar to 'tail -f'. Press Ctrl-C to stop following.
 
-Log files are managed by newsyslog and rotated automatically. If the job has never run,
-the log files may not exist yet.`,
+Log files are managed by newsyslog and rotated automatically. If the job has never
+run, the log files may not exist yet.`,
 		Example: `  summond logs my-job
   summond logs my-job -n 100
   summond logs my-job -f`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runLogs(logsOptions{name: args[0], lineCount: lineCount, follow: follow})
+			lastRun := !cmd.Flags().Changed("lines")
+			return a.runLogs(logsOptions{name: args[0], lineCount: lineCount, follow: follow, lastRun: lastRun})
 		},
 	}
-	cmd.Flags().IntVarP(&lineCount, "lines", "n", 40, "number of lines to print per log file")
+	cmd.Flags().IntVarP(&lineCount, "lines", "n", 40, "number of lines to print (disables last-run mode)")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "stream appended output (like tail -f); press Ctrl-C to stop")
 	return cmd
 }

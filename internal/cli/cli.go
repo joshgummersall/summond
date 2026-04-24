@@ -102,6 +102,7 @@ type logsOptions struct {
 	name      string
 	lineCount int
 	follow    bool
+	lastRun   bool
 }
 
 type envSetOptions struct {
@@ -928,7 +929,7 @@ func (a *App) runCd(opts namedJobOptions) error {
 }
 
 func (a *App) runLogs(opts logsOptions) error {
-	a.logger.Debug("logs start", "name", opts.name, "follow", opts.follow, "lines", opts.lineCount)
+	a.logger.Debug("logs start", "name", opts.name, "follow", opts.follow, "lines", opts.lineCount, "lastRun", opts.lastRun)
 	if opts.lineCount < 0 {
 		return errors.New("logs requires -n >= 0")
 	}
@@ -937,20 +938,30 @@ func (a *App) runLogs(opts logsOptions) error {
 		return err
 	}
 	spec := managed.spec
-	targets := []logTailTarget{}
+	type logTarget struct {
+		logTailTarget
+		offset int64
+	}
+	var targets []logTarget
 	if spec.StdoutPath != "" {
-		targets = append(targets, logTailTarget{path: spec.StdoutPath, output: a.stdout, name: "stdout"})
+		targets = append(targets, logTarget{logTailTarget: logTailTarget{path: spec.StdoutPath, output: a.stdout, name: "stdout"}, offset: spec.LastStdoutOffset})
 	}
 	if spec.StderrPath != "" {
-		targets = append(targets, logTailTarget{path: spec.StderrPath, output: a.stderr, name: "stderr"})
+		targets = append(targets, logTarget{logTailTarget: logTailTarget{path: spec.StderrPath, output: a.stderr, name: "stderr"}, offset: spec.LastStderrOffset})
 	}
 	if len(targets) == 0 {
 		return errors.New("no log path configured")
 	}
 	if !opts.follow {
 		for _, target := range targets {
-			if err := a.runTail(target, opts.lineCount, false); err != nil {
-				return err
+			if opts.lastRun {
+				if err := a.runTailFromOffset(target.logTailTarget, target.offset); err != nil {
+					return err
+				}
+			} else {
+				if err := a.runTail(target.logTailTarget, opts.lineCount, false); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -962,7 +973,11 @@ func (a *App) runLogs(opts logsOptions) error {
 	for _, target := range targets {
 		target := target
 		go func() {
-			errCh <- a.runTailContext(ctx, target, opts.lineCount, true)
+			if opts.lastRun {
+				errCh <- a.runTailFromOffsetContext(ctx, target.logTailTarget, target.offset, true)
+			} else {
+				errCh <- a.runTailContext(ctx, target.logTailTarget, opts.lineCount, true)
+			}
 		}()
 	}
 	var firstErr error
@@ -997,6 +1012,24 @@ func (a *App) runTailContext(ctx context.Context, target logTailTarget, lineCoun
 	tailArgs := logsTailArgs(lineCount, follow, target.path)
 	a.logger.Debug("reading log", "path", target.path, "stream", target.name, "follow", follow, "lines", lineCount)
 	cmd := exec.CommandContext(ctx, "tail", tailArgs...)
+	cmd.Stdout = target.output
+	cmd.Stderr = a.stderr
+	return cmd.Run()
+}
+
+func (a *App) runTailFromOffset(target logTailTarget, offset int64) error {
+	return a.runTailFromOffsetContext(context.Background(), target, offset, false)
+}
+
+func (a *App) runTailFromOffsetContext(ctx context.Context, target logTailTarget, offset int64, follow bool) error {
+	// tail -c +N prints from byte N (1-based), so offset+1 skips the first `offset` bytes.
+	args := []string{"-c", fmt.Sprintf("+%d", offset+1)}
+	if follow {
+		args = append(args, "-f")
+	}
+	args = append(args, target.path)
+	a.logger.Debug("reading log from offset", "path", target.path, "stream", target.name, "offset", offset, "follow", follow)
+	cmd := exec.CommandContext(ctx, "tail", args...)
 	cmd.Stdout = target.output
 	cmd.Stderr = a.stderr
 	return cmd.Run()

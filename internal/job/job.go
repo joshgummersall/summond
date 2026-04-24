@@ -86,6 +86,8 @@ type Spec struct {
 	LastFinishedAt          *time.Time        `json:"last_finished_at,omitempty"`
 	LastExitCode            *int              `json:"last_exit_code,omitempty"`
 	LastError               string            `json:"last_error,omitempty"`
+	LastStdoutOffset        int64             `json:"last_stdout_offset,omitempty"`
+	LastStderrOffset        int64             `json:"last_stderr_offset,omitempty"`
 	RunCount                int               `json:"run_count,omitempty"`
 	SuccessCount            int               `json:"success_count,omitempty"`
 	FailureCount            int               `json:"failure_count,omitempty"`

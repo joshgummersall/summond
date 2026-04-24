@@ -266,7 +266,20 @@ func (s *Store) RecordExecutionStart(name string, startedAt time.Time) error {
 		spec.LastFinishedAt = nil
 		spec.LastExitCode = nil
 		spec.LastError = ""
+		spec.LastStdoutOffset = fileSize(spec.StdoutPath)
+		spec.LastStderrOffset = fileSize(spec.StderrPath)
 	})
+}
+
+func fileSize(path string) int64 {
+	if path == "" {
+		return 0
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.Size()
 }
 
 func (s *Store) RecordExecutionFinish(name string, record job.ExecutionRecord) error {
@@ -527,6 +540,8 @@ func preserveRuntimeState(dst *job.Spec, src job.Spec) {
 	dst.LastFinishedAt = src.LastFinishedAt
 	dst.LastExitCode = src.LastExitCode
 	dst.LastError = src.LastError
+	dst.LastStdoutOffset = src.LastStdoutOffset
+	dst.LastStderrOffset = src.LastStderrOffset
 	dst.RunCount = src.RunCount
 	dst.SuccessCount = src.SuccessCount
 	dst.FailureCount = src.FailureCount
