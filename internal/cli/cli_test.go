@@ -1383,6 +1383,63 @@ func TestExecRecordsFailingRun(t *testing.T) {
 	}
 }
 
+func TestExecDaemonRequiresSudo(t *testing.T) {
+	app := newTestApp(t)
+	app.geteuid = func() int { return 501 }
+
+	spec, err := app.daemonStore.Install(job.Spec{
+		Name:     "daemon-job",
+		Target:   job.TargetDaemon,
+		Command:  "/bin/echo",
+		Schedule: job.Schedule{Kind: job.ScheduleBoot},
+	})
+	if err != nil {
+		t.Fatalf("Install(daemon-job) error = %v", err)
+	}
+
+	err = app.Run([]string{"exec", spec.Name})
+	if err == nil || err.Error() != "daemon jobs are owned by root; re-run as: sudo summond exec daemon-job" {
+		t.Fatalf("exec error = %v", err)
+	}
+	loaded, loadErr := app.daemonStore.Load(spec.Name)
+	if loadErr != nil {
+		t.Fatalf("Load() error = %v", loadErr)
+	}
+	if loaded.RunCount != 0 {
+		t.Fatalf("RunCount = %d, want 0", loaded.RunCount)
+	}
+}
+
+func TestExecAgentRequiresNonRoot(t *testing.T) {
+	app := newTestApp(t)
+	app.geteuid = func() int { return 0 }
+
+	spec, err := app.store.Install(job.Spec{
+		Name:    "cleanup",
+		Command: "/bin/echo",
+		Schedule: job.Schedule{
+			Kind: job.ScheduleDaily,
+			Hour: 3, HourSet: true,
+			Minute: 45, MinuteSet: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Install(cleanup) error = %v", err)
+	}
+
+	err = app.Run([]string{"exec", spec.Name})
+	if err == nil || err.Error() != "agent jobs run as the logged-in user; re-run without sudo: summond exec cleanup" {
+		t.Fatalf("exec error = %v", err)
+	}
+	loaded, loadErr := app.store.Load(spec.Name)
+	if loadErr != nil {
+		t.Fatalf("Load() error = %v", loadErr)
+	}
+	if loaded.RunCount != 0 {
+		t.Fatalf("RunCount = %d, want 0", loaded.RunCount)
+	}
+}
+
 func TestInstallCreatesStarterFiles(t *testing.T) {
 	app := newTestApp(t)
 	app.stdin = strings.NewReader("y\n")

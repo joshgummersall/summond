@@ -47,6 +47,7 @@ type App struct {
 	priv         privilegedOperator
 	logger       *slog.Logger
 	promptReader *bufio.Reader
+	geteuid      func() int
 }
 
 type installOptions struct {
@@ -153,7 +154,17 @@ func NewApp(stdin io.Reader, stdout io.Writer, store *state.Store, runner launch
 }
 
 func NewAppWithStores(stdin io.Reader, stdout io.Writer, store *state.Store, daemonStore *state.Store, runner launchd.Runner, boot *bootstrap.Manager) *App {
-	return &App{stdin: stdin, stdout: stdout, stderr: io.Discard, store: store, daemonStore: daemonStore, runner: runner, boot: boot, priv: osPrivilegedOperator{}}
+	return &App{
+		stdin:       stdin,
+		stdout:      stdout,
+		stderr:      io.Discard,
+		store:       store,
+		daemonStore: daemonStore,
+		runner:      runner,
+		boot:        boot,
+		priv:        osPrivilegedOperator{},
+		geteuid:     os.Geteuid,
+	}
 }
 
 func (a *App) Run(args []string) error {
@@ -667,8 +678,15 @@ func (a *App) runExec(opts namedJobOptions) error {
 		return err
 	}
 	spec := managed.spec
-	if spec.Target == job.TargetDaemon && os.Geteuid() != 0 {
+	euid := 0
+	if a.geteuid != nil {
+		euid = a.geteuid()
+	}
+	if spec.Target == job.TargetDaemon && euid != 0 {
 		return fmt.Errorf("daemon jobs are owned by root; re-run as: sudo summond exec %s", spec.Name)
+	}
+	if spec.Target != job.TargetDaemon && euid == 0 {
+		return fmt.Errorf("agent jobs run as the logged-in user; re-run without sudo: summond exec %s", spec.Name)
 	}
 	startedAt := time.Now()
 	if err := managed.store.RecordExecutionStart(spec.Name, startedAt); err != nil {
