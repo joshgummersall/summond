@@ -662,6 +662,9 @@ func (a *App) runExec(opts namedJobOptions) error {
 		return err
 	}
 	spec := managed.spec
+	if spec.Target == job.TargetDaemon && os.Geteuid() != 0 {
+		return fmt.Errorf("daemon jobs are owned by root; re-run as: sudo summond exec %s", spec.Name)
+	}
 	startedAt := time.Now()
 	if err := managed.store.RecordExecutionStart(spec.Name, startedAt); err != nil {
 		return err
