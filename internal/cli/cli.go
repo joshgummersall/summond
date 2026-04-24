@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -49,6 +47,47 @@ type App struct {
 	priv         privilegedOperator
 	logger       *slog.Logger
 	promptReader *bufio.Reader
+}
+
+type installOptions struct {
+	overwrite     bool
+	skipNewsyslog bool
+}
+
+type applyOptions struct {
+	filePath string
+	prune    bool
+}
+
+type addOptions struct {
+	target          job.Target
+	name            string
+	schedule        string
+	workingDir      string
+	hour            int
+	hourSet         bool
+	minute          int
+	minuteSet       bool
+	weekday         int
+	weekdaySet      bool
+	intervalMinutes int
+	intervalSet     bool
+	commandArgs     []string
+	stdinScript     string
+}
+
+type removeOptions struct {
+	name string
+}
+
+type namedJobOptions struct {
+	name string
+}
+
+type logsOptions struct {
+	name      string
+	lineCount int
+	follow    bool
 }
 
 type privilegedOperator interface {
@@ -98,29 +137,13 @@ func (a *App) Run(args []string) error {
 	return root.Execute()
 }
 
-func (a *App) runInstall(args []string) error {
+func (a *App) runInstall(opts installOptions) error {
 	a.logger.Debug("install start")
-	fs := flag.NewFlagSet("install", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {
-		printCommandUsage(a.stdout, "install")
+	installOpts := bootstrap.Options{
+		SkipNewsyslog: opts.skipNewsyslog,
+		Overwrite:     opts.overwrite,
 	}
-	overwrite := fs.Bool("overwrite", false, "overwrite generated files")
-	skipNewsyslog := fs.Bool("skip-newsyslog", false, "skip generating newsyslog config")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
-	if len(fs.Args()) != 0 {
-		return errors.New("install does not accept positional arguments")
-	}
-	opts := bootstrap.Options{
-		SkipNewsyslog: *skipNewsyslog,
-		Overwrite:     *overwrite,
-	}
-	if err := a.printInstallPlan(opts); err != nil {
+	if err := a.printInstallPlan(installOpts); err != nil {
 		return err
 	}
 	approved, err := a.confirmWithDefault("Proceed with install? [y/N]: ", false)
@@ -132,11 +155,11 @@ func (a *App) runInstall(args []string) error {
 		return err
 	}
 
-	result, err := a.boot.Install(opts)
+	result, err := a.boot.Install(installOpts)
 	if err != nil {
 		a.logger.Debug("install failed", "error", err)
 		var permissionErr *bootstrap.PermissionError
-		if errors.As(err, &permissionErr) && !*skipNewsyslog {
+		if errors.As(err, &permissionErr) && !opts.skipNewsyslog {
 			approved, promptErr := a.confirmWithDefault("newsyslog install requires sudo. Retry with sudo? [Y/n]: ", true)
 			if promptErr != nil {
 				return promptErr
@@ -166,22 +189,8 @@ func (a *App) runInstall(args []string) error {
 	return a.printInstallSummary(result)
 }
 
-func (a *App) runUninstall(args []string) error {
+func (a *App) runUninstall() error {
 	a.logger.Debug("uninstall start")
-	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {
-		printCommandUsage(a.stdout, "uninstall")
-	}
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
-	if len(fs.Args()) != 0 {
-		return errors.New("uninstall does not accept positional arguments")
-	}
 	managedSpecs, err := a.listManagedJobs()
 	if err != nil {
 		return err
@@ -283,24 +292,8 @@ func (a *App) runUninstall(args []string) error {
 	return nil
 }
 
-func (a *App) runApply(args []string) error {
+func (a *App) runApply(opts applyOptions) error {
 	a.logger.Debug("apply start")
-	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {
-		printCommandUsage(a.stdout, "apply")
-	}
-	prune := fs.Bool("prune", false, "remove managed jobs missing from the config without prompting")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
-	filePath, err := optionalConfigPath(fs.Args(), "apply")
-	if err != nil {
-		return err
-	}
 	installed, err := a.boot.IsInstalled()
 	if err != nil {
 		return err
@@ -312,11 +305,11 @@ func (a *App) runApply(args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve current executable: %w", err)
 	}
-	specs, err := config.LoadFile(filePath)
+	specs, err := config.LoadFile(opts.filePath)
 	if err != nil {
 		return err
 	}
-	a.logger.Debug("loaded config", "path", filePath, "jobs", len(specs))
+	a.logger.Debug("loaded config", "path", opts.filePath, "jobs", len(specs))
 	orphanedSpecs, err := a.orphanedManagedJobs(specs)
 	if err != nil {
 		return err
@@ -369,7 +362,7 @@ func (a *App) runApply(args []string) error {
 		return ExitError{Code: 1}
 	}
 	if len(orphanedSpecs) > 0 {
-		pruned, err := a.pruneManagedSpecs(orphanedSpecs, *prune)
+		pruned, err := a.pruneManagedSpecs(orphanedSpecs, opts.prune)
 		if err != nil {
 			return err
 		}
@@ -383,131 +376,64 @@ func (a *App) runApply(args []string) error {
 	return nil
 }
 
-func (a *App) runAdd(args []string) error {
-	a.logger.Debug("add start", "args", args)
-	if isHelpArg(args) || len(args) == 0 {
-		printCommandUsage(a.stdout, "add")
-		return nil
-	}
-	switch args[0] {
-	case "agent":
-		return a.runAddTarget(job.TargetAgent, args[1:])
-	case "daemon":
-		return a.runAddTarget(job.TargetDaemon, args[1:])
-	case "help":
-		printCommandUsage(a.stdout, "add")
-		return nil
-	default:
-		return fmt.Errorf("add requires a subcommand: agent or daemon")
-	}
-}
-
-func (a *App) runAddTarget(target job.Target, args []string) error {
-	a.logger.Debug("add target start", "target", target, "args", args)
-	commandName := "add " + string(target)
-	if isHelpArg(args) {
-		printCommandUsage(a.stdout, commandName)
-		return nil
-	}
-	if len(args) == 0 || args[0] == "--" || strings.HasPrefix(args[0], "-") {
-		return fmt.Errorf("%s requires a job name", commandName)
-	}
-	name := args[0]
-	args = args[1:]
-	fs := flag.NewFlagSet("add", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {
-		printCommandUsage(a.stdout, commandName)
-	}
-	schedule := fs.String("schedule", "", "schedule kind")
-	workingDir := fs.String("working-dir", "", "working directory")
-	var hour optionalIntFlag
-	var minute optionalIntFlag
-	var weekday optionalIntFlag
-	var intervalMinutes optionalIntFlag
-	fs.Var(&hour, "hour", "schedule hour")
-	fs.Var(&minute, "minute", "schedule minute")
-	fs.Var(&weekday, "weekday", "schedule weekday")
-	fs.Var(&intervalMinutes, "interval-minutes", "interval schedule minutes")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
-	commandArgs := append([]string(nil), fs.Args()...)
-	hasArgvCommand := len(commandArgs) > 0
-	hasShellStdin := !hasArgvCommand && stdinHasData(a.stdin)
-	commandModes := 0
-	for _, active := range []bool{hasArgvCommand, hasShellStdin} {
-		if active {
-			commandModes++
-		}
-	}
-	if commandModes == 0 {
-		return errors.New("add requires a command after -- or shell script input on stdin")
-	}
-	if commandModes > 1 {
-		return fmt.Errorf("%s accepts only one of command argv after -- or shell script input on stdin", commandName)
-	}
-	if *schedule == "" {
-		return fmt.Errorf("%s requires --schedule", commandName)
+func (a *App) runAddTarget(opts addOptions) error {
+	a.logger.Debug("add target start", "target", opts.target, "name", opts.name)
+	if opts.schedule == "" {
+		return fmt.Errorf("add %s requires --schedule", opts.target)
 	}
 	installed, err := a.boot.IsInstalled()
 	if err != nil {
 		return err
 	}
 	if !installed {
-		return fmt.Errorf("%s requires install to be run first", commandName)
+		return fmt.Errorf("add %s requires install to be run first", opts.target)
 	}
 	wd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("resolve current working directory: %w", err)
 	}
-	if _, err := a.loadManagedSpec(name); err == nil {
-		return fmt.Errorf("job %q already exists", name)
+	if _, err := a.loadManagedSpec(opts.name); err == nil {
+		return fmt.Errorf("job %q already exists", opts.name)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	spec := job.Spec{
-		Name:       name,
-		Target:     target,
-		WorkingDir: *workingDir,
+		Name:       opts.name,
+		Target:     opts.target,
+		WorkingDir: opts.workingDir,
 		Schedule: job.Schedule{
-			Kind: job.ScheduleKind(*schedule),
+			Kind: job.ScheduleKind(opts.schedule),
 		},
 	}
 	switch {
-	case hasArgvCommand:
-		spec.Command = commandArgs[0]
-		spec.Args = append([]string(nil), commandArgs[1:]...)
-	case hasShellStdin:
-		data, err := io.ReadAll(a.stdin)
-		if err != nil {
-			return fmt.Errorf("read shell command from stdin: %w", err)
-		}
-		spec.ShellCommand = strings.TrimRight(string(data), "\n")
+	case len(opts.commandArgs) > 0:
+		spec.Command = opts.commandArgs[0]
+		spec.Args = append([]string(nil), opts.commandArgs[1:]...)
+	case opts.stdinScript != "":
+		spec.ShellCommand = strings.TrimRight(opts.stdinScript, "\n")
 		if strings.TrimSpace(spec.ShellCommand) == "" {
 			return errors.New("shell stdin produced an empty command")
 		}
+	default:
+		return errors.New("add requires a command after -- or shell script input on stdin")
 	}
 	if spec.WorkingDir == "" {
 		spec.WorkingDir = wd
 	}
-	if hour.set {
-		spec.Schedule.Hour = hour.value
+	if opts.hourSet {
+		spec.Schedule.Hour = opts.hour
 		spec.Schedule.HourSet = true
 	}
-	if minute.set {
-		spec.Schedule.Minute = minute.value
+	if opts.minuteSet {
+		spec.Schedule.Minute = opts.minute
 		spec.Schedule.MinuteSet = true
 	}
-	if weekday.set {
-		spec.Schedule.Weekday = weekday.value
+	if opts.weekdaySet {
+		spec.Schedule.Weekday = opts.weekday
 		spec.Schedule.WeekdaySet = true
 	}
-	if intervalMinutes.set {
-		spec.Schedule.IntervalMinutes = intervalMinutes.value
+	if opts.intervalSet {
+		spec.Schedule.IntervalMinutes = opts.intervalMinutes
 		spec.Schedule.IntervalSet = true
 	}
 	if err := spec.Normalize(); err != nil {
@@ -518,7 +444,7 @@ func (a *App) runAddTarget(target job.Target, args []string) error {
 		return fmt.Errorf("resolve current executable: %w", err)
 	}
 	spec.EnvironmentFilePath = a.store.EnvFilePath()
-	if target == job.TargetDaemon {
+	if opts.target == job.TargetDaemon {
 		spec.RuntimeBinaryPath = a.daemonStore.RuntimeBinaryPath()
 		installedSpec, err := a.applyDaemonSpec(spec, runtimeSource)
 		if err != nil {
@@ -541,16 +467,9 @@ func (a *App) runAddTarget(target job.Target, args []string) error {
 	return err
 }
 
-func (a *App) runRemove(args []string) error {
-	a.logger.Debug("remove start", "args", args)
-	if isHelpArg(args) {
-		printCommandUsage(a.stdout, "remove")
-		return nil
-	}
-	if len(args) != 1 {
-		return errors.New("remove requires a job name")
-	}
-	managed, err := a.loadManagedSpec(args[0])
+func (a *App) runRemove(opts removeOptions) error {
+	a.logger.Debug("remove start", "name", opts.name)
+	managed, err := a.loadManagedSpec(opts.name)
 	if err != nil {
 		return err
 	}
@@ -634,15 +553,8 @@ func (a *App) verifyLoadedJob(spec job.Spec) error {
 	return nil
 }
 
-func (a *App) runList(args []string) error {
+func (a *App) runList() error {
 	a.logger.Debug("list start")
-	if isHelpArg(args) {
-		printCommandUsage(a.stdout, "list")
-		return nil
-	}
-	if len(args) != 0 {
-		return errors.New("list does not accept arguments")
-	}
 	managedSpecs, err := a.listManagedJobs()
 	if err != nil {
 		return err
@@ -665,16 +577,9 @@ func (a *App) runList(args []string) error {
 	return writer.Flush()
 }
 
-func (a *App) runState(args []string) error {
-	a.logger.Debug("state start", "args", args)
-	if isHelpArg(args) {
-		printCommandUsage(a.stdout, "state")
-		return nil
-	}
-	if len(args) != 1 {
-		return errors.New("state requires a job name")
-	}
-	managed, err := a.loadManagedSpec(args[0])
+func (a *App) runState(opts namedJobOptions) error {
+	a.logger.Debug("state start", "name", opts.name)
+	managed, err := a.loadManagedSpec(opts.name)
 	if err != nil {
 		return err
 	}
@@ -686,16 +591,9 @@ func (a *App) runState(args []string) error {
 	return err
 }
 
-func (a *App) runPlist(args []string) error {
-	a.logger.Debug("plist start", "args", args)
-	if isHelpArg(args) {
-		printCommandUsage(a.stdout, "plist")
-		return nil
-	}
-	if len(args) != 1 {
-		return errors.New("plist requires a job name")
-	}
-	managed, err := a.loadManagedSpec(args[0])
+func (a *App) runPlist(opts namedJobOptions) error {
+	a.logger.Debug("plist start", "name", opts.name)
+	managed, err := a.loadManagedSpec(opts.name)
 	if err != nil {
 		return err
 	}
@@ -707,16 +605,9 @@ func (a *App) runPlist(args []string) error {
 	return err
 }
 
-func (a *App) runExec(args []string) error {
-	a.logger.Debug("exec start", "args", args)
-	if isHelpArg(args) {
-		printCommandUsage(a.stdout, "exec")
-		return nil
-	}
-	if len(args) != 1 {
-		return errors.New("exec requires a job name")
-	}
-	managed, err := a.loadManagedSpec(args[0])
+func (a *App) runExec(opts namedJobOptions) error {
+	a.logger.Debug("exec start", "name", opts.name)
+	managed, err := a.loadManagedSpec(opts.name)
 	if err != nil {
 		return err
 	}
@@ -742,14 +633,7 @@ func (a *App) runExec(args []string) error {
 	return nil
 }
 
-func (a *App) runEnv(args []string) error {
-	if isHelpArg(args) {
-		printCommandUsage(a.stdout, "env")
-		return nil
-	}
-	if len(args) != 0 {
-		return errors.New("env does not accept positional arguments")
-	}
+func (a *App) runEnv() error {
 	path := a.store.EnvFilePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create env file directory: %w", err)
@@ -786,15 +670,8 @@ func (a *App) runEnv(args []string) error {
 	return nil
 }
 
-func (a *App) runCd(args []string) error {
-	if isHelpArg(args) {
-		printCommandUsage(a.stdout, "cd")
-		return nil
-	}
-	if len(args) != 1 {
-		return errors.New("cd requires a job name")
-	}
-	managed, err := a.loadManagedSpec(args[0])
+func (a *App) runCd(opts namedJobOptions) error {
+	managed, err := a.loadManagedSpec(opts.name)
 	if err != nil {
 		return err
 	}
@@ -833,29 +710,12 @@ func (a *App) runCd(args []string) error {
 	return nil
 }
 
-func (a *App) runLogs(args []string) error {
-	a.logger.Debug("logs start", "args", args)
-	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {
-		printCommandUsage(a.stdout, "logs")
-	}
-	lineCount := fs.Int("n", 40, "number of lines to print")
-	follow := fs.Bool("follow", false, "follow appended data")
-	fs.BoolVar(follow, "f", false, "follow appended data")
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
-	if len(fs.Args()) != 1 {
-		return errors.New("logs requires a job name")
-	}
-	if *lineCount < 0 {
+func (a *App) runLogs(opts logsOptions) error {
+	a.logger.Debug("logs start", "name", opts.name, "follow", opts.follow, "lines", opts.lineCount)
+	if opts.lineCount < 0 {
 		return errors.New("logs requires -n >= 0")
 	}
-	managed, err := a.loadManagedSpec(fs.Args()[0])
+	managed, err := a.loadManagedSpec(opts.name)
 	if err != nil {
 		return err
 	}
@@ -870,9 +730,9 @@ func (a *App) runLogs(args []string) error {
 	if len(targets) == 0 {
 		return errors.New("no log path configured")
 	}
-	if !*follow {
+	if !opts.follow {
 		for _, target := range targets {
-			if err := a.runTail(target, *lineCount, false); err != nil {
+			if err := a.runTail(target, opts.lineCount, false); err != nil {
 				return err
 			}
 		}
@@ -885,7 +745,7 @@ func (a *App) runLogs(args []string) error {
 	for _, target := range targets {
 		target := target
 		go func() {
-			errCh <- a.runTailContext(ctx, target, *lineCount, true)
+			errCh <- a.runTailContext(ctx, target, opts.lineCount, true)
 		}()
 	}
 	var firstErr error
@@ -925,17 +785,6 @@ func (a *App) runTailContext(ctx context.Context, target logTailTarget, lineCoun
 	return cmd.Run()
 }
 
-func isHelpArg(args []string) bool {
-	return len(args) == 1 && (args[0] == "-h" || args[0] == "--help")
-}
-
-func (a *App) requireSingleSpec(args []string, name string) (managedSpec, error) {
-	if len(args) != 1 {
-		return managedSpec{}, fmt.Errorf("%s requires a job name", name)
-	}
-	return a.loadManagedSpec(args[0])
-}
-
 func (a *App) removeManagedSpec(managed managedSpec) error {
 	spec := managed.spec
 	needsSudo := false
@@ -959,184 +808,6 @@ func (a *App) removeManagedSpec(managed managedSpec) error {
 		}
 	}
 	return nil
-}
-
-func printUsage(stdout io.Writer) {
-	fmt.Fprintln(stdout, "summond")
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "Usage:")
-	fmt.Fprintln(stdout, "  summond [-v|-vv] <command> [arguments]")
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "Commands:")
-	fmt.Fprintln(stdout, "  install                    Scaffold config and newsyslog setup")
-	fmt.Fprintln(stdout, "  uninstall                  Remove Summond-managed jobs and setup")
-	fmt.Fprintln(stdout, "  apply [file]               Apply jobs from a TOML file")
-	fmt.Fprintln(stdout, "  add <target> ...           Add and install a managed job")
-	fmt.Fprintln(stdout, "  remove <name>              Remove a managed job and all state")
-	fmt.Fprintln(stdout, "  list                       List managed jobs")
-	fmt.Fprintln(stdout, "  state <name>               Print the job state.json file")
-	fmt.Fprintln(stdout, "  plist <name>               Print the job plist file")
-	fmt.Fprintln(stdout, "  logs [flags] <name>        Print job logs")
-	fmt.Fprintln(stdout, "  exec <name>                Run a managed job immediately")
-	fmt.Fprintln(stdout, "  env                        Edit the shared job environment file")
-	fmt.Fprintln(stdout, "  cd <name>                  Open a shell in the job's state directory")
-	fmt.Fprintln(stdout, "  version                    Print the CLI version")
-	fmt.Fprintln(stdout, "")
-	fmt.Fprintln(stdout, "Run 'summond <command> --help' for command-specific usage.")
-}
-
-func printCommandUsage(stdout io.Writer, command string) {
-	switch command {
-	case "install":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond install [flags]")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Flags:")
-		fmt.Fprintln(stdout, "  --overwrite                Overwrite generated files")
-		fmt.Fprintln(stdout, "  --skip-newsyslog           Skip generating and installing newsyslog config")
-	case "uninstall":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond uninstall [flags]")
-	case "apply":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond apply [flags] [file]")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Apply jobs from a TOML config file.")
-		fmt.Fprintln(stdout, "If [file] is omitted, reads ./summond.toml.")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Flags:")
-		fmt.Fprintln(stdout, "  --prune                    Remove managed jobs missing from the config without prompting")
-	case "add":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond add <target> ...")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Targets:")
-		fmt.Fprintln(stdout, "  agent                      Add a LaunchAgent job")
-		fmt.Fprintln(stdout, "  daemon                     Add a LaunchDaemon job")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Run 'summond add <target> --help' for target-specific usage.")
-	case "add agent":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond add agent <name> [flags]")
-		fmt.Fprintln(stdout, "  summond add agent <name> [flags] -- <command> [args]")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Add and install an agent job without editing summond.toml.")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Flags:")
-		fmt.Fprintln(stdout, "  --schedule <kind>          daily, hourly, weekly, login, boot, interval")
-		fmt.Fprintln(stdout, "  --hour <hour>              Hour for daily/weekly schedules")
-		fmt.Fprintln(stdout, "  --minute <minute>          Minute for hourly/daily/weekly schedules")
-		fmt.Fprintln(stdout, "  --weekday <weekday>        Weekday for weekly schedules")
-		fmt.Fprintln(stdout, "  --interval-minutes <n>     Interval minutes for interval schedules")
-		fmt.Fprintln(stdout, "  --working-dir <path>       Working directory")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Examples:")
-		fmt.Fprintln(stdout, "  summond add agent my-job -- /bin/echo hello --flag")
-		fmt.Fprintln(stdout, "  summond add agent my-script <<'EOF'")
-		fmt.Fprintln(stdout, "  echo hi")
-		fmt.Fprintln(stdout, "  EOF")
-	case "add daemon":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond add daemon <name> [flags]")
-		fmt.Fprintln(stdout, "  summond add daemon <name> [flags] -- <command> [args]")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Add and install a daemon job without editing summond.toml.")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Flags:")
-		fmt.Fprintln(stdout, "  --schedule <kind>          daily, hourly, weekly, boot, interval")
-		fmt.Fprintln(stdout, "  --hour <hour>              Hour for daily/weekly schedules")
-		fmt.Fprintln(stdout, "  --minute <minute>          Minute for hourly/daily/weekly schedules")
-		fmt.Fprintln(stdout, "  --weekday <weekday>        Weekday for weekly schedules")
-		fmt.Fprintln(stdout, "  --interval-minutes <n>     Interval minutes for interval schedules")
-		fmt.Fprintln(stdout, "  --working-dir <path>       Working directory")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Examples:")
-		fmt.Fprintln(stdout, "  summond add daemon my-daemon --schedule boot -- /usr/local/bin/task")
-		fmt.Fprintln(stdout, "  summond add daemon my-script --schedule daily <<'EOF'")
-		fmt.Fprintln(stdout, "  echo hi")
-		fmt.Fprintln(stdout, "  EOF")
-	case "remove":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond remove <name>")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Remove the managed job, its plist, logs, and persisted state.")
-	case "list":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond list")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "List all managed jobs with target, schedule, and status.")
-	case "state":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond state <name>")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Print the managed job's persisted state.json file.")
-	case "plist":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond plist <name>")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Print the managed job's installed plist file.")
-	case "logs":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond logs [flags] <name>")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Flags:")
-		fmt.Fprintln(stdout, "  -n <lines>                 Number of lines to print (default 40)")
-		fmt.Fprintln(stdout, "  -f, --follow               Follow appended log output")
-	case "exec":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond exec <name>")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Run a managed job immediately and record its execution result.")
-	case "env":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond env")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Open the shared shell env file in $EDITOR or $VISUAL.")
-	case "cd":
-		fmt.Fprintln(stdout, "Usage:")
-		fmt.Fprintln(stdout, "  summond cd <name>")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Open a subshell in the job's state directory (interactive), or")
-		fmt.Fprintln(stdout, "print a cd command suitable for eval (non-interactive).")
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "Examples:")
-		fmt.Fprintln(stdout, "  summond cd myjob                  # drops into subshell")
-		fmt.Fprintln(stdout, "  eval $(summond cd myjob)          # cd in current shell")
-	default:
-		printUsage(stdout)
-	}
-}
-
-func parseGlobalFlags(args []string) (int, []string, error) {
-	verbosity := 0
-	for len(args) > 0 {
-		switch args[0] {
-		case "-v":
-			verbosity++
-			args = args[1:]
-		case "-vv":
-			verbosity += 2
-			args = args[1:]
-		case "--verbose":
-			verbosity++
-			args = args[1:]
-		default:
-			return verbosity, args, nil
-		}
-	}
-	return verbosity, args, nil
-}
-
-func optionalConfigPath(args []string, command string) (string, error) {
-	filePath := "summond.toml"
-	switch len(args) {
-	case 0:
-		return filePath, nil
-	case 1:
-		return args[0], nil
-	default:
-		return "", fmt.Errorf("%s accepts at most one config path", command)
-	}
 }
 
 type managedSpec struct {
@@ -1590,28 +1261,6 @@ func (m multiValueFlag) Map() map[string]string {
 		values[parts[0]] = parts[1]
 	}
 	return values
-}
-
-type optionalIntFlag struct {
-	value int
-	set   bool
-}
-
-func (f *optionalIntFlag) String() string {
-	if f == nil || !f.set {
-		return ""
-	}
-	return strconv.Itoa(f.value)
-}
-
-func (f *optionalIntFlag) Set(value string) error {
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return err
-	}
-	f.value = parsed
-	f.set = true
-	return nil
 }
 
 func stdinHasData(reader io.Reader) bool {

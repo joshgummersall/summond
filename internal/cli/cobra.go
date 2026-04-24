@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -48,14 +50,10 @@ func (a *App) newInstallCommand() *cobra.Command {
 		Short: "Scaffold config and newsyslog setup",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var legacy []string
-			if overwrite {
-				legacy = append(legacy, "--overwrite")
-			}
-			if skipNewsyslog {
-				legacy = append(legacy, "--skip-newsyslog")
-			}
-			return a.runInstall(legacy)
+			return a.runInstall(installOptions{
+				overwrite:     overwrite,
+				skipNewsyslog: skipNewsyslog,
+			})
 		},
 	}
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "overwrite generated files")
@@ -69,7 +67,7 @@ func (a *App) newUninstallCommand() *cobra.Command {
 		Short: "Remove Summond-managed jobs and setup",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runUninstall(nil)
+			return a.runUninstall()
 		},
 	}
 }
@@ -82,12 +80,14 @@ func (a *App) newApplyCommand() *cobra.Command {
 		Long:  "Apply jobs from a TOML config file.\nIf [file] is omitted, reads ./summond.toml.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var legacy []string
-			if prune {
-				legacy = append(legacy, "--prune")
+			filePath := "summond.toml"
+			if len(args) == 1 {
+				filePath = args[0]
 			}
-			legacy = append(legacy, args...)
-			return a.runApply(legacy)
+			return a.runApply(applyOptions{
+				filePath: filePath,
+				prune:    prune,
+			})
 		},
 	}
 	cmd.Flags().BoolVar(&prune, "prune", false, "remove managed jobs missing from the config without prompting")
@@ -132,31 +132,34 @@ func (a *App) newAddTargetCommand(target string) *cobra.Command {
 		Example: fmt.Sprintf("summond add %s my-job --schedule %s -- %s\nsummond add %s %s --schedule daily <<'EOF'\necho hi\nEOF",
 			target, exampleSchedule, exampleBinary, target, stdinName),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var legacy []string
-			legacy = append(legacy, args[0])
-			if schedule != "" {
-				legacy = append(legacy, "--schedule", schedule)
+			opts := addOptions{
+				name:            args[0],
+				schedule:        schedule,
+				workingDir:      workingDir,
+				hour:            hour,
+				hourSet:         cmd.Flags().Changed("hour"),
+				minute:          minute,
+				minuteSet:       cmd.Flags().Changed("minute"),
+				weekday:         weekday,
+				weekdaySet:      cmd.Flags().Changed("weekday"),
+				intervalMinutes: intervalMinutes,
+				intervalSet:     cmd.Flags().Changed("interval-minutes"),
 			}
-			if cmd.Flags().Changed("working-dir") {
-				legacy = append(legacy, "--working-dir", workingDir)
-			}
-			if cmd.Flags().Changed("hour") {
-				legacy = append(legacy, "--hour", fmt.Sprintf("%d", hour))
-			}
-			if cmd.Flags().Changed("minute") {
-				legacy = append(legacy, "--minute", fmt.Sprintf("%d", minute))
-			}
-			if cmd.Flags().Changed("weekday") {
-				legacy = append(legacy, "--weekday", fmt.Sprintf("%d", weekday))
-			}
-			if cmd.Flags().Changed("interval-minutes") {
-				legacy = append(legacy, "--interval-minutes", fmt.Sprintf("%d", intervalMinutes))
-			}
-			legacy = append(legacy, args[1:]...)
 			if target == "daemon" {
-				return a.runAddTarget(job.TargetDaemon, legacy)
+				opts.target = job.TargetDaemon
+			} else {
+				opts.target = job.TargetAgent
 			}
-			return a.runAddTarget(job.TargetAgent, legacy)
+			if len(args) > 1 {
+				opts.commandArgs = append([]string(nil), args[1:]...)
+			} else if stdinHasData(a.stdin) {
+				data, err := io.ReadAll(a.stdin)
+				if err != nil {
+					return fmt.Errorf("read shell command from stdin: %w", err)
+				}
+				opts.stdinScript = strings.TrimRight(string(data), "\n")
+			}
+			return a.runAddTarget(opts)
 		},
 	}
 	cmd.Flags().StringVar(&schedule, "schedule", "", "schedule kind")
@@ -175,7 +178,7 @@ func (a *App) newRemoveCommand() *cobra.Command {
 		Long:  "Remove the managed job, its plist, logs, and persisted state.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runRemove(args)
+			return a.runRemove(removeOptions{name: args[0]})
 		},
 	}
 }
@@ -187,7 +190,7 @@ func (a *App) newListCommand() *cobra.Command {
 		Long:  "List all managed jobs with target, schedule, and status.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runList(nil)
+			return a.runList()
 		},
 	}
 }
@@ -199,7 +202,7 @@ func (a *App) newStateCommand() *cobra.Command {
 		Long:  "Print the managed job's persisted state.json file.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runState(args)
+			return a.runState(namedJobOptions{name: args[0]})
 		},
 	}
 }
@@ -211,7 +214,7 @@ func (a *App) newPlistCommand() *cobra.Command {
 		Long:  "Print the managed job's installed plist file.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runPlist(args)
+			return a.runPlist(namedJobOptions{name: args[0]})
 		},
 	}
 }
@@ -224,12 +227,7 @@ func (a *App) newLogsCommand() *cobra.Command {
 		Short: "Print job logs",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			legacy := []string{"-n", fmt.Sprintf("%d", lineCount)}
-			if follow {
-				legacy = append(legacy, "--follow")
-			}
-			legacy = append(legacy, args[0])
-			return a.runLogs(legacy)
+			return a.runLogs(logsOptions{name: args[0], lineCount: lineCount, follow: follow})
 		},
 	}
 	cmd.Flags().IntVarP(&lineCount, "lines", "n", 40, "number of lines to print")
@@ -244,7 +242,7 @@ func (a *App) newExecCommand() *cobra.Command {
 		Long:  "Run a managed job immediately and record its execution result.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runExec(args)
+			return a.runExec(namedJobOptions{name: args[0]})
 		},
 	}
 }
@@ -256,7 +254,7 @@ func (a *App) newEnvCommand() *cobra.Command {
 		Long:  "Open the shared shell env file in $EDITOR or $VISUAL.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runEnv(nil)
+			return a.runEnv()
 		},
 	}
 }
@@ -268,7 +266,7 @@ func (a *App) newCDCommand() *cobra.Command {
 		Long:  "Open a subshell in the job's state directory (interactive), or print a cd command suitable for eval (non-interactive).",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runCd(args)
+			return a.runCd(namedJobOptions{name: args[0]})
 		},
 	}
 }
