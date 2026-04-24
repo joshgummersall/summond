@@ -121,7 +121,7 @@ type envListOptions struct {
 
 type privilegedOperator interface {
 	InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string) error
-	RemoveDaemonArtifactsWithSudo(plistPaths []string, metadataPaths []string, home string) error
+	RemoveDaemonArtifactsWithSudo(plistPaths []string, cleanupPaths []string, extraPaths []string) error
 	RemovePathWithSudo(path string) error
 	BootoutDaemonWithSudo(plistPath string) error
 	WriteFileWithSudo(src, dst string) error
@@ -299,11 +299,11 @@ func (a *App) runUninstall(opts uninstallOptions) error {
 		}
 		if approved {
 			if len(sudoPlists) > 0 || len(sudoMetadata) > 0 || needsSudoDaemonHome {
-				daemonHome := ""
+				var extraPaths []string
 				if needsSudoDaemonHome {
-					daemonHome = a.daemonStore.Paths().Home
+					extraPaths = append(extraPaths, a.daemonStore.Paths().Home)
 				}
-				if err := a.priv.RemoveDaemonArtifactsWithSudo(sudoPlists, sudoMetadata, daemonHome); err != nil {
+				if err := a.priv.RemoveDaemonArtifactsWithSudo(sudoPlists, sudoMetadata, extraPaths); err != nil {
 					return err
 				}
 			}
@@ -1292,7 +1292,7 @@ func (a *App) removeDaemonSpecWithSudo(spec job.Spec) error {
 	return a.priv.RemoveDaemonArtifactsWithSudo(
 		[]string{spec.PlistPath},
 		managedCleanupPaths(a.daemonStore, spec),
-		"",
+		[]string{a.daemonStore.JobDirForSpec(spec)},
 	)
 }
 
@@ -1777,11 +1777,12 @@ launchctl bootstrap system "$plist_dest"
 	return runSudoScript(script, args...)
 }
 
-func (osPrivilegedOperator) RemoveDaemonArtifactsWithSudo(plistPaths []string, metadataPaths []string, home string) error {
+func (osPrivilegedOperator) RemoveDaemonArtifactsWithSudo(plistPaths []string, cleanupPaths []string, extraPaths []string) error {
 	script := `
 plist_count="$1"
-metadata_count="$2"
-shift 2
+cleanup_count="$2"
+extra_count="$3"
+shift 3
 i=0
 while [ "$i" -lt "$plist_count" ]; do
   launchctl bootout system "$1" >/dev/null 2>&1 || true
@@ -1790,21 +1791,22 @@ while [ "$i" -lt "$plist_count" ]; do
   i=$((i + 1))
 done
 i=0
-while [ "$i" -lt "$metadata_count" ]; do
+while [ "$i" -lt "$cleanup_count" ]; do
   rm -rf "$1"
   shift
   i=$((i + 1))
 done
-if [ "$#" -gt 0 ] && [ -n "$1" ]; then
+i=0
+while [ "$i" -lt "$extra_count" ]; do
   rm -rf "$1"
-fi
+  shift
+  i=$((i + 1))
+done
 `
-	args := []string{fmt.Sprintf("%d", len(plistPaths)), fmt.Sprintf("%d", len(metadataPaths))}
+	args := []string{fmt.Sprintf("%d", len(plistPaths)), fmt.Sprintf("%d", len(cleanupPaths)), fmt.Sprintf("%d", len(extraPaths))}
 	args = append(args, plistPaths...)
-	args = append(args, metadataPaths...)
-	if home != "" {
-		args = append(args, home)
-	}
+	args = append(args, cleanupPaths...)
+	args = append(args, extraPaths...)
 	return runSudoScript(script, args...)
 }
 

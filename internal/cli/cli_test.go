@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/standardlabs/summond/internal/bootstrap"
 	"github.com/standardlabs/summond/internal/config"
@@ -873,6 +874,7 @@ func TestRemoveDeletesAgentJobAndState(t *testing.T) {
 		t.Fatalf("bootedOut = %#v", runner.bootedOut)
 	}
 	for _, path := range []string{
+		app.store.JobDirForSpec(spec),
 		spec.StdoutPath,
 		spec.StderrPath,
 		app.store.MetadataPathForSpec(spec),
@@ -914,8 +916,55 @@ func TestRemoveDaemonJobRetriesWithSudo(t *testing.T) {
 	if !containsString(priv.bootout, spec.PlistPath) {
 		t.Fatalf("priv.bootout = %#v", priv.bootout)
 	}
-	if !containsString(priv.removed, spec.PlistPath) || !containsString(priv.removed, app.daemonStore.MetadataPathForSpec(spec)) {
+	if !containsString(priv.removed, spec.PlistPath) ||
+		!containsString(priv.removed, app.daemonStore.MetadataPathForSpec(spec)) ||
+		!containsString(priv.removed, app.daemonStore.JobDirForSpec(spec)) {
 		t.Fatalf("priv.removed = %#v", priv.removed)
+	}
+}
+
+func TestRemoveDaemonJobDeletesStaleJobDirectoryFromList(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	app.stdin = strings.NewReader("y\n")
+	runner := app.runner.(*fakeRunner)
+	runner.bootoutErr = map[string]error{"cleanup": errors.New("launchctl bootout failed")}
+
+	spec, err := app.daemonStore.Install(job.Spec{
+		Group:    "tests",
+		Name:     "cleanup",
+		Target:   job.TargetDaemon,
+		Command:  "/bin/echo",
+		Schedule: job.Schedule{Kind: job.ScheduleBoot},
+	})
+	if err != nil {
+		t.Fatalf("Install(cleanup daemon) error = %v", err)
+	}
+	started := time.Now().Add(-time.Second).UTC()
+	finished := time.Now().UTC()
+	exitCode := 0
+	if err := app.daemonStore.RecordExecutionStart(spec.Name, started); err != nil {
+		t.Fatalf("RecordExecutionStart() error = %v", err)
+	}
+	if err := app.daemonStore.RecordExecutionFinish(spec.Name, job.ExecutionRecord{
+		StartedAt:  started,
+		FinishedAt: &finished,
+		ExitCode:   &exitCode,
+	}); err != nil {
+		t.Fatalf("RecordExecutionFinish() error = %v", err)
+	}
+
+	if err := app.Run([]string{"remove", "cleanup"}); err != nil {
+		t.Fatalf("remove error = %v", err)
+	}
+	stdout.Reset()
+
+	if err := app.Run([]string{"list"}); err != nil {
+		t.Fatalf("list error = %v", err)
+	}
+	if got := stdout.String(); got != "no managed jobs\n" {
+		t.Fatalf("stdout = %q", got)
 	}
 }
 
@@ -1831,12 +1880,26 @@ func (f *fakePrivilegedOperator) InstallDaemonSpecWithSudo(dirs []string, runtim
 	return f.err
 }
 
-func (f *fakePrivilegedOperator) RemoveDaemonArtifactsWithSudo(plistPaths []string, metadataPaths []string, home string) error {
+func (f *fakePrivilegedOperator) RemoveDaemonArtifactsWithSudo(plistPaths []string, cleanupPaths []string, extraPaths []string) error {
 	f.bootout = append(f.bootout, plistPaths...)
 	f.removed = append(f.removed, plistPaths...)
-	f.removed = append(f.removed, metadataPaths...)
-	if home != "" {
-		f.removed = append(f.removed, home)
+	f.removed = append(f.removed, cleanupPaths...)
+	f.removed = append(f.removed, extraPaths...)
+	for _, path := range append(append([]string{}, plistPaths...), cleanupPaths...) {
+		if path == "" {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+	}
+	for _, path := range extraPaths {
+		if path == "" {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
 	}
 	return f.err
 }
