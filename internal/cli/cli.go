@@ -110,6 +110,11 @@ type envGetOptions struct {
 	daemon bool
 }
 
+type envRemoveOptions struct {
+	key    string
+	daemon bool
+}
+
 type envListOptions struct {
 	daemon bool
 }
@@ -790,6 +795,34 @@ func (a *App) runEnvGet(opts envGetOptions) error {
 		return fmt.Errorf("key %q not found in env file", opts.key)
 	}
 	_, err = fmt.Fprintf(a.stdout, "%s\n", value)
+	return err
+}
+
+func (a *App) runEnvRemove(opts envRemoveOptions) error {
+	path, err := a.ensureEnvFile(a.envStore(opts.daemon))
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read env file: %w", err)
+	}
+	env, err := readEnvJSON(data)
+	if err != nil {
+		return fmt.Errorf("parse env file: %w", err)
+	}
+	if _, ok := env[opts.key]; !ok {
+		return fmt.Errorf("key %q not found in env file", opts.key)
+	}
+	delete(env, opts.key)
+	data, err = json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode env file: %w", err)
+	}
+	if err := a.writeEnvFileContents(path, append(data, '\n')); err != nil {
+		return fmt.Errorf("write env file: %w", err)
+	}
+	_, err = fmt.Fprintf(a.stdout, "removed %s\n", opts.key)
 	return err
 }
 

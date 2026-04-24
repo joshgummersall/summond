@@ -380,6 +380,7 @@ By default, operates on the agent env file. Use --daemon to target the daemon en
 	cmd.AddCommand(
 		a.newEnvSetCommand(),
 		a.newEnvGetCommand(),
+		a.newEnvRemoveCommand(),
 		a.newEnvListCommand(),
 	)
 	return cmd
@@ -419,6 +420,25 @@ func (a *App) newEnvGetCommand() *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.runEnvGet(envGetOptions{key: args[0], daemon: daemon})
+		},
+	}
+	cmd.Flags().BoolVar(&daemon, "daemon", false, "operate on the daemon env file instead of the agent env file")
+	return cmd
+}
+
+func (a *App) newEnvRemoveCommand() *cobra.Command {
+	var daemon bool
+	cmd := &cobra.Command{
+		Use:   "remove KEY",
+		Short: "Remove an environment variable",
+		Long: `Remove an environment variable from the shared env file.
+
+Returns an error if the key does not exist.`,
+		Example: `  summond env remove API_KEY
+  summond env remove --daemon SVC_TOKEN`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return a.runEnvRemove(envRemoveOptions{key: args[0], daemon: daemon})
 		},
 	}
 	cmd.Flags().BoolVar(&daemon, "daemon", false, "operate on the daemon env file instead of the agent env file")
