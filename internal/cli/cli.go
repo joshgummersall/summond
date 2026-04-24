@@ -52,6 +52,11 @@ type App struct {
 type installOptions struct {
 	overwrite     bool
 	skipNewsyslog bool
+	yes           bool
+}
+
+type uninstallOptions struct {
+	yes bool
 }
 
 type applyOptions struct {
@@ -146,13 +151,15 @@ func (a *App) runInstall(opts installOptions) error {
 	if err := a.printInstallPlan(installOpts); err != nil {
 		return err
 	}
-	approved, err := a.confirmWithDefault("Proceed with install? [y/N]: ", false)
-	if err != nil {
-		return err
-	}
-	if !approved {
-		_, err = fmt.Fprintln(a.stdout, "install cancelled")
-		return err
+	if !opts.yes {
+		approved, err := a.confirmWithDefault("Proceed with install? [y/N]: ", false)
+		if err != nil {
+			return err
+		}
+		if !approved {
+			_, err = fmt.Fprintln(a.stdout, "install cancelled")
+			return err
+		}
 	}
 
 	result, err := a.boot.Install(installOpts)
@@ -189,7 +196,7 @@ func (a *App) runInstall(opts installOptions) error {
 	return a.printInstallSummary(result)
 }
 
-func (a *App) runUninstall() error {
+func (a *App) runUninstall(opts uninstallOptions) error {
 	a.logger.Debug("uninstall start")
 	managedSpecs, err := a.listManagedJobs()
 	if err != nil {
@@ -198,13 +205,15 @@ func (a *App) runUninstall() error {
 	if err := a.printUninstallPlan(managedSpecs); err != nil {
 		return err
 	}
-	approved, err := a.confirmWithDefault("Proceed with uninstall? [y/N]: ", false)
-	if err != nil {
-		return err
-	}
-	if !approved {
-		_, err = fmt.Fprintln(a.stdout, "uninstall cancelled")
-		return err
+	if !opts.yes {
+		approved, err := a.confirmWithDefault("Proceed with uninstall? [y/N]: ", false)
+		if err != nil {
+			return err
+		}
+		if !approved {
+			_, err = fmt.Fprintln(a.stdout, "uninstall cancelled")
+			return err
+		}
 	}
 	a.logger.Debug("loaded managed jobs", "count", len(managedSpecs))
 	var sudoPlists []string
