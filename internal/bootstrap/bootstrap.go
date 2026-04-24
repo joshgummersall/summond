@@ -188,7 +188,7 @@ func (m *Manager) GeneratedNewsyslogPath() string {
 }
 
 func (m *Manager) EnvFilePath() string {
-	return filepath.Join(m.paths.Home, "env.sh")
+	return filepath.Join(m.paths.Home, "env.json")
 }
 
 func (m *Manager) SystemNewsyslogPath() string {
@@ -350,12 +350,7 @@ func renderConfig() string {
 }
 
 func RenderEnvFile() string {
-	return strings.TrimSpace(`
-# Summond evaluates this file before every job.
-# Export PATH and any other environment variables your jobs need.
-
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin${PATH:+:$PATH}"
-`) + "\n"
+	return "{\n  \"PATH\": \"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"\n}\n"
 }
 
 func renderNewsyslog(agentHome string, daemonHome string) string {

@@ -202,7 +202,7 @@ func (s *Store) RuntimeBinaryPath() string {
 }
 
 func (s *Store) EnvFilePath() string {
-	return filepath.Join(s.paths.Home, "env.sh")
+	return filepath.Join(s.paths.Home, "env.json")
 }
 
 func (s *Store) PrepareRuntimeBinary(sourcePath string) (string, error) {

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1628,28 +1629,62 @@ func TestUninstallCancelSkipsChanges(t *testing.T) {
 	}
 }
 
-func TestRunEnvCreatesFileAndLaunchesEditor(t *testing.T) {
+func TestRunEnvSetGetList(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
-	var stderr bytes.Buffer
 	app.stdout = &stdout
-	app.stderr = &stderr
-	editorPath := filepath.Join(t.TempDir(), "editor.sh")
-	if err := os.WriteFile(editorPath, []byte("#!/bin/sh\nprintf opened >> \"$1\"\n"), 0o755); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	t.Setenv("EDITOR", editorPath)
 
-	if err := app.Run([]string{"env"}); err != nil {
-		t.Fatalf("env error = %v", err)
+	// set a new key
+	if err := app.Run([]string{"env", "set", "MY_KEY=hello"}); err != nil {
+		t.Fatalf("env set error = %v", err)
 	}
+	if got := strings.TrimSpace(stdout.String()); got != "set MY_KEY" {
+		t.Fatalf("stdout = %q", got)
+	}
+
+	// get it back
+	stdout.Reset()
+	if err := app.Run([]string{"env", "get", "MY_KEY"}); err != nil {
+		t.Fatalf("env get error = %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "hello" {
+		t.Fatalf("stdout = %q", got)
+	}
+
+	// update the key
+	stdout.Reset()
+	if err := app.Run([]string{"env", "set", "MY_KEY=world"}); err != nil {
+		t.Fatalf("env set update error = %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "updated MY_KEY" {
+		t.Fatalf("stdout = %q", got)
+	}
+
+	// list shows the key
+	stdout.Reset()
+	if err := app.Run([]string{"env", "list"}); err != nil {
+		t.Fatalf("env list error = %v", err)
+	}
+	if !strings.Contains(stdout.String(), "MY_KEY=world") {
+		t.Fatalf("list output = %q", stdout.String())
+	}
+
+	// get missing key returns error
+	if err := app.Run([]string{"env", "get", "DOES_NOT_EXIST"}); err == nil {
+		t.Fatal("expected error for missing key")
+	}
+
+	// env file is valid JSON and contains the key
 	data, err := os.ReadFile(app.store.EnvFilePath())
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
-	text := string(data)
-	if !strings.Contains(text, "/opt/homebrew/bin") || !strings.Contains(text, "opened") {
-		t.Fatalf("env file = %q", text)
+	env, err := readEnvJSON(data)
+	if err != nil {
+		t.Fatalf("readEnvJSON() error = %v", err)
+	}
+	if env["MY_KEY"] != "world" {
+		t.Fatalf("MY_KEY = %q", env["MY_KEY"])
 	}
 }
 
@@ -1669,8 +1704,9 @@ func TestExecuteSpecSourcesEnvFileForCommandJobs(t *testing.T) {
 	if err := os.WriteFile(commandPath, []byte("#!/bin/sh\nprintf sourced\n"), 0o755); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	envPath := filepath.Join(dir, "env.sh")
-	if err := os.WriteFile(envPath, []byte("export PATH="+binDir+"\n"), 0o644); err != nil {
+	envPath := filepath.Join(dir, "env.json")
+	envContent := fmt.Sprintf(`{"PATH": %q}`, binDir)
+	if err := os.WriteFile(envPath, []byte(envContent), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 

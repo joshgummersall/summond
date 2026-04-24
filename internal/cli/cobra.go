@@ -362,20 +362,66 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 }
 
 func (a *App) newEnvCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "env",
-		Short: "Edit the shared job environment file",
-		Long: `Open the shared shell environment file in $EDITOR or $VISUAL (interactive).
+		Short: "Manage the shared job environment",
+		Long: `Manage environment variables shared across all managed jobs.
 
-The env file is sourced by all managed jobs before they run. Use it to set environment
-variables that should be available to every job (e.g. PATH, API keys).
+Variables are stored in a JSON file and injected into every job at runtime before the
+job command runs. Use 'set', 'get', and 'list' to manipulate the environment non-interactively.`,
+		Example: `  summond env set API_KEY=abc123
+  summond env get API_KEY
+  summond env list`,
+	}
+	cmd.AddCommand(
+		a.newEnvSetCommand(),
+		a.newEnvGetCommand(),
+		a.newEnvListCommand(),
+	)
+	return cmd
+}
 
-This command is interactive and requires a terminal. It cannot be used non-interactively.
-$EDITOR or $VISUAL must be set.`,
-		Example: `  summond env`,
+func (a *App) newEnvSetCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set KEY=VALUE",
+		Short: "Set an environment variable",
+		Long: `Add or update an environment variable in the shared env file.
+
+If KEY already exists its value is updated in place. Otherwise a new entry is appended.
+Keys must match [A-Za-z_][A-Za-z0-9_]*.`,
+		Example: `  summond env set API_KEY=abc123
+  summond env set PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key, value, err := parseKeyValue(args[0])
+			if err != nil {
+				return err
+			}
+			return a.runEnvSet(envSetOptions{key: key, value: value})
+		},
+	}
+}
+
+func (a *App) newEnvGetCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:     "get KEY",
+		Short:   "Print the value of an environment variable",
+		Example: `  summond env get API_KEY`,
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return a.runEnvGet(envGetOptions{key: args[0]})
+		},
+	}
+}
+
+func (a *App) newEnvListCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:     "list",
+		Short:   "List all environment variables",
+		Example: `  summond env list`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runEnv()
+			return a.runEnvList()
 		},
 	}
 }

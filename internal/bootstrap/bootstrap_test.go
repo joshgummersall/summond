@@ -78,7 +78,7 @@ func TestInitCreatesFilesAndInstalls(t *testing.T) {
 	if result.NewsyslogGenerateStatus != "created" {
 		t.Fatalf("NewsyslogGenerateStatus = %q", result.NewsyslogGenerateStatus)
 	}
-	if result.EnvPath != filepath.Join(dir, "state", "env.sh") {
+	if result.EnvPath != filepath.Join(dir, "state", "env.json") {
 		t.Fatalf("EnvPath = %q", result.EnvPath)
 	}
 	if result.NewsyslogGeneratedPath != filepath.Join(dir, "state", newsyslogFilename) {
@@ -283,7 +283,7 @@ func TestInstallAndUninstallUseCurrentWorkingDirectoryForConfig(t *testing.T) {
 	if result.ConfigPath != filepath.Join(wd, "summond.toml") {
 		t.Fatalf("ConfigPath = %q", result.ConfigPath)
 	}
-	if result.EnvPath != filepath.Join(dir, "state", "env.sh") {
+	if result.EnvPath != filepath.Join(dir, "state", "env.json") {
 		t.Fatalf("EnvPath = %q", result.EnvPath)
 	}
 	if _, err := os.Stat(filepath.Join(wd, "summond.toml")); err != nil {

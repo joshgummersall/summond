@@ -99,6 +99,15 @@ type logsOptions struct {
 	follow    bool
 }
 
+type envSetOptions struct {
+	key   string
+	value string
+}
+
+type envGetOptions struct {
+	key string
+}
+
 type privilegedOperator interface {
 	InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string) error
 	RemoveDaemonArtifactsWithSudo(plistPaths []string, metadataPaths []string, home string) error
@@ -660,39 +669,90 @@ func (a *App) runExec(opts namedJobOptions) error {
 	return nil
 }
 
-func (a *App) runEnv() error {
+func (a *App) ensureEnvFile() (string, error) {
 	path := a.store.EnvFilePath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create env file directory: %w", err)
+		return "", fmt.Errorf("create env file directory: %w", err)
 	}
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		if err := os.WriteFile(path, []byte(bootstrap.RenderEnvFile()), 0o644); err != nil {
-			return fmt.Errorf("write env file: %w", err)
+			return "", fmt.Errorf("write env file: %w", err)
 		}
 	} else if err != nil {
-		return fmt.Errorf("stat env file: %w", err)
+		return "", fmt.Errorf("stat env file: %w", err)
 	}
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = os.Getenv("VISUAL")
-	}
-	if editor == "" {
-		return errors.New("env requires $EDITOR or $VISUAL to be set")
-	}
-	cmd := exec.Command("/bin/sh", "-lc", `exec ${EDITOR:-${VISUAL:-}} "$1"`, "sh", path)
-	cmd.Stdin = a.stdin
-	cmd.Stdout = a.stdout
-	cmd.Stderr = a.stderr
-	cmd.Env = mergeEnvironment(os.Environ(), map[string]string{
-		"EDITOR": editor,
-		"VISUAL": os.Getenv("VISUAL"),
-	})
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return ExitError{Code: exitErr.ExitCode()}
-		}
+	return path, nil
+}
+
+func (a *App) runEnvSet(opts envSetOptions) error {
+	path, err := a.ensureEnvFile()
+	if err != nil {
 		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read env file: %w", err)
+	}
+	env, err := readEnvJSON(data)
+	if err != nil {
+		return fmt.Errorf("parse env file: %w", err)
+	}
+	_, existed := env[opts.key]
+	env[opts.key] = opts.value
+	if err := writeEnvJSON(path, env); err != nil {
+		return err
+	}
+	if existed {
+		_, err = fmt.Fprintf(a.stdout, "updated %s\n", opts.key)
+	} else {
+		_, err = fmt.Fprintf(a.stdout, "set %s\n", opts.key)
+	}
+	return err
+}
+
+func (a *App) runEnvGet(opts envGetOptions) error {
+	path, err := a.ensureEnvFile()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read env file: %w", err)
+	}
+	env, err := readEnvJSON(data)
+	if err != nil {
+		return fmt.Errorf("parse env file: %w", err)
+	}
+	value, ok := env[opts.key]
+	if !ok {
+		return fmt.Errorf("key %q not found in env file", opts.key)
+	}
+	_, err = fmt.Fprintf(a.stdout, "%s\n", value)
+	return err
+}
+
+func (a *App) runEnvList() error {
+	path, err := a.ensureEnvFile()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read env file: %w", err)
+	}
+	env, err := readEnvJSON(data)
+	if err != nil {
+		return fmt.Errorf("parse env file: %w", err)
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if _, err := fmt.Fprintf(a.stdout, "%s=%s\n", k, env[k]); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -938,10 +998,11 @@ func (a *App) configureLogger(verbosity int) {
 func (a *App) executeSpec(spec job.Spec) (int, error) {
 	var cmd *exec.Cmd
 	envFilePath := a.environmentFilePath(spec)
+	envPreamble := jsonEnvPreamble(envFilePath)
 	if spec.ShellCommand != "" {
-		cmd = exec.Command("/bin/bash", "-lc", shellPreamble+shellSourcePreamble(envFilePath)+spec.ShellCommand)
+		cmd = exec.Command("/bin/bash", "-lc", shellPreamble+envPreamble+spec.ShellCommand)
 	} else {
-		args := []string{"-lc", shellPreamble + shellSourcePreamble(envFilePath) + `exec "$@"`, "bash", spec.Command}
+		args := []string{"-lc", shellPreamble + envPreamble + `exec "$@"`, "bash", spec.Command}
 		args = append(args, spec.Args...)
 		cmd = exec.Command("/bin/bash", args...)
 	}
@@ -1256,11 +1317,93 @@ func mergeEnvironment(base []string, overrides map[string]string) []string {
 	return result
 }
 
-func shellSourcePreamble(path string) string {
+func jsonEnvPreamble(path string) string {
 	if path == "" {
 		return ""
 	}
-	return fmt.Sprintf("if [ -f %q ]; then . %q; fi\n", path, path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	env, err := readEnvJSON(data)
+	if err != nil {
+		return ""
+	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var sb strings.Builder
+	for _, k := range keys {
+		fmt.Fprintf(&sb, "export %s=%q\n", k, env[k])
+	}
+	return sb.String()
+}
+
+func readEnvJSON(data []byte) (map[string]string, error) {
+	var env map[string]string
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil, err
+	}
+	return env, nil
+}
+
+func writeEnvJSON(path string, env map[string]string) error {
+	data, err := json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode env file: %w", err)
+	}
+	data = append(data, '\n')
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create env file temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("write env file temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close env file temp: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("install env file: %w", err)
+	}
+	return nil
+}
+
+func parseKeyValue(arg string) (key, value string, err error) {
+	idx := strings.IndexByte(arg, '=')
+	if idx < 0 {
+		return "", "", fmt.Errorf("invalid argument %q: expected KEY=VALUE", arg)
+	}
+	key = arg[:idx]
+	if key == "" {
+		return "", "", fmt.Errorf("invalid argument %q: key must not be empty", arg)
+	}
+	if !isValidEnvKey(key) {
+		return "", "", fmt.Errorf("invalid key %q: must match [A-Za-z_][A-Za-z0-9_]*", key)
+	}
+	return key, arg[idx+1:], nil
+}
+
+func isValidEnvKey(key string) bool {
+	for i, c := range key {
+		if i == 0 {
+			if !(c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+				return false
+			}
+		} else {
+			if !(c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+				return false
+			}
+		}
+	}
+	return len(key) > 0
 }
 
 type multiValueFlag []string
