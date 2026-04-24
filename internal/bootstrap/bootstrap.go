@@ -29,6 +29,7 @@ type Result struct {
 	NewsyslogGenerateStatus string
 	NewsyslogInstallPath    string
 	NewsyslogInstalled      bool
+	DaemonStateInitialized  bool
 	UsedSudo                bool
 }
 
@@ -45,6 +46,7 @@ type UninstallResult struct {
 type Installer interface {
 	Install(src, dst string) error
 	InstallWithSudo(src, dst string) error
+	MkdirAllWithSudo(path string) error
 	Remove(path string) error
 	RemoveWithSudo(path string) error
 }
@@ -104,6 +106,35 @@ func (m *Manager) Install(opts Options) (Result, error) {
 	}
 	result.EnvStatus = envStatus
 
+	// Ensure bin/ directory exists in the agent state dir.
+	if err := os.MkdirAll(filepath.Join(m.paths.Home, "bin"), 0o755); err != nil {
+		return result, err
+	}
+
+	// Write daemon env.json and bin/ if the daemon state dir differs from the agent dir.
+	// If the daemon home is not writable (e.g. /Library/... requires sudo), set a flag
+	// so the caller can retry with sudo via InitDaemonStateWithSudo.
+	if m.daemonHome != "" && m.daemonHome != m.paths.Home {
+		daemonEnvPath := filepath.Join(m.daemonHome, "env.json")
+		binPath := filepath.Join(m.daemonHome, "bin")
+		mkdirErr := os.MkdirAll(binPath, 0o755)
+		_, envErr := writeFile(daemonEnvPath, []byte(RenderEnvFile()), opts.Overwrite)
+		if mkdirErr != nil || envErr != nil {
+			permDenied := errors.Is(mkdirErr, os.ErrPermission) || errors.Is(envErr, os.ErrPermission)
+			if !permDenied {
+				if mkdirErr != nil {
+					return result, mkdirErr
+				}
+				return result, envErr
+			}
+			// Permission denied — caller can retry with InitDaemonStateWithSudo.
+		} else {
+			result.DaemonStateInitialized = true
+		}
+	} else {
+		result.DaemonStateInitialized = true
+	}
+
 	if opts.SkipNewsyslog {
 		if err := m.writeInstallMarker(); err != nil {
 			return result, err
@@ -130,6 +161,41 @@ func (m *Manager) Install(opts Options) (Result, error) {
 
 func (m *Manager) Init(opts Options) (Result, error) {
 	return m.Install(opts)
+}
+
+func (m *Manager) InitDaemonStateWithSudo(result *Result) error {
+	if m.daemonHome == "" || m.daemonHome == m.paths.Home {
+		result.DaemonStateInitialized = true
+		return nil
+	}
+	if err := m.installer.MkdirAllWithSudo(filepath.Join(m.daemonHome, "bin")); err != nil {
+		return err
+	}
+	daemonEnvPath := filepath.Join(m.daemonHome, "env.json")
+	if _, statErr := os.Stat(daemonEnvPath); statErr == nil {
+		result.DaemonStateInitialized = true
+		result.UsedSudo = true
+		return nil
+	}
+	tmpFile, err := os.CreateTemp("", "summond-env-*.json")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmpFile.WriteString(RenderEnvFile()); err != nil {
+		tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	if err := m.installer.InstallWithSudo(tmpPath, daemonEnvPath); err != nil {
+		return err
+	}
+	result.DaemonStateInitialized = true
+	result.UsedSudo = true
+	return nil
 }
 
 func (m *Manager) InstallNewsyslogWithSudo(result *Result) error {
@@ -183,6 +249,14 @@ func (m *Manager) UninstallNewsyslogWithSudo(result *UninstallResult) error {
 	return nil
 }
 
+func (m *Manager) stateDirs() []string {
+	dirs := []string{m.paths.Home}
+	if m.daemonHome != "" && m.daemonHome != m.paths.Home {
+		dirs = append(dirs, m.daemonHome)
+	}
+	return dirs
+}
+
 func (m *Manager) GeneratedNewsyslogPath() string {
 	return filepath.Join(m.paths.Home, newsyslogFilename)
 }
@@ -230,6 +304,20 @@ func (OSInstaller) Install(src, dst string) error {
 	if err := os.WriteFile(dst, data, 0o644); err != nil {
 		if errors.Is(err, os.ErrPermission) {
 			return &PermissionError{Err: err}
+		}
+		return err
+	}
+	return nil
+}
+
+func (OSInstaller) MkdirAllWithSudo(path string) error {
+	var stderr bytes.Buffer
+	cmd := exec.Command("sudo", "install", "-d", "-m", "0755", path)
+	cmd.Stderr = &stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("%w: %s", err, stderr.String())
 		}
 		return err
 	}

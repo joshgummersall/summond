@@ -22,5 +22,5 @@ depends = ["build"]
 run = """
 mkdir -p ~/.bin && cp bin/summond ~/.bin
 cp bin/summond "$HOME/Library/Application Support/summond/bin/summond"
-sudo install -m 0755 bin/summond "/Library/Application Support/summond/bin/summond"
+sudo install -d -m 0755 "/Library/Application Support/summond/bin" && sudo install -m 0755 bin/summond "/Library/Application Support/summond/bin/summond"
 """

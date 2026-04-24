@@ -208,13 +208,16 @@ func (a *App) runInstall(opts installOptions) error {
 		a.logger.Debug("install failed", "error", err)
 		var permissionErr *bootstrap.PermissionError
 		if errors.As(err, &permissionErr) && !opts.skipNewsyslog {
-			approved, promptErr := a.confirmWithDefault("newsyslog install requires sudo. Retry with sudo? [Y/n]: ", true)
+			approved, promptErr := a.confirmWithDefault("system setup requires sudo (newsyslog + daemon state). Retry with sudo? [Y/n]: ", true)
 			if promptErr != nil {
 				return promptErr
 			}
 			if approved {
 				if retryErr := a.boot.InstallNewsyslogWithSudo(&result); retryErr != nil {
 					return retryErr
+				}
+				if !result.DaemonStateInitialized {
+					_ = a.boot.InitDaemonStateWithSudo(&result)
 				}
 				return a.printInstallSummary(result)
 			}
@@ -232,6 +235,18 @@ func (a *App) runInstall(opts installOptions) error {
 			return summaryErr
 		}
 		return err
+	}
+	// If daemon state wasn't initialized (requires sudo for /Library paths), prompt and retry.
+	if !result.DaemonStateInitialized {
+		approved, promptErr := a.confirmWithDefault("daemon state directory requires sudo. Initialize now? [Y/n]: ", true)
+		if promptErr != nil {
+			return promptErr
+		}
+		if approved {
+			if initErr := a.boot.InitDaemonStateWithSudo(&result); initErr != nil {
+				a.logger.Debug("daemon state init failed", "error", initErr)
+			}
+		}
 	}
 	a.logger.Info("install completed")
 	return a.printInstallSummary(result)

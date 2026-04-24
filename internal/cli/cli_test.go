@@ -1762,7 +1762,7 @@ func TestInstallPermissionDeniedCanUseSudoRetry(t *testing.T) {
 	if len(installer.sudoCalls) != 1 {
 		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
 	}
-	if got := stdout.String(); !strings.Contains(got, "install will:\n") || !strings.Contains(got, "Proceed with install? [y/N]: ") || !strings.Contains(got, "newsyslog install requires sudo. Retry with sudo? [Y/n]: ") {
+	if got := stdout.String(); !strings.Contains(got, "install will:\n") || !strings.Contains(got, "Proceed with install? [y/N]: ") || !strings.Contains(got, "system setup requires sudo") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 }
@@ -2171,6 +2171,10 @@ func (f *fakeBootstrapInstaller) Install(src, dst string) error {
 
 func (f *fakeBootstrapInstaller) InstallWithSudo(src, dst string) error {
 	f.sudoCalls = append(f.sudoCalls, [2]string{src, dst})
+	return f.sudoErr
+}
+
+func (f *fakeBootstrapInstaller) MkdirAllWithSudo(path string) error {
 	return f.sudoErr
 }
 

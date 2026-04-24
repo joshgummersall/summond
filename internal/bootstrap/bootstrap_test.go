@@ -30,6 +30,10 @@ func (f *fakeInstaller) InstallWithSudo(src, dst string) error {
 	return f.sudoErr
 }
 
+func (f *fakeInstaller) MkdirAllWithSudo(path string) error {
+	return f.sudoErr
+}
+
 func (f *fakeInstaller) Remove(path string) error {
 	f.removes = append(f.removes, path)
 	return f.err
