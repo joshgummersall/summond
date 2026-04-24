@@ -89,51 +89,13 @@ func NewAppWithStores(stdin io.Reader, stdout io.Writer, store *state.Store, dae
 
 func (a *App) Run(args []string) error {
 	a.promptReader = nil
-	verbosity, remaining, err := parseGlobalFlags(args)
-	if err != nil {
-		return err
-	}
-	a.configureLogger(verbosity)
-	if len(remaining) == 0 {
-		printUsage(a.stdout)
-		return nil
-	}
-	a.logger.Debug("running command", "args", remaining)
-
-	switch remaining[0] {
-	case "install":
-		return a.runInstall(remaining[1:])
-	case "uninstall":
-		return a.runUninstall(remaining[1:])
-	case "apply":
-		return a.runApply(remaining[1:])
-	case "add":
-		return a.runAdd(remaining[1:])
-	case "remove":
-		return a.runRemove(remaining[1:])
-	case "list":
-		return a.runList(remaining[1:])
-	case "state":
-		return a.runState(remaining[1:])
-	case "plist":
-		return a.runPlist(remaining[1:])
-	case "logs":
-		return a.runLogs(remaining[1:])
-	case "exec":
-		return a.runExec(remaining[1:])
-	case "env":
-		return a.runEnv(remaining[1:])
-	case "cd":
-		return a.runCd(remaining[1:])
-	case "version":
-		_, err := fmt.Fprintf(a.stdout, "summond %s\n", version)
-		return err
-	case "help", "-h", "--help":
-		printUsage(a.stdout)
-		return nil
-	default:
-		return fmt.Errorf("unknown command %q", remaining[0])
-	}
+	a.configureLogger(0)
+	root := a.newRootCommand()
+	root.SetArgs(args)
+	root.SetIn(a.stdin)
+	root.SetOut(a.stdout)
+	root.SetErr(a.stderr)
+	return root.Execute()
 }
 
 func (a *App) runInstall(args []string) error {
@@ -508,9 +470,9 @@ func (a *App) runAddTarget(target job.Target, args []string) error {
 		return err
 	}
 	spec := job.Spec{
-		Name:         name,
-		Target:       target,
-		WorkingDir:   *workingDir,
+		Name:       name,
+		Target:     target,
+		WorkingDir: *workingDir,
 		Schedule: job.Schedule{
 			Kind: job.ScheduleKind(*schedule),
 		},
@@ -1872,7 +1834,6 @@ func runSudoScript(script string, args ...string) error {
 	}
 	return nil
 }
-
 
 func (osPrivilegedOperator) InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string) error {
 	script := `

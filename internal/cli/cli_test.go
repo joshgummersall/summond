@@ -113,7 +113,7 @@ func TestHelpApply(t *testing.T) {
 		t.Fatalf("apply --help error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "summond apply [flags] [file]") || !strings.Contains(got, "reads ./summond.toml") || !strings.Contains(got, "--prune") {
+	if !strings.Contains(got, "summond apply [file] [flags]") || !strings.Contains(got, "reads ./summond.toml") || !strings.Contains(got, "--prune") {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -127,7 +127,7 @@ func TestHelpAdd(t *testing.T) {
 		t.Fatalf("add --help error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "summond add <target> ...") || !strings.Contains(got, "agent") || !strings.Contains(got, "daemon") {
+	if !strings.Contains(got, "summond add [command]") || !strings.Contains(got, "agent") || !strings.Contains(got, "daemon") {
 		t.Fatalf("stdout = %q", got)
 	}
 }
@@ -141,7 +141,7 @@ func TestHelpAddAgent(t *testing.T) {
 		t.Fatalf("add agent --help error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "summond add agent <name> [flags]") || !strings.Contains(got, "schedule <kind>") || !strings.Contains(got, "summond add agent my-script <<'EOF'") || !strings.Contains(got, "summond add agent my-job -- /bin/echo hello --flag") {
+	if !strings.Contains(got, "summond add agent <name> [flags] -- <command> [args]") || !strings.Contains(got, "--schedule string") || !strings.Contains(got, "summond add agent my-script --schedule daily <<'EOF'") || !strings.Contains(got, "summond add agent my-job --schedule login -- /bin/echo hello --flag") {
 		t.Fatalf("stdout = %q", got)
 	}
 	if strings.Contains(got, "--command <path>") || strings.Contains(got, "--shell-command <command>") {
@@ -158,7 +158,7 @@ func TestHelpAddDaemon(t *testing.T) {
 		t.Fatalf("add daemon --help error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "summond add daemon <name> [flags]") || !strings.Contains(got, "schedule <kind>") || !strings.Contains(got, "schedule boot") {
+	if !strings.Contains(got, "summond add daemon <name> [flags] -- <command> [args]") || !strings.Contains(got, "--schedule string") || !strings.Contains(got, "summond add daemon my-job --schedule boot -- /usr/local/bin/task") {
 		t.Fatalf("stdout = %q", got)
 	}
 	if strings.Contains(got, "--command <path>") || strings.Contains(got, "--shell-command <command>") {
@@ -351,7 +351,7 @@ func TestAddInstallsManagedJobFromShellStdin(t *testing.T) {
 func TestAddRequiresJobName(t *testing.T) {
 	app := newTestApp(t)
 	err := app.Run([]string{"add", "agent", "--", "/bin/echo"})
-	if err == nil || err.Error() != "add agent requires a job name" {
+	if err == nil || err.Error() != "add agent requires --schedule" {
 		t.Fatalf("add error = %v", err)
 	}
 }
@@ -367,7 +367,7 @@ func TestAddRequiresSchedule(t *testing.T) {
 func TestAddRequiresSubcommand(t *testing.T) {
 	app := newTestApp(t)
 	err := app.Run([]string{"add", "cleanup", "--schedule", "daily", "--", "/bin/echo"})
-	if err == nil || err.Error() != "add requires a subcommand: agent or daemon" {
+	if err == nil || err.Error() != "unknown flag: --schedule" {
 		t.Fatalf("add error = %v", err)
 	}
 }
@@ -427,7 +427,7 @@ func TestHelpLogs(t *testing.T) {
 		t.Fatalf("logs --help error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "summond logs [flags] <name>") || !strings.Contains(got, "--follow") || !strings.Contains(got, "-n <lines>") {
+	if !strings.Contains(got, "summond logs <name> [flags]") || !strings.Contains(got, "--follow") || !strings.Contains(got, "--lines int") {
 		t.Fatalf("stdout = %q", got)
 	}
 	if strings.Contains(got, "--stream") {
@@ -472,7 +472,7 @@ func TestTopLevelHelpMentionsCommandHelp(t *testing.T) {
 		t.Fatalf("--help error = %v", err)
 	}
 	got := stdout.String()
-	if !strings.Contains(got, "summond <command> --help") {
+	if !strings.Contains(got, "summond [command] --help") {
 		t.Fatalf("stdout = %q", got)
 	}
 }
