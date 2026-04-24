@@ -63,6 +63,7 @@ type uninstallOptions struct {
 type applyOptions struct {
 	filePath string
 	prune    bool
+	dryRun   bool
 }
 
 type addOptions struct {
@@ -81,10 +82,12 @@ type addOptions struct {
 	abandonProcessGroup bool
 	commandArgs         []string
 	stdinScript         string
+	dryRun              bool
 }
 
 type removeOptions struct {
-	name string
+	name   string
+	dryRun bool
 }
 
 type listOptions struct {
@@ -347,10 +350,6 @@ func (a *App) runApply(opts applyOptions) error {
 	if !installed {
 		return errors.New("apply requires install to be run first")
 	}
-	runtimeSource, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolve current executable: %w", err)
-	}
 	specs, err := config.LoadFile(opts.filePath)
 	if err != nil {
 		return err
@@ -359,6 +358,13 @@ func (a *App) runApply(opts applyOptions) error {
 	orphanedSpecs, err := a.orphanedManagedJobs(specs)
 	if err != nil {
 		return err
+	}
+	if opts.dryRun {
+		return a.printApplyPlan(specs, orphanedSpecs, opts.prune)
+	}
+	runtimeSource, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve current executable: %w", err)
 	}
 	agentRuntimePath, err := a.store.PrepareRuntimeBinary(runtimeSource)
 	if err != nil {
@@ -489,14 +495,17 @@ func (a *App) runAddTarget(opts addOptions) error {
 	if err := spec.Normalize(); err != nil {
 		return err
 	}
-	runtimeSource, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("resolve current executable: %w", err)
-	}
 	if opts.target == job.TargetDaemon {
 		spec.EnvironmentFilePath = a.daemonStore.EnvFilePath()
 	} else {
 		spec.EnvironmentFilePath = a.store.EnvFilePath()
+	}
+	if opts.dryRun {
+		return a.printAddPlan(spec)
+	}
+	runtimeSource, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve current executable: %w", err)
 	}
 	if opts.target == job.TargetDaemon {
 		spec.RuntimeBinaryPath = a.daemonStore.RuntimeBinaryPath()
@@ -526,6 +535,9 @@ func (a *App) runRemove(opts removeOptions) error {
 	managed, err := a.loadManagedSpec(opts.name)
 	if err != nil {
 		return err
+	}
+	if opts.dryRun {
+		return a.printRemovePlan(managed)
 	}
 	if err := a.removeManagedSpec(managed); err != nil {
 		return err
@@ -1647,6 +1659,116 @@ func managedCleanupPaths(store *state.Store, spec job.Spec) []string {
 		unique = appendIfMissing(unique, path)
 	}
 	return unique
+}
+
+func (a *App) printApplyPlan(specs []job.Spec, orphanedSpecs []managedSpec, prune bool) error {
+	if _, err := fmt.Fprintln(a.stdout, "apply will:"); err != nil {
+		return err
+	}
+	changes := 0
+	for _, spec := range specs {
+		action, err := a.describeApplyAction(spec)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(a.stdout, "- %s %s job: %s (%s)\n", action, spec.Target, spec.Name, describeTriggerOrSchedule(spec)); err != nil {
+			return err
+		}
+		changes++
+	}
+	for _, managed := range orphanedSpecs {
+		action := "prompt to prune"
+		if prune {
+			action = "prune"
+		}
+		if _, err := fmt.Fprintf(a.stdout, "- %s managed job: %s (%s)\n", action, managed.spec.Name, managed.spec.Target); err != nil {
+			return err
+		}
+		changes++
+	}
+	if changes == 0 {
+		if _, err := fmt.Fprintln(a.stdout, "- no job changes"); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(a.stdout, "dry run: no changes made")
+	return err
+}
+
+func (a *App) describeApplyAction(spec job.Spec) (string, error) {
+	if _, err := a.storeForTarget(spec.Target).Load(spec.Name); err == nil {
+		return "update", nil
+	} else if errors.Is(err, os.ErrNotExist) {
+		return "create", nil
+	} else {
+		return "", err
+	}
+}
+
+func (a *App) printAddPlan(spec job.Spec) error {
+	store := a.storeForTarget(spec.Target)
+	spec.RuntimeBinaryPath = store.RuntimeBinaryPath()
+	prepared, _, err := store.PrepareInstall(spec)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(a.stdout, "add will:"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- create %s job: %s (%s)\n", prepared.Target, prepared.Name, describeTriggerOrSchedule(prepared)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- write plist: %s\n", prepared.PlistPath); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- write metadata: %s\n", store.MetadataPathForSpec(prepared)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- create log files: %s, %s\n", prepared.StdoutPath, prepared.StderrPath); err != nil {
+		return err
+	}
+	if prepared.Target == job.TargetAgent {
+		if _, err := fmt.Fprintf(a.stdout, "- install runtime binary: %s\n", prepared.RuntimeBinaryPath); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(a.stdout, "- load launchd job: %s\n", prepared.Label); err != nil {
+			return err
+		}
+	} else {
+		if _, err := fmt.Fprintln(a.stdout, "- may require sudo for daemon-owned files"); err != nil {
+			return err
+		}
+	}
+	_, err = fmt.Fprintln(a.stdout, "dry run: no changes made")
+	return err
+}
+
+func (a *App) printRemovePlan(managed managedSpec) error {
+	spec := managed.spec
+	if _, err := fmt.Fprintln(a.stdout, "remove will:"); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- boot out managed job: %s (%s)\n", spec.Name, spec.PlistPath); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- remove managed plist: %s\n", spec.PlistPath); err != nil {
+		return err
+	}
+	for _, path := range managedCleanupPaths(managed.store, spec) {
+		if _, err := fmt.Fprintf(a.stdout, "- remove managed state/log: %s\n", path); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- remove managed job directory: %s\n", managed.store.JobDirForSpec(spec)); err != nil {
+		return err
+	}
+	if spec.Target == job.TargetDaemon {
+		if _, err := fmt.Fprintln(a.stdout, "- may require sudo for daemon-owned files"); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintln(a.stdout, "dry run: no changes made")
+	return err
 }
 
 func (a *App) printInstallPlan(opts bootstrap.Options) error {

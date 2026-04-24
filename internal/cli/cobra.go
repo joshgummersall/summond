@@ -108,6 +108,7 @@ This is a destructive operation. Run 'summond list' first to see what will be re
 
 func (a *App) newApplyCommand() *cobra.Command {
 	var prune bool
+	var dryRun bool
 	cmd := &cobra.Command{
 		Use:   "apply [file]",
 		Short: "Apply jobs from a TOML file",
@@ -125,7 +126,8 @@ apply will prompt to prune it. Use --prune to remove orphaned jobs without promp
 Exits with code 1 if any job fails to apply, even if other jobs succeeded.`,
 		Example: `  summond apply
   summond apply path/to/jobs.toml
-  summond apply --prune`,
+  summond apply --prune
+  summond apply --dry-run`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filePath := "summond.toml"
@@ -135,10 +137,12 @@ Exits with code 1 if any job fails to apply, even if other jobs succeeded.`,
 			return a.runApply(applyOptions{
 				filePath: filePath,
 				prune:    prune,
+				dryRun:   dryRun,
 			})
 		},
 	}
 	cmd.Flags().BoolVar(&prune, "prune", false, "remove orphaned managed jobs (within the same group) without prompting")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what apply would do without changing job state")
 	return cmd
 }
 
@@ -163,6 +167,7 @@ func (a *App) newAddTargetCommand(target string) *cobra.Command {
 	var weekday int
 	var intervalMinutes int
 	var abandonProcessGroup bool
+	var dryRun bool
 	targetLabel := "LaunchAgent"
 	exampleSchedule := "login"
 	exampleBinary := "/bin/echo hello --flag"
@@ -223,6 +228,7 @@ Schedule kinds (%s):
 				intervalMinutes:     intervalMinutes,
 				intervalSet:         cmd.Flags().Changed("interval-minutes"),
 				abandonProcessGroup: abandonProcessGroup,
+				dryRun:              dryRun,
 			}
 			if target == "daemon" {
 				opts.target = job.TargetDaemon
@@ -248,23 +254,28 @@ Schedule kinds (%s):
 	cmd.Flags().IntVar(&weekday, "weekday", 0, "weekday for weekly/calendar schedules (0-7, 0 and 7 = Sunday)")
 	cmd.Flags().IntVar(&intervalMinutes, "interval-minutes", 0, "run interval in minutes; required for --schedule interval")
 	cmd.Flags().BoolVar(&abandonProcessGroup, "abandon-process-group", false, "allow child processes to continue after the job exits")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what add would do without changing job state")
 	return cmd
 }
 
 func (a *App) newRemoveCommand() *cobra.Command {
-	return &cobra.Command{
+	var dryRun bool
+	cmd := &cobra.Command{
 		Use:   "remove <name>",
 		Short: "Remove a managed job and all state",
 		Long: `Remove a managed job, booting it out of launchd and deleting its plist, logs, and persisted state.
 
 Daemon jobs are owned by root and may prompt for sudo to remove system-owned files.
 Use 'summond list' to see job names.`,
-		Example: `  summond remove my-job`,
-		Args:    cobra.ExactArgs(1),
+		Example: `  summond remove my-job
+  summond remove --dry-run my-job`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runRemove(removeOptions{name: args[0]})
+			return a.runRemove(removeOptions{name: args[0], dryRun: dryRun})
 		},
 	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what remove would do without changing job state")
+	return cmd
 }
 
 func (a *App) newListCommand() *cobra.Command {

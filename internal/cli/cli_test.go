@@ -192,6 +192,40 @@ func TestAddInstallsManagedJobFromArgvWithoutConfig(t *testing.T) {
 	}
 }
 
+func TestAddDryRunPrintsPlanWithoutInstalling(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+	wd := testHome(t)
+	prevWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd() error = %v", err)
+	}
+	if err := os.Chdir(wd); err != nil {
+		t.Fatalf("Chdir() error = %v", err)
+	}
+	defer func() {
+		_ = os.Chdir(prevWD)
+	}()
+
+	if err := app.Run([]string{"add", "agent", "echo-job", "--dry-run", "--schedule", "daily", "--hour", "0", "--minute", "15", "--", "/bin/echo", "hello"}); err != nil {
+		t.Fatalf("add dry-run error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "add will:\n") ||
+		!strings.Contains(got, "- create agent job: echo-job (daily at 00:15)\n") ||
+		!strings.Contains(got, "dry run: no changes made\n") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if len(runner.bootstrapped) != 0 {
+		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
+	}
+	if _, err := app.store.Load("echo-job"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Load(echo-job) error = %v, want not exist", err)
+	}
+}
+
 func TestAddInstallsManagedJobFromShellStdin(t *testing.T) {
 	app := newTestApp(t)
 	app.stdin = strings.NewReader("echo from-stdin\nexit 0\n")
@@ -339,6 +373,42 @@ func TestApplyConfig(t *testing.T) {
 	}
 	if got := stdout.String(); got != "applied 1 job(s)\n" {
 		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestApplyDryRunPrintsPlanWithoutApplying(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := app.Run([]string{"apply", "--dry-run", configPath}); err != nil {
+		t.Fatalf("apply dry-run error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "apply will:\n") ||
+		!strings.Contains(got, "- create agent job: cleanup (daily at 03:45)\n") ||
+		!strings.Contains(got, "dry run: no changes made\n") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if len(runner.bootstrapped) != 0 || len(runner.bootedOut) != 0 {
+		t.Fatalf("runner changed state: bootstrapped=%#v bootedOut=%#v", runner.bootstrapped, runner.bootedOut)
+	}
+	if _, err := app.store.Load("cleanup"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Load(cleanup) error = %v, want not exist", err)
 	}
 }
 
@@ -811,6 +881,69 @@ func TestApplyPrunesManagedJobsMissingFromConfigWithFlag(t *testing.T) {
 	}
 }
 
+func TestApplyDryRunWithPruneDoesNotRemoveOrphanedJobs(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+
+	firstConfigPath := filepath.Join(testHome(t), "before.toml")
+	firstData := strings.Join([]string{
+		`group = "tests"`,
+		"",
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+		"",
+		"[jobs.sync]",
+		`command = "/bin/echo"`,
+		`schedule = "hourly"`,
+		"minute = 15",
+	}, "\n")
+	if err := os.WriteFile(firstConfigPath, []byte(firstData), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.Run([]string{"apply", firstConfigPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	stdout.Reset()
+	runner.bootedOut = nil
+	runner.bootstrapped = nil
+
+	pruneConfigPath := filepath.Join(testHome(t), "after.toml")
+	pruneData := strings.Join([]string{
+		`group = "tests"`,
+		"",
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(pruneConfigPath, []byte(pruneData), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := app.Run([]string{"apply", "--dry-run", "--prune", pruneConfigPath}); err != nil {
+		t.Fatalf("apply dry-run error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "- update agent job: cleanup (daily at 03:45)\n") ||
+		!strings.Contains(got, "- prune managed job: sync (agent)\n") ||
+		!strings.Contains(got, "dry run: no changes made\n") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if len(runner.bootedOut) != 0 || len(runner.bootstrapped) != 0 {
+		t.Fatalf("runner changed state: bootedOut=%#v bootstrapped=%#v", runner.bootedOut, runner.bootstrapped)
+	}
+	if _, err := app.store.Load("sync"); err != nil {
+		t.Fatalf("expected sync metadata to remain, err = %v", err)
+	}
+}
+
 func TestApplyPrunesPerJobLogsAndLockFiles(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
@@ -896,6 +1029,49 @@ func TestRemoveDeletesAgentJobAndState(t *testing.T) {
 	} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("expected %s to be removed, stat err = %v", path, err)
+		}
+	}
+}
+
+func TestRemoveDryRunPrintsPlanWithoutDeleting(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	runner := app.runner.(*fakeRunner)
+
+	spec, err := app.store.Install(job.Spec{
+		Group:    "tests",
+		Name:     "cleanup",
+		Command:  "/bin/echo",
+		Schedule: job.Schedule{Kind: job.ScheduleDaily, Hour: 3, HourSet: true, Minute: 45, MinuteSet: true},
+	})
+	if err != nil {
+		t.Fatalf("Install(cleanup) error = %v", err)
+	}
+	if err := os.WriteFile(spec.StdoutPath, []byte("stdout\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(stdout) error = %v", err)
+	}
+
+	if err := app.Run([]string{"remove", "--dry-run", "cleanup"}); err != nil {
+		t.Fatalf("remove dry-run error = %v", err)
+	}
+	got := stdout.String()
+	if !strings.Contains(got, "remove will:\n") ||
+		!strings.Contains(got, "- boot out managed job: cleanup ") ||
+		!strings.Contains(got, "dry run: no changes made\n") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if len(runner.bootedOut) != 0 {
+		t.Fatalf("bootedOut = %#v", runner.bootedOut)
+	}
+	for _, path := range []string{
+		app.store.JobDirForSpec(spec),
+		spec.StdoutPath,
+		app.store.MetadataPathForSpec(spec),
+		spec.PlistPath,
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected %s to remain, stat err = %v", path, err)
 		}
 	}
 }
