@@ -50,14 +50,23 @@ func DiscoverPathSet() (PathSet, error) {
 		return PathSet{}, fmt.Errorf("resolve user home: %w", err)
 	}
 
+	// When running under sudo, use the original user's home so that agent
+	// paths (including the install marker) resolve correctly.
+	agentUser := current
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" && current.Uid == "0" {
+		if u, err := user.Lookup(sudoUser); err == nil {
+			agentUser = u
+		}
+	}
+
 	common := Paths{
-		AgentsDir:    filepath.Join(current.HomeDir, "Library", "LaunchAgents"),
+		AgentsDir:    filepath.Join(agentUser.HomeDir, "Library", "LaunchAgents"),
 		DaemonsDir:   "/Library/LaunchDaemons",
 		NewsyslogDir: "/etc/newsyslog.d",
 	}
 	return PathSet{
 		Agent: Paths{
-			Home:         filepath.Join(current.HomeDir, "Library", "Application Support", "summond"),
+			Home:         filepath.Join(agentUser.HomeDir, "Library", "Application Support", "summond"),
 			AgentsDir:    common.AgentsDir,
 			DaemonsDir:   common.DaemonsDir,
 			NewsyslogDir: common.NewsyslogDir,
