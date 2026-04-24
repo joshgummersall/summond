@@ -37,6 +37,7 @@ type rawJob struct {
 	Month                   *int              `toml:"month"`
 	WatchPaths              []string          `toml:"watch_paths"`
 	ThrottleIntervalSeconds *int              `toml:"throttle_interval_seconds"`
+	AbandonProcessGroup     bool              `toml:"abandon_process_group"`
 }
 
 func LoadFile(path string) ([]job.Spec, error) {
@@ -103,6 +104,7 @@ func (r rawJob) toSpec(name string, group string) job.Spec {
 		Trigger:    job.TriggerKind(r.Trigger),
 		WatchPaths: r.WatchPaths,
 	}
+	spec.AbandonProcessGroup = r.AbandonProcessGroup
 	if r.IntervalMinutes != nil {
 		spec.Schedule.IntervalMinutes = *r.IntervalMinutes
 		spec.Schedule.IntervalSet = true

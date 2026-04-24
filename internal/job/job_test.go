@@ -122,6 +122,35 @@ func TestSpecChecksumStableAcrossMapOrder(t *testing.T) {
 	}
 }
 
+func TestSpecChecksumIncludesAbandonProcessGroup(t *testing.T) {
+	specA := Spec{
+		Name:    "job",
+		Target:  TargetAgent,
+		Command: "/bin/echo",
+		Schedule: Schedule{
+			Kind:   ScheduleHourly,
+			Minute: 10,
+		},
+		StdoutPath: "/tmp/job.out.log",
+		StderrPath: "/tmp/job.err.log",
+		PlistPath:  "/tmp/job.plist",
+	}
+	specB := specA
+	specB.AbandonProcessGroup = true
+
+	sumA, err := specA.SpecChecksum()
+	if err != nil {
+		t.Fatalf("SpecChecksum() error = %v", err)
+	}
+	sumB, err := specB.SpecChecksum()
+	if err != nil {
+		t.Fatalf("SpecChecksum() error = %v", err)
+	}
+	if sumA == sumB {
+		t.Fatalf("checksums match: %q", sumA)
+	}
+}
+
 func TestNormalizeOnChangeTriggerWithoutSchedule(t *testing.T) {
 	spec := Spec{
 		Name:       "watcher",

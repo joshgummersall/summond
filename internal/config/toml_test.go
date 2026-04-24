@@ -179,6 +179,29 @@ PATH = "/custom/bin"
 	}
 }
 
+func TestLoadFileParsesAbandonProcessGroup(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[jobs.launcher]
+command = "/bin/echo"
+args = ["launch"]
+target = "agent"
+schedule = "login"
+abandon_process_group = true
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	specs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if !specs[0].AbandonProcessGroup {
+		t.Fatal("AbandonProcessGroup = false, want true")
+	}
+}
+
 func TestLoadFileRejectsManagedLogOverrides(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "summond.toml")

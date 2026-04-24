@@ -106,7 +106,6 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
-
 func TestApplyFailsWithoutInstall(t *testing.T) {
 	app := newRawTestApp(t)
 	var stdout bytes.Buffer
@@ -214,6 +213,21 @@ func TestAddInstallsManagedJobFromShellStdin(t *testing.T) {
 	}
 }
 
+func TestAddCanAbandonProcessGroup(t *testing.T) {
+	app := newTestApp(t)
+
+	if err := app.Run([]string{"add", "agent", "launcher", "--schedule", "login", "--abandon-process-group", "--", "/bin/echo", "launch"}); err != nil {
+		t.Fatalf("add error = %v", err)
+	}
+	spec, err := app.store.Load("launcher")
+	if err != nil {
+		t.Fatalf("Load(launcher) error = %v", err)
+	}
+	if !spec.AbandonProcessGroup {
+		t.Fatal("AbandonProcessGroup = false, want true")
+	}
+}
+
 func TestAddRequiresJobName(t *testing.T) {
 	app := newTestApp(t)
 	err := app.Run([]string{"add", "agent", "--", "/bin/echo"})
@@ -283,7 +297,6 @@ func TestAddDaemonInstallsManagedJob(t *testing.T) {
 		t.Fatalf("Schedule = %+v", spec.Schedule)
 	}
 }
-
 
 func TestApplyConfig(t *testing.T) {
 	app := newTestApp(t)

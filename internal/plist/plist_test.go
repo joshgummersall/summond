@@ -95,6 +95,57 @@ func TestRenderDaemonPlistDoesNotSetAquaSessionLimit(t *testing.T) {
 	}
 }
 
+func TestRenderRunAtLoadDoesNotImplicitlyAbandonProcessGroup(t *testing.T) {
+	data, err := Render(job.Spec{
+		Name:              "login-job",
+		Target:            job.TargetAgent,
+		Command:           "/bin/echo",
+		Args:              []string{"login"},
+		RuntimeBinaryPath: "/tmp/summond",
+		Schedule: job.Schedule{
+			Kind: job.ScheduleLogin,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "<key>RunAtLoad</key>") {
+		t.Fatalf("plist missing RunAtLoad: %s", text)
+	}
+	if strings.Contains(text, "AbandonProcessGroup") {
+		t.Fatalf("unexpected AbandonProcessGroup in plist: %s", text)
+	}
+}
+
+func TestRenderExplicitAbandonProcessGroup(t *testing.T) {
+	data, err := Render(job.Spec{
+		Name:                "launcher",
+		Target:              job.TargetAgent,
+		Command:             "/bin/echo",
+		Args:                []string{"launch"},
+		RuntimeBinaryPath:   "/tmp/summond",
+		AbandonProcessGroup: true,
+		Schedule: job.Schedule{
+			Kind: job.ScheduleDaily,
+			Hour: 3, HourSet: true,
+			Minute: 45, MinuteSet: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(data)
+	for _, needle := range []string{
+		"<key>AbandonProcessGroup</key>",
+		"<true/>",
+	} {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("plist missing %q: %s", needle, text)
+		}
+	}
+}
+
 func TestRenderShellCommandUsesBashStrictMode(t *testing.T) {
 	data, err := Render(job.Spec{
 		Name:              "shell-job",

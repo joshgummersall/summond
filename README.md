@@ -78,6 +78,8 @@ minute = 45
 MODE = "nightly"
 ```
 
+Set `abandon_process_group = true` for launcher-style jobs whose child processes should keep running after the managed job exits.
+
 ```sh
 summond apply
 ```

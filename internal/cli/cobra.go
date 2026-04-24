@@ -162,6 +162,7 @@ func (a *App) newAddTargetCommand(target string) *cobra.Command {
 	var minute int
 	var weekday int
 	var intervalMinutes int
+	var abandonProcessGroup bool
 	targetLabel := "LaunchAgent"
 	exampleSchedule := "login"
 	exampleBinary := "/bin/echo hello --flag"
@@ -210,17 +211,18 @@ Schedule kinds (%s):
 			target, stdinName),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := addOptions{
-				name:            args[0],
-				schedule:        schedule,
-				workingDir:      workingDir,
-				hour:            hour,
-				hourSet:         cmd.Flags().Changed("hour"),
-				minute:          minute,
-				minuteSet:       cmd.Flags().Changed("minute"),
-				weekday:         weekday,
-				weekdaySet:      cmd.Flags().Changed("weekday"),
-				intervalMinutes: intervalMinutes,
-				intervalSet:     cmd.Flags().Changed("interval-minutes"),
+				name:                args[0],
+				schedule:            schedule,
+				workingDir:          workingDir,
+				hour:                hour,
+				hourSet:             cmd.Flags().Changed("hour"),
+				minute:              minute,
+				minuteSet:           cmd.Flags().Changed("minute"),
+				weekday:             weekday,
+				weekdaySet:          cmd.Flags().Changed("weekday"),
+				intervalMinutes:     intervalMinutes,
+				intervalSet:         cmd.Flags().Changed("interval-minutes"),
+				abandonProcessGroup: abandonProcessGroup,
 			}
 			if target == "daemon" {
 				opts.target = job.TargetDaemon
@@ -245,6 +247,7 @@ Schedule kinds (%s):
 	cmd.Flags().IntVar(&minute, "minute", 0, "minute for hourly/daily/weekly/calendar schedules (0-59)")
 	cmd.Flags().IntVar(&weekday, "weekday", 0, "weekday for weekly/calendar schedules (0-7, 0 and 7 = Sunday)")
 	cmd.Flags().IntVar(&intervalMinutes, "interval-minutes", 0, "run interval in minutes; required for --schedule interval")
+	cmd.Flags().BoolVar(&abandonProcessGroup, "abandon-process-group", false, "allow child processes to continue after the job exits")
 	return cmd
 }
 

@@ -32,7 +32,7 @@ func Render(spec job.Spec) ([]byte, error) {
 		writeString(&buf, "LimitLoadToSessionType", "Aqua")
 	}
 	writeBool(&buf, "RunAtLoad", runAtLoad(spec.Schedule))
-	if runAtLoad(spec.Schedule) {
+	if spec.AbandonProcessGroup {
 		writeBool(&buf, "AbandonProcessGroup", true)
 	}
 	if spec.WorkingDir != "" {

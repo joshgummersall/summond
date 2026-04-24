@@ -66,20 +66,21 @@ type applyOptions struct {
 }
 
 type addOptions struct {
-	target          job.Target
-	name            string
-	schedule        string
-	workingDir      string
-	hour            int
-	hourSet         bool
-	minute          int
-	minuteSet       bool
-	weekday         int
-	weekdaySet      bool
-	intervalMinutes int
-	intervalSet     bool
-	commandArgs     []string
-	stdinScript     string
+	target              job.Target
+	name                string
+	schedule            string
+	workingDir          string
+	hour                int
+	hourSet             bool
+	minute              int
+	minuteSet           bool
+	weekday             int
+	weekdaySet          bool
+	intervalMinutes     int
+	intervalSet         bool
+	abandonProcessGroup bool
+	commandArgs         []string
+	stdinScript         string
 }
 
 type removeOptions struct {
@@ -446,9 +447,10 @@ func (a *App) runAddTarget(opts addOptions) error {
 		return err
 	}
 	spec := job.Spec{
-		Name:       opts.name,
-		Target:     opts.target,
-		WorkingDir: opts.workingDir,
+		Name:                opts.name,
+		Target:              opts.target,
+		WorkingDir:          opts.workingDir,
+		AbandonProcessGroup: opts.abandonProcessGroup,
 		Schedule: job.Schedule{
 			Kind: job.ScheduleKind(opts.schedule),
 		},

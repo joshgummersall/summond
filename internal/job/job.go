@@ -76,6 +76,7 @@ type Spec struct {
 	Trigger                 TriggerKind       `json:"trigger,omitempty"`
 	WatchPaths              []string          `json:"watch_paths,omitempty"`
 	ThrottleIntervalSeconds int               `json:"throttle_interval_seconds,omitempty"`
+	AbandonProcessGroup     bool              `json:"abandon_process_group,omitempty"`
 	StdoutPath              string            `json:"stdout_path,omitempty"`
 	StderrPath              string            `json:"stderr_path,omitempty"`
 	PlistPath               string            `json:"plist_path,omitempty"`
@@ -425,6 +426,7 @@ func (s Spec) SpecChecksum() (string, error) {
 		Trigger                 TriggerKind `json:"trigger,omitempty"`
 		WatchPaths              []string    `json:"watch_paths,omitempty"`
 		ThrottleIntervalSeconds int         `json:"throttle_interval_seconds,omitempty"`
+		AbandonProcessGroup     bool        `json:"abandon_process_group,omitempty"`
 		StdoutPath              string      `json:"stdout_path,omitempty"`
 		StderrPath              string      `json:"stderr_path,omitempty"`
 		PlistPath               string      `json:"plist_path,omitempty"`
@@ -456,6 +458,7 @@ func (s Spec) SpecChecksum() (string, error) {
 		Trigger:                 s.Trigger,
 		WatchPaths:              s.WatchPaths,
 		ThrottleIntervalSeconds: s.ThrottleIntervalSeconds,
+		AbandonProcessGroup:     s.AbandonProcessGroup,
 		StdoutPath:              s.StdoutPath,
 		StderrPath:              s.StderrPath,
 		PlistPath:               s.PlistPath,
