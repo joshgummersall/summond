@@ -675,6 +675,9 @@ func (a *App) runExec(opts namedJobOptions) error {
 	a.logger.Debug("exec start", "name", opts.name)
 	managed, err := a.loadManagedSpec(opts.name)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && a.geteuid != nil && a.geteuid() == 0 && os.Getenv("SUDO_USER") != "" {
+			return fmt.Errorf("read job metadata: %w (running with sudo uses root-managed jobs; if %s is an agent job, re-run without sudo: summond exec %s)", os.ErrNotExist, opts.name, opts.name)
+		}
 		return err
 	}
 	spec := managed.spec

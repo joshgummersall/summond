@@ -1440,6 +1440,23 @@ func TestExecAgentRequiresNonRoot(t *testing.T) {
 	}
 }
 
+func TestExecWithSudoHintsWhenAgentJobIsNotFoundInRootStore(t *testing.T) {
+	app := newTestApp(t)
+	app.geteuid = func() int { return 0 }
+	t.Setenv("SUDO_USER", "josh")
+
+	err := app.Run([]string{"exec", "agent-test"})
+	if err == nil {
+		t.Fatal("expected exec error")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "read job metadata: file does not exist") ||
+		!strings.Contains(got, "running with sudo uses root-managed jobs") ||
+		!strings.Contains(got, "re-run without sudo: summond exec agent-test") {
+		t.Fatalf("exec error = %q", got)
+	}
+}
+
 func TestInstallCreatesStarterFiles(t *testing.T) {
 	app := newTestApp(t)
 	app.stdin = strings.NewReader("y\n")
