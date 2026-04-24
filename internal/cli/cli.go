@@ -1130,9 +1130,9 @@ func (a *App) executeSpec(spec job.Spec) (int, error) {
 	envFilePath := a.environmentFilePath(spec)
 	envPreamble := jsonEnvPreamble(envFilePath)
 	if spec.ShellCommand != "" {
-		cmd = exec.Command("/bin/bash", "-lc", shellPreamble+envPreamble+spec.ShellCommand)
+		cmd = exec.Command("/bin/bash", "-c", shellPreamble+envPreamble+spec.ShellCommand)
 	} else {
-		args := []string{"-lc", shellPreamble + envPreamble + `exec "$@"`, "bash", spec.Command}
+		args := []string{"-c", shellPreamble + envPreamble + `exec "$@"`, "bash", spec.Command}
 		args = append(args, spec.Args...)
 		cmd = exec.Command("/bin/bash", args...)
 	}

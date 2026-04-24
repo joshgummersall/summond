@@ -339,7 +339,7 @@ func renderConfig() string {
 # Interval example
 # [jobs.sync]
 # command = "/usr/bin/env"
-# args = ["bash", "-lc", "echo syncing"]
+# args = ["bash", "-c", "echo syncing"]
 # schedule = "interval"
 # interval_minutes = 30
 
