@@ -1850,3 +1850,11 @@ func (f *fakePrivilegedOperator) BootoutDaemonWithSudo(plistPath string) error {
 	f.bootout = append(f.bootout, plistPath)
 	return f.err
 }
+
+func (f *fakePrivilegedOperator) WriteFileWithSudo(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dst, data, 0o644)
+}

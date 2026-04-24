@@ -368,10 +368,14 @@ func (a *App) newEnvCommand() *cobra.Command {
 		Long: `Manage environment variables shared across all managed jobs.
 
 Variables are stored in a JSON file and injected into every job at runtime before the
-job command runs. Use 'set', 'get', and 'list' to manipulate the environment non-interactively.`,
+job command runs. Use 'set', 'get', and 'list' to manipulate the environment non-interactively.
+
+By default, operates on the agent env file. Use --daemon to target the daemon env file
+(stored in /Library/Application Support/summond/env.json).`,
 		Example: `  summond env set API_KEY=abc123
   summond env get API_KEY
-  summond env list`,
+  summond env list
+  summond env --daemon set SVC_TOKEN=xyz`,
 	}
 	cmd.AddCommand(
 		a.newEnvSetCommand(),
@@ -382,7 +386,8 @@ job command runs. Use 'set', 'get', and 'list' to manipulate the environment non
 }
 
 func (a *App) newEnvSetCommand() *cobra.Command {
-	return &cobra.Command{
+	var daemon bool
+	cmd := &cobra.Command{
 		Use:   "set KEY=VALUE",
 		Short: "Set an environment variable",
 		Long: `Add or update an environment variable in the shared env file.
@@ -390,40 +395,49 @@ func (a *App) newEnvSetCommand() *cobra.Command {
 If KEY already exists its value is updated in place. Otherwise a new entry is appended.
 Keys must match [A-Za-z_][A-Za-z0-9_]*.`,
 		Example: `  summond env set API_KEY=abc123
-  summond env set PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`,
+  summond env set PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+  summond env set --daemon SVC_TOKEN=xyz`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value, err := parseKeyValue(args[0])
 			if err != nil {
 				return err
 			}
-			return a.runEnvSet(envSetOptions{key: key, value: value})
+			return a.runEnvSet(envSetOptions{key: key, value: value, daemon: daemon})
 		},
 	}
+	cmd.Flags().BoolVar(&daemon, "daemon", false, "operate on the daemon env file instead of the agent env file")
+	return cmd
 }
 
 func (a *App) newEnvGetCommand() *cobra.Command {
-	return &cobra.Command{
+	var daemon bool
+	cmd := &cobra.Command{
 		Use:     "get KEY",
 		Short:   "Print the value of an environment variable",
 		Example: `  summond env get API_KEY`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runEnvGet(envGetOptions{key: args[0]})
+			return a.runEnvGet(envGetOptions{key: args[0], daemon: daemon})
 		},
 	}
+	cmd.Flags().BoolVar(&daemon, "daemon", false, "operate on the daemon env file instead of the agent env file")
+	return cmd
 }
 
 func (a *App) newEnvListCommand() *cobra.Command {
-	return &cobra.Command{
+	var daemon bool
+	cmd := &cobra.Command{
 		Use:     "list",
 		Short:   "List all environment variables",
 		Example: `  summond env list`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runEnvList()
+			return a.runEnvList(envListOptions{daemon: daemon})
 		},
 	}
+	cmd.Flags().BoolVar(&daemon, "daemon", false, "operate on the daemon env file instead of the agent env file")
+	return cmd
 }
 
 func (a *App) newCDCommand() *cobra.Command {

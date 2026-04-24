@@ -100,12 +100,18 @@ type logsOptions struct {
 }
 
 type envSetOptions struct {
-	key   string
-	value string
+	key    string
+	value  string
+	daemon bool
 }
 
 type envGetOptions struct {
-	key string
+	key    string
+	daemon bool
+}
+
+type envListOptions struct {
+	daemon bool
 }
 
 type privilegedOperator interface {
@@ -113,6 +119,7 @@ type privilegedOperator interface {
 	RemoveDaemonArtifactsWithSudo(plistPaths []string, metadataPaths []string, home string) error
 	RemovePathWithSudo(path string) error
 	BootoutDaemonWithSudo(plistPath string) error
+	WriteFileWithSudo(src, dst string) error
 }
 
 type osPrivilegedOperator struct{}
@@ -341,11 +348,14 @@ func (a *App) runApply(opts applyOptions) error {
 		return err
 	}
 	daemonRuntimePath := a.daemonStore.RuntimeBinaryPath()
-	envFilePath := a.store.EnvFilePath()
 	applied := 0
 	var failures []string
 	for _, spec := range specs {
-		spec.EnvironmentFilePath = envFilePath
+		if spec.Target == job.TargetDaemon {
+			spec.EnvironmentFilePath = a.daemonStore.EnvFilePath()
+		} else {
+			spec.EnvironmentFilePath = a.store.EnvFilePath()
+		}
 		if spec.Target == job.TargetDaemon {
 			spec.RuntimeBinaryPath = daemonRuntimePath
 			installedSpec, applyErr := a.applyDaemonSpec(spec, runtimeSource)
@@ -465,7 +475,11 @@ func (a *App) runAddTarget(opts addOptions) error {
 	if err != nil {
 		return fmt.Errorf("resolve current executable: %w", err)
 	}
-	spec.EnvironmentFilePath = a.store.EnvFilePath()
+	if opts.target == job.TargetDaemon {
+		spec.EnvironmentFilePath = a.daemonStore.EnvFilePath()
+	} else {
+		spec.EnvironmentFilePath = a.store.EnvFilePath()
+	}
 	if opts.target == job.TargetDaemon {
 		spec.RuntimeBinaryPath = a.daemonStore.RuntimeBinaryPath()
 		installedSpec, err := a.applyDaemonSpec(spec, runtimeSource)
@@ -669,23 +683,64 @@ func (a *App) runExec(opts namedJobOptions) error {
 	return nil
 }
 
-func (a *App) ensureEnvFile() (string, error) {
-	path := a.store.EnvFilePath()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", fmt.Errorf("create env file directory: %w", err)
+func (a *App) envStore(daemon bool) *state.Store {
+	if daemon {
+		return a.daemonStore
 	}
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		if err := os.WriteFile(path, []byte(bootstrap.RenderEnvFile()), 0o644); err != nil {
-			return "", fmt.Errorf("write env file: %w", err)
-		}
-	} else if err != nil {
+	return a.store
+}
+
+func (a *App) ensureEnvFile(store *state.Store) (string, error) {
+	path := store.EnvFilePath()
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stat env file: %w", err)
+	}
+	// File doesn't exist — create it with default contents.
+	if err := a.writeEnvFileContents(path, []byte(bootstrap.RenderEnvFile())); err != nil {
+		return "", fmt.Errorf("write env file: %w", err)
 	}
 	return path, nil
 }
 
+func (a *App) writeEnvFileContents(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && !errors.Is(err, os.ErrPermission) {
+		return err
+	}
+	tmp, err := os.CreateTemp("", "summond-env-*.json")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	defer os.Remove(tmpPath)
+	if err := os.Rename(tmpPath, path); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			approved, promptErr := a.confirmWithDefault("writing daemon env file requires sudo. Retry with sudo? [Y/n]: ", true)
+			if promptErr != nil {
+				return promptErr
+			}
+			if !approved {
+				return err
+			}
+			return a.priv.WriteFileWithSudo(tmpPath, path)
+		}
+		return err
+	}
+	return nil
+}
+
 func (a *App) runEnvSet(opts envSetOptions) error {
-	path, err := a.ensureEnvFile()
+	path, err := a.ensureEnvFile(a.envStore(opts.daemon))
 	if err != nil {
 		return err
 	}
@@ -699,8 +754,12 @@ func (a *App) runEnvSet(opts envSetOptions) error {
 	}
 	_, existed := env[opts.key]
 	env[opts.key] = opts.value
-	if err := writeEnvJSON(path, env); err != nil {
-		return err
+	data, err = json.MarshalIndent(env, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode env file: %w", err)
+	}
+	if err := a.writeEnvFileContents(path, append(data, '\n')); err != nil {
+		return fmt.Errorf("write env file: %w", err)
 	}
 	if existed {
 		_, err = fmt.Fprintf(a.stdout, "updated %s\n", opts.key)
@@ -711,7 +770,7 @@ func (a *App) runEnvSet(opts envSetOptions) error {
 }
 
 func (a *App) runEnvGet(opts envGetOptions) error {
-	path, err := a.ensureEnvFile()
+	path, err := a.ensureEnvFile(a.envStore(opts.daemon))
 	if err != nil {
 		return err
 	}
@@ -731,8 +790,8 @@ func (a *App) runEnvGet(opts envGetOptions) error {
 	return err
 }
 
-func (a *App) runEnvList() error {
-	path, err := a.ensureEnvFile()
+func (a *App) runEnvList(opts envListOptions) error {
+	path, err := a.ensureEnvFile(a.envStore(opts.daemon))
 	if err != nil {
 		return err
 	}
@@ -1719,4 +1778,8 @@ func (osPrivilegedOperator) RemovePathWithSudo(path string) error {
 
 func (osPrivilegedOperator) BootoutDaemonWithSudo(plistPath string) error {
 	return runSudoScript(`launchctl bootout system "$1"`, plistPath)
+}
+
+func (osPrivilegedOperator) WriteFileWithSudo(src, dst string) error {
+	return runSudoScript(`install -m 0644 "$1" "$2"`, src, dst)
 }
