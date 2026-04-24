@@ -1078,11 +1078,10 @@ func (a *App) installDaemonSpecWithSudo(spec job.Spec, runtimeSource string) (jo
 }
 
 func daemonRequiredDirs(store *state.Store, spec job.Spec) []string {
-	jobDir, _ := store.JobDir(spec.Name)
 	dirs := []string{
 		store.Paths().Home,
 		store.JobsFilePath(),
-		jobDir,
+		store.JobDirForSpec(spec),
 		filepath.Dir(store.RuntimeBinaryPath()),
 		filepath.Dir(spec.PlistPath),
 	}
@@ -1486,6 +1485,7 @@ func runSudoScript(script string, args ...string) error {
 
 func (osPrivilegedOperator) InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string) error {
 	script := `
+set -e
 dir_count="$1"
 shift 1
 i=0

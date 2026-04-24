@@ -156,6 +156,9 @@ func (s *Store) List() ([]job.Spec, error) {
 		key := entry.Name()
 		spec, err := s.readMetadataByKey(key)
 		if err != nil {
+			if errors.Is(err, os.ErrPermission) {
+				continue
+			}
 			return nil, err
 		}
 		specs = append(specs, spec)
@@ -188,6 +191,10 @@ func (s *Store) JobDir(name string) (string, error) {
 		return "", err
 	}
 	return s.jobDir(key), nil
+}
+
+func (s *Store) JobDirForSpec(spec job.Spec) string {
+	return s.jobDir(spec.ManagedKey())
 }
 
 func (s *Store) RuntimeBinaryPath() string {
