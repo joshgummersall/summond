@@ -1185,7 +1185,7 @@ func (a *App) executeSpec(spec job.Spec) (int, error) {
 		cmd = exec.Command("/bin/bash", args...)
 	}
 	cmd.Dir = spec.WorkingDir
-	cmd.Env = mergeEnvironment(os.Environ(), spec.Environment)
+	cmd.Env = mergeEnvironment(nil, spec.Environment)
 	cmd.Env = mergeEnvironment(cmd.Env, map[string]string{
 		"SUMMOND_JOB_NAME":  spec.Name,
 		"SUMMOND_JOB_LABEL": spec.Label,
