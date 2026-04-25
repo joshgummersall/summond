@@ -363,8 +363,13 @@ func (s *Store) ensureLogFiles(spec job.Spec) error {
 			continue
 		}
 		seen[path] = struct{}{}
-		file, err := os.OpenFile(path, os.O_CREATE, 0o644)
+		// O_EXCL ensures we create a new file rather than following a
+		// pre-existing symlink that could redirect writes elsewhere.
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
+			if errors.Is(err, os.ErrExist) {
+				continue
+			}
 			return fmt.Errorf("create log file %s: %w", path, err)
 		}
 		if err := file.Close(); err != nil {

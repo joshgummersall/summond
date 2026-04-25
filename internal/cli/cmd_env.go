@@ -40,21 +40,26 @@ func (a *App) writeEnvFileContents(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && !errors.Is(err, os.ErrPermission) {
 		return err
 	}
-	tmp, err := os.CreateTemp("", "summond-env-*.json")
+	// Use a private temp directory (0700) so no other local user can race the
+	// subsequent sudo-copy by swapping the file between our write and the
+	// privileged install.
+	tmpDir, err := os.MkdirTemp("", "summond-env-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+	tmp, err := os.CreateTemp(tmpDir, "env-*.json")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
-		_ = os.Remove(tmpPath)
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
 		return err
 	}
-	defer os.Remove(tmpPath)
 	if err := os.Rename(tmpPath, path); err != nil {
 		if errors.Is(err, os.ErrPermission) {
 			approved, promptErr := a.confirmWithDefault("writing daemon env file requires sudo. Retry with sudo? [Y/n]: ", true)

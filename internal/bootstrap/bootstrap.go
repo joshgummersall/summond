@@ -179,12 +179,18 @@ func (m *Manager) InitDaemonStateWithSudo(result *Result) error {
 		result.UsedSudo = true
 		return nil
 	}
-	tmpFile, err := os.CreateTemp("", "summond-env-*.json")
+	// Use a private temp directory (0700) to prevent local-user TOCTOU races
+	// before the privileged sudo-copy of the env file.
+	tmpDir, err := os.MkdirTemp("", "summond-env-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+	tmpFile, err := os.CreateTemp(tmpDir, "env-*.json")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
 	if _, err := tmpFile.WriteString(RenderEnvFile()); err != nil {
 		tmpFile.Close()
 		return err
@@ -452,7 +458,7 @@ func renderNewsyslog(agentHome string, daemonHome string) string {
 	}
 	lines := make([]string, 0, len(patterns))
 	for _, pattern := range patterns {
-		lines = append(lines, fmt.Sprintf("%s  644  7  *  @T00  Z", pattern))
+		lines = append(lines, fmt.Sprintf("%s  640  7  *  @T00  Z", pattern))
 	}
 	return strings.Join(lines, "\n") + "\n"
 }

@@ -42,9 +42,15 @@ func jsonEnvPreamble(path string) string {
 	sort.Strings(keys)
 	var sb strings.Builder
 	for _, k := range keys {
-		fmt.Fprintf(&sb, "export %s=%q\n", k, env[k])
+		fmt.Fprintf(&sb, "export %s=%s\n", k, shellQuote(env[k]))
 	}
 	return sb.String()
+}
+
+// shellQuote wraps s in POSIX single quotes so it is safe to use in a shell
+// command. Single quotes inside the value are escaped as '\''.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func mergeEnvironment(base []string, overrides map[string]string) []string {
