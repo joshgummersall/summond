@@ -897,45 +897,6 @@ func (a *App) runEnvList(opts envListOptions) error {
 	return nil
 }
 
-func (a *App) runCd(opts namedJobOptions) error {
-	managed, err := a.loadManagedSpec(opts.name)
-	if err != nil {
-		return err
-	}
-	dir, err := managed.store.JobDir(managed.spec.Name)
-	if err != nil {
-		return err
-	}
-	// Detect whether stdout is a TTY.
-	// If non-TTY (e.g. eval $(summond cd <name>)), print a cd command for the shell to eval.
-	// If TTY (interactive), spawn a subshell in the job directory.
-	info, err := os.Stdout.Stat()
-	if err != nil {
-		return fmt.Errorf("stat stdout: %w", err)
-	}
-	isTTY := (info.Mode() & os.ModeCharDevice) != 0
-	if !isTTY {
-		_, err := fmt.Fprintf(a.stdout, "cd %s\n", dir)
-		return err
-	}
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/zsh"
-	}
-	cmd := exec.Command(shell)
-	cmd.Dir = dir
-	cmd.Stdin = a.stdin
-	cmd.Stdout = a.stdout
-	cmd.Stderr = a.stderr
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return ExitError{Code: exitErr.ExitCode()}
-		}
-		return err
-	}
-	return nil
-}
 
 func (a *App) runLogs(opts logsOptions) error {
 	a.logger.Debug("logs start", "name", opts.name, "follow", opts.follow, "lines", opts.lineCount, "lastRun", opts.lastRun)

@@ -484,28 +484,6 @@ func (a *App) newEnvListCommand() *cobra.Command {
 	return cmd
 }
 
-func (a *App) newCDCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "cd <name>",
-		Short: "Open a shell in the job state directory",
-		Long: `Open a subshell in the job's state directory, or print a cd command for eval.
-
-When stdout is a terminal (interactive), spawns a new shell ($SHELL or /bin/zsh) with
-its working directory set to the job's state directory. Exit the shell to return.
-
-When stdout is not a terminal (e.g. inside $(...) or eval), prints a cd command instead:
-
-  eval $(summond cd my-job)
-
-The job state directory contains the job's metadata JSON, log symlinks, and runtime files.`,
-		Example: `  summond cd my-job
-  eval $(summond cd my-job)`,
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.runCd(namedJobOptions{name: args[0]})
-		},
-	}
-}
 
 func (a *App) newVersionCommand() *cobra.Command {
 	return &cobra.Command{
