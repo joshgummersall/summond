@@ -1186,6 +1186,11 @@ func (a *App) executeSpec(spec job.Spec) (int, error) {
 	}
 	cmd.Dir = spec.WorkingDir
 	cmd.Env = mergeEnvironment(os.Environ(), spec.Environment)
+	cmd.Env = mergeEnvironment(cmd.Env, map[string]string{
+		"SUMMOND_JOB_NAME":  spec.Name,
+		"SUMMOND_JOB_LABEL": spec.Label,
+		"SUMMOND_STATE_DIR": a.storeForTarget(spec.Target).JobDirForSpec(spec),
+	})
 	cmd.Stdout = a.stdout
 	cmd.Stderr = a.stderr
 	cmd.Stdin = a.stdin
