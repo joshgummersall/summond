@@ -70,17 +70,19 @@ func (e *PermissionError) Unwrap() error {
 }
 
 type Manager struct {
-	paths      state.Paths
-	daemonHome string
-	installer  Installer
+	agentHome    string
+	daemonHome   string
+	newsyslogDir string
+	installer    Installer
 }
 
-func NewManager(paths state.Paths, installer Installer) *Manager {
-	return &Manager{paths: paths, daemonHome: paths.Home, installer: installer}
-}
-
-func NewManagerWithDaemonHome(paths state.Paths, daemonPaths state.Paths, installer Installer) *Manager {
-	return &Manager{paths: paths, daemonHome: daemonPaths.Home, installer: installer}
+func NewManager(paths state.PathSet, installer Installer) *Manager {
+	return &Manager{
+		agentHome:    paths.Agent.Home,
+		daemonHome:   paths.Daemon.Home,
+		newsyslogDir: paths.NewsyslogDir,
+		installer:    installer,
+	}
 }
 
 func (m *Manager) Install(opts Options) (Result, error) {
@@ -107,14 +109,14 @@ func (m *Manager) Install(opts Options) (Result, error) {
 	result.EnvStatus = envStatus
 
 	// Ensure bin/ directory exists in the agent state dir.
-	if err := os.MkdirAll(filepath.Join(m.paths.Home, "bin"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(m.agentHome, "bin"), 0o755); err != nil {
 		return result, err
 	}
 
 	// Write daemon env.json and bin/ if the daemon state dir differs from the agent dir.
 	// If the daemon home is not writable (e.g. /Library/... requires sudo), set a flag
 	// so the caller can retry with sudo via InitDaemonStateWithSudo.
-	if m.daemonHome != "" && m.daemonHome != m.paths.Home {
+	if m.daemonHome != "" && m.daemonHome != m.agentHome {
 		daemonEnvPath := filepath.Join(m.daemonHome, "env.json")
 		binPath := filepath.Join(m.daemonHome, "bin")
 		mkdirErr := os.MkdirAll(binPath, 0o755)
@@ -143,7 +145,7 @@ func (m *Manager) Install(opts Options) (Result, error) {
 		return result, nil
 	}
 
-	newsyslogStatus, err := writeFile(result.NewsyslogGeneratedPath, []byte(renderNewsyslog(m.paths.Home, m.daemonHome)), opts.Overwrite)
+	newsyslogStatus, err := writeFile(result.NewsyslogGeneratedPath, []byte(renderNewsyslog(m.agentHome, m.daemonHome)), opts.Overwrite)
 	if err != nil {
 		return result, err
 	}
@@ -164,7 +166,7 @@ func (m *Manager) Init(opts Options) (Result, error) {
 }
 
 func (m *Manager) InitDaemonStateWithSudo(result *Result) error {
-	if m.daemonHome == "" || m.daemonHome == m.paths.Home {
+	if m.daemonHome == "" || m.daemonHome == m.agentHome {
 		result.DaemonStateInitialized = true
 		return nil
 	}
@@ -250,31 +252,31 @@ func (m *Manager) UninstallNewsyslogWithSudo(result *UninstallResult) error {
 }
 
 func (m *Manager) stateDirs() []string {
-	dirs := []string{m.paths.Home}
-	if m.daemonHome != "" && m.daemonHome != m.paths.Home {
+	dirs := []string{m.agentHome}
+	if m.daemonHome != "" && m.daemonHome != m.agentHome {
 		dirs = append(dirs, m.daemonHome)
 	}
 	return dirs
 }
 
 func (m *Manager) GeneratedNewsyslogPath() string {
-	return filepath.Join(m.paths.Home, newsyslogFilename)
+	return filepath.Join(m.agentHome, newsyslogFilename)
 }
 
 func (m *Manager) EnvFilePath() string {
-	return filepath.Join(m.paths.Home, "env.json")
+	return filepath.Join(m.agentHome, "env.json")
 }
 
 func (m *Manager) SystemNewsyslogPath() string {
-	return filepath.Join(m.paths.NewsyslogDir, newsyslogFilename)
+	return filepath.Join(m.newsyslogDir, newsyslogFilename)
 }
 
 func (m *Manager) installMarkerPath() string {
-	return filepath.Join(m.paths.Home, installMarkerFilename)
+	return filepath.Join(m.agentHome, installMarkerFilename)
 }
 
 func (m *Manager) writeInstallMarker() error {
-	if err := os.MkdirAll(m.paths.Home, 0o755); err != nil {
+	if err := os.MkdirAll(m.agentHome, 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(m.installMarkerPath(), []byte("installed\n"), 0o644)

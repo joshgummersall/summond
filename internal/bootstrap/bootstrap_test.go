@@ -57,8 +57,8 @@ func TestInitCreatesFilesAndInstalls(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 	installer := &fakeInstaller{}
-	manager := NewManager(state.Paths{
-		Home:         filepath.Join(dir, "state"),
+	manager := NewManager(state.PathSet{
+		Agent:        state.Paths{Home: filepath.Join(dir, "state")},
 		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
 	}, installer)
 
@@ -116,8 +116,8 @@ func TestInitReturnsPermissionErrorForRetry(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 	installer := &fakeInstaller{err: &PermissionError{Err: errors.New("permission denied")}}
-	manager := NewManager(state.Paths{
-		Home:         filepath.Join(dir, "state"),
+	manager := NewManager(state.PathSet{
+		Agent:        state.Paths{Home: filepath.Join(dir, "state")},
 		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
 	}, installer)
 
@@ -230,8 +230,8 @@ func TestUninstallRemovesFilesAndInstalledConfig(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 	installer := &fakeInstaller{}
-	manager := NewManager(state.Paths{
-		Home:         filepath.Join(dir, "state"),
+	manager := NewManager(state.PathSet{
+		Agent:        state.Paths{Home: filepath.Join(dir, "state")},
 		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
 	}, installer)
 
@@ -271,8 +271,8 @@ func TestInstallAndUninstallUseCurrentWorkingDirectoryForConfig(t *testing.T) {
 	}()
 
 	installer := &fakeInstaller{}
-	manager := NewManager(state.Paths{
-		Home:         filepath.Join(dir, "state"),
+	manager := NewManager(state.PathSet{
+		Agent:        state.Paths{Home: filepath.Join(dir, "state")},
 		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
 	}, installer)
 

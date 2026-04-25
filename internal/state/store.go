@@ -17,15 +17,14 @@ import (
 )
 
 type Paths struct {
-	Home         string
-	AgentsDir    string
-	DaemonsDir   string
-	NewsyslogDir string
+	Home      string
+	LaunchDir string
 }
 
 type PathSet struct {
-	Agent  Paths
-	Daemon Paths
+	Agent        Paths
+	Daemon       Paths
+	NewsyslogDir string
 }
 
 type Store struct {
@@ -59,24 +58,16 @@ func DiscoverPathSet() (PathSet, error) {
 		}
 	}
 
-	common := Paths{
-		AgentsDir:    filepath.Join(agentUser.HomeDir, "Library", "LaunchAgents"),
-		DaemonsDir:   "/Library/LaunchDaemons",
-		NewsyslogDir: "/etc/newsyslog.d",
-	}
 	return PathSet{
 		Agent: Paths{
-			Home:         filepath.Join(agentUser.HomeDir, "Library", "Application Support", "summond"),
-			AgentsDir:    common.AgentsDir,
-			DaemonsDir:   common.DaemonsDir,
-			NewsyslogDir: common.NewsyslogDir,
+			Home:      filepath.Join(agentUser.HomeDir, "Library", "Application Support", "summond"),
+			LaunchDir: filepath.Join(agentUser.HomeDir, "Library", "LaunchAgents"),
 		},
 		Daemon: Paths{
-			Home:         filepath.Join(string(filepath.Separator), "Library", "Application Support", "summond"),
-			AgentsDir:    common.AgentsDir,
-			DaemonsDir:   common.DaemonsDir,
-			NewsyslogDir: common.NewsyslogDir,
+			Home:      filepath.Join(string(filepath.Separator), "Library", "Application Support", "summond"),
+			LaunchDir: filepath.Join(string(filepath.Separator), "Library", "LaunchDaemons"),
 		},
+		NewsyslogDir: filepath.Join(string(filepath.Separator), "etc", "newsyslog.d"),
 	}, nil
 }
 
@@ -343,10 +334,7 @@ func (s *Store) runtimeBinaryPath() string {
 }
 
 func (s *Store) plistInstallPath(spec job.Spec) string {
-	if spec.Target == job.TargetDaemon {
-		return filepath.Join(s.paths.DaemonsDir, spec.Label+".plist")
-	}
-	return filepath.Join(s.paths.AgentsDir, spec.Label+".plist")
+	return filepath.Join(s.paths.LaunchDir, spec.Label+".plist")
 }
 
 func (s *Store) ensureDirs(spec job.Spec) error {

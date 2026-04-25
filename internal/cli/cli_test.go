@@ -1161,12 +1161,14 @@ func TestApplyPrunePromptCancelsWithoutFlag(t *testing.T) {
 	home := testHome(t)
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		AgentsDir:    filepath.Join(home, "LaunchAgents"),
-		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
-		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
+		LaunchDir: filepath.Join(home, "LaunchAgents"),
+	})
+	daemonStore := state.NewStore(state.Paths{
+		Home:      filepath.Join(home, "managed-daemon"),
+		LaunchDir: filepath.Join(home, "LaunchDaemons"),
 	})
 	runner := &fakeRunner{}
-	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, runner, bootstrap.NewManager(store.Paths(), &fakeBootstrapInstaller{}))
+	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, daemonStore, runner, bootstrap.NewManager(state.PathSet{Agent: store.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, &fakeBootstrapInstaller{}))
 	app.priv = &fakePrivilegedOperator{}
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -1747,12 +1749,14 @@ func TestInstallPermissionDeniedCanUseSudoRetry(t *testing.T) {
 	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		AgentsDir:    filepath.Join(home, "LaunchAgents"),
-		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
-		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
+		LaunchDir: filepath.Join(home, "LaunchAgents"),
+	})
+	daemonStore := state.NewStore(state.Paths{
+		Home:      filepath.Join(home, "managed-daemon"),
+		LaunchDir: filepath.Join(home, "LaunchDaemons"),
 	})
 	installer := &fakeBootstrapInstaller{err: &bootstrap.PermissionError{Err: os.ErrPermission}}
-	app := NewApp(strings.NewReader("y\ny\ny\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	app := NewApp(strings.NewReader("y\ny\ny\n"), &bytes.Buffer{}, store, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: store.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, installer))
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
@@ -1781,12 +1785,14 @@ func TestInstallCancelSkipsChanges(t *testing.T) {
 	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		AgentsDir:    filepath.Join(home, "LaunchAgents"),
-		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
-		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
+		LaunchDir: filepath.Join(home, "LaunchAgents"),
+	})
+	daemonStore := state.NewStore(state.Paths{
+		Home:      filepath.Join(home, "managed-daemon"),
+		LaunchDir: filepath.Join(home, "LaunchDaemons"),
 	})
 	installer := &fakeBootstrapInstaller{err: &bootstrap.PermissionError{Err: os.ErrPermission}}
-	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: store.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, installer))
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
@@ -1815,12 +1821,14 @@ func TestInstallSkipNewsyslogAvoidsPromptAndManualSudo(t *testing.T) {
 	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		AgentsDir:    filepath.Join(home, "LaunchAgents"),
-		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
-		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
+		LaunchDir: filepath.Join(home, "LaunchAgents"),
+	})
+	daemonStore := state.NewStore(state.Paths{
+		Home:      filepath.Join(home, "managed-daemon"),
+		LaunchDir: filepath.Join(home, "LaunchDaemons"),
 	})
 	installer := &fakeBootstrapInstaller{err: &bootstrap.PermissionError{Err: os.ErrPermission}}
-	app := NewApp(strings.NewReader("y\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	app := NewApp(strings.NewReader("y\n"), &bytes.Buffer{}, store, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: store.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, installer))
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
@@ -1930,12 +1938,14 @@ func TestUninstallPermissionDeniedPromptsForNewsyslogCleanup(t *testing.T) {
 	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		AgentsDir:    filepath.Join(home, "LaunchAgents"),
-		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
-		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
+		LaunchDir: filepath.Join(home, "LaunchAgents"),
+	})
+	daemonStore := state.NewStore(state.Paths{
+		Home:      filepath.Join(home, "managed-daemon"),
+		LaunchDir: filepath.Join(home, "LaunchDaemons"),
 	})
 	installer := &fakeBootstrapInstaller{}
-	app := NewApp(strings.NewReader("y\ny\ny\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	app := NewApp(strings.NewReader("y\ny\ny\n"), &bytes.Buffer{}, store, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: store.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, installer))
 	app.priv = &fakePrivilegedOperator{}
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -1972,12 +1982,14 @@ func TestUninstallCancelSkipsChanges(t *testing.T) {
 	}()
 	store := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		AgentsDir:    filepath.Join(home, "LaunchAgents"),
-		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
-		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
+		LaunchDir: filepath.Join(home, "LaunchAgents"),
+	})
+	daemonStore := state.NewStore(state.Paths{
+		Home:      filepath.Join(home, "managed-daemon"),
+		LaunchDir: filepath.Join(home, "LaunchDaemons"),
 	})
 	installer := &fakeBootstrapInstaller{}
-	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), installer))
+	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: store.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, installer))
 	app.priv = &fakePrivilegedOperator{}
 	var stdout bytes.Buffer
 	app.stdout = &stdout
@@ -2105,18 +2117,20 @@ func TestExecuteSpecSourcesEnvFileForCommandJobs(t *testing.T) {
 func newTestApp(t *testing.T) *App {
 	t.Helper()
 	home := testHome(t)
-	store := state.NewStore(state.Paths{
+	agentStore := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		AgentsDir:    filepath.Join(home, "LaunchAgents"),
-		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
-		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
+		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
-	app := NewApp(strings.NewReader(""), ioDiscard{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), &fakeBootstrapInstaller{}))
+	daemonStore := state.NewStore(state.Paths{
+		Home:      filepath.Join(home, "managed-daemon"),
+		LaunchDir: filepath.Join(home, "LaunchDaemons"),
+	})
+	app := NewApp(strings.NewReader(""), ioDiscard{}, agentStore, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: agentStore.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, &fakeBootstrapInstaller{}))
 	app.priv = &fakePrivilegedOperator{}
-	if err := os.MkdirAll(store.Paths().Home, 0o755); err != nil {
+	if err := os.MkdirAll(agentStore.Paths().Home, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(store.Paths().Home, ".installed"), []byte("installed\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(agentStore.Paths().Home, ".installed"), []byte("installed\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	return app
@@ -2125,13 +2139,15 @@ func newTestApp(t *testing.T) *App {
 func newRawTestApp(t *testing.T) *App {
 	t.Helper()
 	home := testHome(t)
-	store := state.NewStore(state.Paths{
+	agentStore := state.NewStore(state.Paths{
 		Home:         filepath.Join(home, "managed"),
-		AgentsDir:    filepath.Join(home, "LaunchAgents"),
-		DaemonsDir:   filepath.Join(home, "LaunchDaemons"),
-		NewsyslogDir: filepath.Join(home, "newsyslog.d"),
+		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
-	app := NewApp(strings.NewReader(""), ioDiscard{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths(), &fakeBootstrapInstaller{}))
+	daemonStore := state.NewStore(state.Paths{
+		Home:      filepath.Join(home, "managed-daemon"),
+		LaunchDir: filepath.Join(home, "LaunchDaemons"),
+	})
+	app := NewApp(strings.NewReader(""), ioDiscard{}, agentStore, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: agentStore.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, &fakeBootstrapInstaller{}))
 	app.priv = &fakePrivilegedOperator{}
 	return app
 }

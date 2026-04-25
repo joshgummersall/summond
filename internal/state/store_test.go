@@ -24,17 +24,17 @@ func TestDiscoverPathSetUsesFixedPlatformPaths(t *testing.T) {
 	if paths.Agent.Home != filepath.Join(current.HomeDir, "Library", "Application Support", "summond") {
 		t.Fatalf("Agent.Home = %q", paths.Agent.Home)
 	}
-	if paths.Agent.AgentsDir != filepath.Join(current.HomeDir, "Library", "LaunchAgents") {
-		t.Fatalf("Agent.AgentsDir = %q", paths.Agent.AgentsDir)
+	if paths.Agent.LaunchDir != filepath.Join(current.HomeDir, "Library", "LaunchAgents") {
+		t.Fatalf("Agent.LaunchDir = %q", paths.Agent.LaunchDir)
 	}
 	if paths.Daemon.Home != "/Library/Application Support/summond" {
 		t.Fatalf("Daemon.Home = %q", paths.Daemon.Home)
 	}
-	if paths.Daemon.DaemonsDir != "/Library/LaunchDaemons" {
-		t.Fatalf("Daemon.DaemonsDir = %q", paths.Daemon.DaemonsDir)
+	if paths.Daemon.LaunchDir != "/Library/LaunchDaemons" {
+		t.Fatalf("Daemon.LaunchDir = %q", paths.Daemon.LaunchDir)
 	}
-	if paths.Agent.NewsyslogDir != "/etc/newsyslog.d" || paths.Daemon.NewsyslogDir != "/etc/newsyslog.d" {
-		t.Fatalf("unexpected NewsyslogDir values: %#v", paths)
+	if paths.NewsyslogDir != "/etc/newsyslog.d" {
+		t.Fatalf("NewsyslogDir = %q", paths.NewsyslogDir)
 	}
 }
 
@@ -42,8 +42,7 @@ func TestInstallCreatesManagedLogFiles(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(Paths{
 		Home:       filepath.Join(dir, "state"),
-		AgentsDir:  filepath.Join(dir, "LaunchAgents"),
-		DaemonsDir: filepath.Join(dir, "LaunchDaemons"),
+		LaunchDir: filepath.Join(dir, "LaunchAgents"),
 	})
 
 	spec, err := store.Install(job.Spec{
@@ -76,8 +75,7 @@ func TestInstallAlwaysUsesManagedLogPaths(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(Paths{
 		Home:       filepath.Join(dir, "state"),
-		AgentsDir:  filepath.Join(dir, "LaunchAgents"),
-		DaemonsDir: filepath.Join(dir, "LaunchDaemons"),
+		LaunchDir: filepath.Join(dir, "LaunchAgents"),
 	})
 	stdoutPath := filepath.Join(dir, "custom", "logs", "stdout.log")
 	stderrPath := filepath.Join(dir, "custom", "logs", "stderr.log")
@@ -110,8 +108,7 @@ func TestInstallPreservesRuntimeState(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(Paths{
 		Home:       filepath.Join(dir, "state"),
-		AgentsDir:  filepath.Join(dir, "LaunchAgents"),
-		DaemonsDir: filepath.Join(dir, "LaunchDaemons"),
+		LaunchDir: filepath.Join(dir, "LaunchAgents"),
 	})
 
 	spec, err := store.Install(job.Spec{
@@ -164,8 +161,7 @@ func TestRecordExecutionUpdatesMetadata(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(Paths{
 		Home:       filepath.Join(dir, "state"),
-		AgentsDir:  filepath.Join(dir, "LaunchAgents"),
-		DaemonsDir: filepath.Join(dir, "LaunchDaemons"),
+		LaunchDir: filepath.Join(dir, "LaunchAgents"),
 	})
 
 	spec, err := store.Install(job.Spec{

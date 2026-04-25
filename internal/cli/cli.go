@@ -140,25 +140,19 @@ func Run(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	app := NewAppWithStores(
+	app := NewApp(
 		os.Stdin,
 		stdout,
 		state.NewStore(paths.Agent),
 		state.NewStore(paths.Daemon),
 		launchd.LaunchCtl{},
-		bootstrap.NewManagerWithDaemonHome(paths.Agent, paths.Daemon, bootstrap.OSInstaller{}),
+		bootstrap.NewManager(paths, bootstrap.OSInstaller{}),
 	)
 	app.stderr = os.Stderr
 	return app.Run(args)
 }
 
-func NewApp(stdin io.Reader, stdout io.Writer, store *state.Store, runner launchd.Runner, boot *bootstrap.Manager) *App {
-	daemonPaths := store.Paths()
-	daemonPaths.Home = daemonPaths.Home + "-daemon"
-	return NewAppWithStores(stdin, stdout, store, state.NewStore(daemonPaths), runner, boot)
-}
-
-func NewAppWithStores(stdin io.Reader, stdout io.Writer, store *state.Store, daemonStore *state.Store, runner launchd.Runner, boot *bootstrap.Manager) *App {
+func NewApp(stdin io.Reader, stdout io.Writer, store *state.Store, daemonStore *state.Store, runner launchd.Runner, boot *bootstrap.Manager) *App {
 	return &App{
 		stdin:       stdin,
 		stdout:      stdout,
