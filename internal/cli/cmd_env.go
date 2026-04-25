@@ -1,13 +1,136 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 
+	"github.com/joshgummersall/summond/internal/bootstrap"
+	"github.com/joshgummersall/summond/internal/state"
 	"github.com/spf13/cobra"
 )
+
+func (a *App) envStore(daemon bool) *state.Store {
+	if daemon {
+		return a.daemonStore
+	}
+	return a.store
+}
+
+func (a *App) ensureEnvFile(store *state.Store) (string, error) {
+	path := store.EnvFilePath()
+	if _, err := os.Stat(path); err == nil {
+		return path, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("stat env file: %w", err)
+	}
+	if err := a.writeEnvFileContents(path, []byte(bootstrap.RenderEnvFile())); err != nil {
+		return "", fmt.Errorf("write env file: %w", err)
+	}
+	return path, nil
+}
+
+func (a *App) writeEnvFileContents(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && !errors.Is(err, os.ErrPermission) {
+		return err
+	}
+	tmp, err := os.CreateTemp("", "summond-env-*.json")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	defer os.Remove(tmpPath)
+	if err := os.Rename(tmpPath, path); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			approved, promptErr := a.confirmWithDefault("writing daemon env file requires sudo. Retry with sudo? [Y/n]: ", true)
+			if promptErr != nil {
+				return promptErr
+			}
+			if !approved {
+				return err
+			}
+			return a.priv.WriteFileWithSudo(tmpPath, path)
+		}
+		return err
+	}
+	return nil
+}
+
+func readEnvJSON(data []byte) (map[string]string, error) {
+	var env map[string]string
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil, err
+	}
+	return env, nil
+}
+
+func parseKeyValue(arg string) (key, value string, err error) {
+	idx := strings.IndexByte(arg, '=')
+	if idx < 0 {
+		return "", "", fmt.Errorf("invalid argument %q: expected KEY=VALUE", arg)
+	}
+	key = arg[:idx]
+	if key == "" {
+		return "", "", fmt.Errorf("invalid argument %q: key must not be empty", arg)
+	}
+	if !isValidEnvKey(key) {
+		return "", "", fmt.Errorf("invalid key %q: must match [A-Za-z_][A-Za-z0-9_]*", key)
+	}
+	return key, arg[idx+1:], nil
+}
+
+func isValidEnvKey(key string) bool {
+	for i, c := range key {
+		if i == 0 {
+			if !(c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+				return false
+			}
+		} else {
+			if !(c == '_' || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+				return false
+			}
+		}
+	}
+	return len(key) > 0
+}
+
+func (a *App) confirmWithDefault(prompt string, defaultYes bool) (bool, error) {
+	_, err := fmt.Fprint(a.stdout, prompt)
+	if err != nil {
+		return false, err
+	}
+	if a.promptReader == nil {
+		a.promptReader = bufio.NewReader(a.stdin)
+	}
+	line, err := a.promptReader.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false, err
+	}
+	answer := strings.TrimSpace(strings.ToLower(line))
+	if answer == "" {
+		return defaultYes && err == nil, nil
+	}
+	return answer == "y" || answer == "yes", nil
+}
+
+func (a *App) confirm(prompt string) (bool, error) {
+	return a.confirmWithDefault(prompt, true)
+}
 
 func (a *App) newEnvCommand() *cobra.Command {
 	cmd := &cobra.Command{

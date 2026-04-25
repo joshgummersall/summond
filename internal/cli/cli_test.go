@@ -92,20 +92,6 @@ func (f *fakeRunner) Print(spec job.Spec) (string, error) {
 	return b.String(), nil
 }
 
-func TestRunVersion(t *testing.T) {
-	app := newTestApp(t)
-	var stdout bytes.Buffer
-	app.stdout = &stdout
-
-	if err := app.Run([]string{"version"}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-
-	if got, want := stdout.String(), "summond 1.0.0\n"; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
-	}
-}
-
 func TestApplyFailsWithoutInstall(t *testing.T) {
 	app := newRawTestApp(t)
 	var stdout bytes.Buffer
@@ -125,7 +111,7 @@ func TestApplyFailsWithoutInstall(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err = app.Run([]string{"apply"})
+	err = app.run([]string{"apply"})
 	if err == nil || err.Error() != "apply requires install to be run first" {
 		t.Fatalf("apply error = %v", err)
 	}
@@ -135,7 +121,7 @@ func TestAddFailsWithoutInstall(t *testing.T) {
 	app := newRawTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
-	err := app.Run([]string{"add", "agent", "echo-job", "--schedule", "daily", "--", "/bin/echo"})
+	err := app.run([]string{"add", "agent", "echo-job", "--schedule", "daily", "--", "/bin/echo"})
 	if err == nil || err.Error() != "add agent requires install to be run first" {
 		t.Fatalf("add error = %v", err)
 	}
@@ -162,7 +148,7 @@ func TestAddInstallsManagedJobFromArgvWithoutConfig(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 
-	if err := app.Run([]string{"add", "agent", "echo-job", "--schedule", "daily", "--hour", "0", "--minute", "15", "--", "/bin/echo", "hello", "--flag"}); err != nil {
+	if err := app.run([]string{"add", "agent", "echo-job", "--schedule", "daily", "--hour", "0", "--minute", "15", "--", "/bin/echo", "hello", "--flag"}); err != nil {
 		t.Fatalf("add error = %v", err)
 	}
 	if got := stdout.String(); got != "added echo-job\n" {
@@ -209,7 +195,7 @@ func TestAddDryRunPrintsPlanWithoutInstalling(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 
-	if err := app.Run([]string{"add", "agent", "echo-job", "--dry-run", "--schedule", "daily", "--hour", "0", "--minute", "15", "--", "/bin/echo", "hello"}); err != nil {
+	if err := app.run([]string{"add", "agent", "echo-job", "--dry-run", "--schedule", "daily", "--hour", "0", "--minute", "15", "--", "/bin/echo", "hello"}); err != nil {
 		t.Fatalf("add dry-run error = %v", err)
 	}
 	got := stdout.String()
@@ -232,7 +218,7 @@ func TestAddInstallsManagedJobFromShellStdin(t *testing.T) {
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
-	if err := app.Run([]string{"add", "agent", "script-job", "--schedule", "daily", "--hour", "3", "--minute", "45"}); err != nil {
+	if err := app.run([]string{"add", "agent", "script-job", "--schedule", "daily", "--hour", "3", "--minute", "45"}); err != nil {
 		t.Fatalf("add error = %v", err)
 	}
 	if got := stdout.String(); got != "added script-job\n" {
@@ -250,7 +236,7 @@ func TestAddInstallsManagedJobFromShellStdin(t *testing.T) {
 func TestAddCanAbandonProcessGroup(t *testing.T) {
 	app := newTestApp(t)
 
-	if err := app.Run([]string{"add", "agent", "launcher", "--schedule", "login", "--abandon-process-group", "--", "/bin/echo", "launch"}); err != nil {
+	if err := app.run([]string{"add", "agent", "launcher", "--schedule", "login", "--abandon-process-group", "--", "/bin/echo", "launch"}); err != nil {
 		t.Fatalf("add error = %v", err)
 	}
 	spec, err := app.store.Load("launcher")
@@ -264,7 +250,7 @@ func TestAddCanAbandonProcessGroup(t *testing.T) {
 
 func TestAddRequiresJobName(t *testing.T) {
 	app := newTestApp(t)
-	err := app.Run([]string{"add", "agent", "--", "/bin/echo"})
+	err := app.run([]string{"add", "agent", "--", "/bin/echo"})
 	if err == nil || err.Error() != "add agent requires --schedule" {
 		t.Fatalf("add error = %v", err)
 	}
@@ -272,7 +258,7 @@ func TestAddRequiresJobName(t *testing.T) {
 
 func TestAddRequiresSchedule(t *testing.T) {
 	app := newTestApp(t)
-	err := app.Run([]string{"add", "agent", "cleanup", "--", "/bin/echo"})
+	err := app.run([]string{"add", "agent", "cleanup", "--", "/bin/echo"})
 	if err == nil || err.Error() != "add agent requires --schedule" {
 		t.Fatalf("add error = %v", err)
 	}
@@ -280,7 +266,7 @@ func TestAddRequiresSchedule(t *testing.T) {
 
 func TestAddRequiresSubcommand(t *testing.T) {
 	app := newTestApp(t)
-	err := app.Run([]string{"add", "cleanup", "--schedule", "daily", "--", "/bin/echo"})
+	err := app.run([]string{"add", "cleanup", "--schedule", "daily", "--", "/bin/echo"})
 	if err == nil || err.Error() != "unknown flag: --schedule" {
 		t.Fatalf("add error = %v", err)
 	}
@@ -303,7 +289,7 @@ func TestAddRejectsDuplicateJobName(t *testing.T) {
 		t.Fatalf("Install(cleanup) error = %v", err)
 	}
 
-	err := app.Run([]string{"add", "agent", "cleanup", "--schedule", "daily", "--", "/bin/echo"})
+	err := app.run([]string{"add", "agent", "cleanup", "--schedule", "daily", "--", "/bin/echo"})
 	if err == nil || !strings.Contains(err.Error(), `job "cleanup" already exists`) {
 		t.Fatalf("add error = %v", err)
 	}
@@ -314,7 +300,7 @@ func TestAddDaemonInstallsManagedJob(t *testing.T) {
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
-	if err := app.Run([]string{"add", "daemon", "daemon-job", "--schedule", "boot", "--", "/bin/echo", "hello"}); err != nil {
+	if err := app.run([]string{"add", "daemon", "daemon-job", "--schedule", "boot", "--", "/bin/echo", "hello"}); err != nil {
 		t.Fatalf("add daemon error = %v", err)
 	}
 	if got := stdout.String(); got != "added daemon-job\n" {
@@ -355,7 +341,7 @@ func TestApplyConfig(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if len(runner.bootedOut) != 1 || runner.bootedOut[0] != "cleanup" {
@@ -395,7 +381,7 @@ func TestApplyDryRunPrintsPlanWithoutApplying(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", "--dry-run", configPath}); err != nil {
+	if err := app.run([]string{"apply", "--dry-run", configPath}); err != nil {
 		t.Fatalf("apply dry-run error = %v", err)
 	}
 	got := stdout.String()
@@ -442,7 +428,7 @@ func TestApplyDefaultsToSummondTomlInWorkingDirectory(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply"}); err != nil {
+	if err := app.run([]string{"apply"}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "cleanup" {
@@ -474,7 +460,7 @@ func TestApplyFailsWhenBootstrapFails(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err := app.Run([]string{"apply", configPath})
+	err := app.run([]string{"apply", configPath})
 	var exitErr ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("apply error = %v", err)
@@ -514,7 +500,7 @@ func TestApplyRollbackRestoresPreviousSpecOnFailure(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(initialData), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("initial apply error = %v", err)
 	}
 
@@ -538,7 +524,7 @@ func TestApplyRollbackRestoresPreviousSpecOnFailure(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err := app.Run([]string{"apply", configPath})
+	err := app.run([]string{"apply", configPath})
 	var exitErr ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("apply error = %v", err)
@@ -573,7 +559,7 @@ func TestApplyRollbackRemovesNewSpecOnFailure(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err := app.Run([]string{"apply", configPath})
+	err := app.run([]string{"apply", configPath})
 	var exitErr ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("apply error = %v", err)
@@ -604,7 +590,7 @@ func TestApplySkipsBootoutWhenServiceIsMissing(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if len(runner.bootedOut) != 0 {
@@ -639,7 +625,7 @@ func TestApplyFailsWhenBootoutFails(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err := app.Run([]string{"apply", configPath})
+	err := app.run([]string{"apply", configPath})
 	var exitErr ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("apply error = %v", err)
@@ -676,7 +662,7 @@ func TestApplyFailsWhenVerificationFails(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err := app.Run([]string{"apply", configPath})
+	err := app.run([]string{"apply", configPath})
 	var exitErr ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("apply error = %v", err)
@@ -721,7 +707,7 @@ func TestApplyUsesChecksumForVerificationWhenAvailable(t *testing.T) {
 	runner.printText = map[string]string{"cleanup": "loaded checksum " + installed.Checksum}
 	stdout.Reset()
 
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if got := stdout.String(); got != "applied 1 job(s)\n" {
@@ -749,11 +735,11 @@ func TestExecFailureIncludesMessage(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
-	err := app.Run([]string{"exec", "failer"})
+	err := app.run([]string{"exec", "failer"})
 	var exitErr ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 7 {
 		t.Fatalf("exec error = %#v", err)
@@ -787,7 +773,7 @@ func TestApplyPromptsAboutOrphanedManagedJobs(t *testing.T) {
 	if err := os.WriteFile(initialConfigPath, []byte(initialData), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", initialConfigPath}); err != nil {
+	if err := app.run([]string{"apply", initialConfigPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
@@ -807,7 +793,7 @@ func TestApplyPromptsAboutOrphanedManagedJobs(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", updatedConfigPath}); err != nil {
+	if err := app.run([]string{"apply", updatedConfigPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	got := stdout.String()
@@ -843,7 +829,7 @@ func TestApplyPrunesManagedJobsMissingFromConfigWithFlag(t *testing.T) {
 	if err := os.WriteFile(firstConfigPath, []byte(firstData), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", firstConfigPath}); err != nil {
+	if err := app.run([]string{"apply", firstConfigPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
@@ -864,7 +850,7 @@ func TestApplyPrunesManagedJobsMissingFromConfigWithFlag(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", "--prune", pruneConfigPath}); err != nil {
+	if err := app.run([]string{"apply", "--prune", pruneConfigPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if got := stdout.String(); got != "applied 1 job(s)\njobs to prune:\n- sync\npruned 1 job(s)\n" {
@@ -905,7 +891,7 @@ func TestApplyDryRunWithPruneDoesNotRemoveOrphanedJobs(t *testing.T) {
 	if err := os.WriteFile(firstConfigPath, []byte(firstData), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", firstConfigPath}); err != nil {
+	if err := app.run([]string{"apply", firstConfigPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
@@ -927,7 +913,7 @@ func TestApplyDryRunWithPruneDoesNotRemoveOrphanedJobs(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"apply", "--dry-run", "--prune", pruneConfigPath}); err != nil {
+	if err := app.run([]string{"apply", "--dry-run", "--prune", pruneConfigPath}); err != nil {
 		t.Fatalf("apply dry-run error = %v", err)
 	}
 	got := stdout.String()
@@ -972,7 +958,7 @@ func TestApplyPrunesPerJobLogsAndLockFiles(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte("group = \"tests\"\n\n[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", "--prune", configPath}); err != nil {
+	if err := app.run([]string{"apply", "--prune", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
@@ -1010,7 +996,7 @@ func TestRemoveDeletesAgentJobAndState(t *testing.T) {
 		t.Fatalf("WriteFile(stderr) error = %v", err)
 	}
 
-	if err := app.Run([]string{"remove", "cleanup"}); err != nil {
+	if err := app.run([]string{"remove", "cleanup"}); err != nil {
 		t.Fatalf("remove error = %v", err)
 	}
 	if got := stdout.String(); got != "removed cleanup\n" {
@@ -1052,7 +1038,7 @@ func TestRemoveDryRunPrintsPlanWithoutDeleting(t *testing.T) {
 		t.Fatalf("WriteFile(stdout) error = %v", err)
 	}
 
-	if err := app.Run([]string{"remove", "--dry-run", "cleanup"}); err != nil {
+	if err := app.run([]string{"remove", "--dry-run", "cleanup"}); err != nil {
 		t.Fatalf("remove dry-run error = %v", err)
 	}
 	got := stdout.String()
@@ -1096,7 +1082,7 @@ func TestRemoveDaemonJobRetriesWithSudo(t *testing.T) {
 		t.Fatalf("Install(cleanup daemon) error = %v", err)
 	}
 
-	if err := app.Run([]string{"remove", "cleanup"}); err != nil {
+	if err := app.run([]string{"remove", "cleanup"}); err != nil {
 		t.Fatalf("remove error = %v", err)
 	}
 	if got := stdout.String(); !strings.Contains(got, "removing daemon jobs requires sudo. Retry with sudo? [Y/n]: ") || !strings.Contains(got, "removed cleanup\n") {
@@ -1144,12 +1130,12 @@ func TestRemoveDaemonJobDeletesStaleJobDirectoryFromList(t *testing.T) {
 		t.Fatalf("RecordExecutionFinish() error = %v", err)
 	}
 
-	if err := app.Run([]string{"remove", "cleanup"}); err != nil {
+	if err := app.run([]string{"remove", "cleanup"}); err != nil {
 		t.Fatalf("remove error = %v", err)
 	}
 	stdout.Reset()
 
-	if err := app.Run([]string{"list"}); err != nil {
+	if err := app.run([]string{"list"}); err != nil {
 		t.Fatalf("list error = %v", err)
 	}
 	if got := stdout.String(); got != "no managed jobs\n" {
@@ -1160,7 +1146,7 @@ func TestRemoveDaemonJobDeletesStaleJobDirectoryFromList(t *testing.T) {
 func TestApplyPrunePromptCancelsWithoutFlag(t *testing.T) {
 	home := testHome(t)
 	store := state.NewStore(state.Paths{
-		Home:         filepath.Join(home, "managed"),
+		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
 	daemonStore := state.NewStore(state.Paths{
@@ -1183,7 +1169,7 @@ func TestApplyPrunePromptCancelsWithoutFlag(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte("group = \"tests\"\n\n[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
@@ -1196,7 +1182,7 @@ func TestApplyPrunePromptCancelsWithoutFlag(t *testing.T) {
 	runner.bootedOut = nil
 
 	app.stdin = strings.NewReader("n\n")
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	got := stdout.String()
@@ -1220,12 +1206,12 @@ func TestApplyWithPruneReportsNoJobsToPrune(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte("[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"apply", "--prune", configPath}); err != nil {
+	if err := app.run([]string{"apply", "--prune", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	if got := stdout.String(); got != "applied 1 job(s)\n" {
@@ -1252,7 +1238,7 @@ func TestLogsTailArgsFollow(t *testing.T) {
 func TestLogsRejectsNegativeLineCount(t *testing.T) {
 	app := newTestApp(t)
 
-	err := app.Run([]string{"logs", "-n", "-1", "cleanup"})
+	err := app.run([]string{"logs", "-n", "-1", "cleanup"})
 	if err == nil || err.Error() != "logs requires -n >= 0" {
 		t.Fatalf("logs error = %v", err)
 	}
@@ -1280,7 +1266,7 @@ func TestLogsWritesStdoutAndStderrSeparately(t *testing.T) {
 		t.Fatalf("WriteFile(stderr) error = %v", err)
 	}
 
-	if err := app.Run([]string{"logs", "-n", "1", "cleanup"}); err != nil {
+	if err := app.run([]string{"logs", "-n", "1", "cleanup"}); err != nil {
 		t.Fatalf("logs error = %v", err)
 	}
 	if got := stdout.String(); got != "out-2\n" {
@@ -1340,7 +1326,7 @@ func TestLogsDefaultShowsLastRunOnly(t *testing.T) {
 	stderrFile.Close()
 
 	// Default logs (no -n) should show only the current run's output.
-	if err := app.Run([]string{"logs", "cleanup"}); err != nil {
+	if err := app.run([]string{"logs", "cleanup"}); err != nil {
 		t.Fatalf("logs error = %v", err)
 	}
 	if got := stdout.String(); got != "new-out\n" {
@@ -1368,12 +1354,12 @@ func TestStatePrintsStateJSON(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"state", "watcher"}); err != nil {
+	if err := app.run([]string{"state", "watcher"}); err != nil {
 		t.Fatalf("state error = %v", err)
 	}
 	got := stdout.String()
@@ -1400,12 +1386,12 @@ func TestStatePrintsShellCommandJSON(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"state", "scripted"}); err != nil {
+	if err := app.run([]string{"state", "scripted"}); err != nil {
 		t.Fatalf("state error = %v", err)
 	}
 	got := stdout.String()
@@ -1432,12 +1418,12 @@ func TestStateShowsNoRecentRunsBeforeExecution(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"state", "cleanup"}); err != nil {
+	if err := app.run([]string{"state", "cleanup"}); err != nil {
 		t.Fatalf("state error = %v", err)
 	}
 	if got := stdout.String(); strings.Contains(got, `"recent_runs":`) {
@@ -1463,16 +1449,16 @@ func TestStateShowsRecentRunsAfterExecution(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	stdout.Reset()
-	if err := app.Run([]string{"exec", "cleanup"}); err != nil {
+	if err := app.run([]string{"exec", "cleanup"}); err != nil {
 		t.Fatalf("exec error = %v", err)
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"state", "cleanup"}); err != nil {
+	if err := app.run([]string{"state", "cleanup"}); err != nil {
 		t.Fatalf("state error = %v", err)
 	}
 	got := stdout.String()
@@ -1499,12 +1485,12 @@ func TestPlistPrintsJobPlist(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"plist", "cleanup"}); err != nil {
+	if err := app.run([]string{"plist", "cleanup"}); err != nil {
 		t.Fatalf("plist error = %v", err)
 	}
 	got := stdout.String()
@@ -1531,12 +1517,12 @@ func TestListOutputsTSV(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"list"}); err != nil {
+	if err := app.run([]string{"list"}); err != nil {
 		t.Fatalf("list error = %v", err)
 	}
 	got := stdout.String()
@@ -1569,12 +1555,12 @@ func TestExecRecordsSuccessfulRun(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
 	stdout.Reset()
-	if err := app.Run([]string{"exec", "cleanup"}); err != nil {
+	if err := app.run([]string{"exec", "cleanup"}); err != nil {
 		t.Fatalf("exec error = %v", err)
 	}
 	if got := stdout.String(); got != "clean\n" {
@@ -1610,11 +1596,11 @@ func TestExecRecordsFailingRun(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 
-	err := app.Run([]string{"exec", "failer"})
+	err := app.run([]string{"exec", "failer"})
 	var exitErr ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != 7 {
 		t.Fatalf("exec error = %#v", err)
@@ -1648,7 +1634,7 @@ func TestExecDaemonRequiresSudo(t *testing.T) {
 		t.Fatalf("Install(daemon-job) error = %v", err)
 	}
 
-	err = app.Run([]string{"exec", spec.Name})
+	err = app.run([]string{"exec", spec.Name})
 	if err == nil || err.Error() != "daemon jobs are owned by root; re-run as: sudo summond exec daemon-job" {
 		t.Fatalf("exec error = %v", err)
 	}
@@ -1678,7 +1664,7 @@ func TestExecAgentRequiresNonRoot(t *testing.T) {
 		t.Fatalf("Install(cleanup) error = %v", err)
 	}
 
-	err = app.Run([]string{"exec", spec.Name})
+	err = app.run([]string{"exec", spec.Name})
 	if err == nil || err.Error() != "agent jobs run as the logged-in user; re-run without sudo: summond exec cleanup" {
 		t.Fatalf("exec error = %v", err)
 	}
@@ -1696,7 +1682,7 @@ func TestExecWithSudoHintsWhenAgentJobIsNotFoundInRootStore(t *testing.T) {
 	app.geteuid = func() int { return 0 }
 	t.Setenv("SUDO_USER", "josh")
 
-	err := app.Run([]string{"exec", "agent-test"})
+	err := app.run([]string{"exec", "agent-test"})
 	if err == nil {
 		t.Fatal("expected exec error")
 	}
@@ -1724,7 +1710,7 @@ func TestInstallCreatesStarterFiles(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 
-	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
+	if err := app.run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	if got := stdout.String(); !strings.Contains(got, "install will:\n") || !strings.Contains(got, "Proceed with install? [y/N]: ") {
@@ -1748,7 +1734,7 @@ func TestInstallPermissionDeniedCanUseSudoRetry(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 	store := state.NewStore(state.Paths{
-		Home:         filepath.Join(home, "managed"),
+		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
 	daemonStore := state.NewStore(state.Paths{
@@ -1760,7 +1746,7 @@ func TestInstallPermissionDeniedCanUseSudoRetry(t *testing.T) {
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
-	if err := app.Run([]string{"install"}); err != nil {
+	if err := app.run([]string{"install"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	if len(installer.sudoCalls) != 1 {
@@ -1784,7 +1770,7 @@ func TestInstallCancelSkipsChanges(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 	store := state.NewStore(state.Paths{
-		Home:         filepath.Join(home, "managed"),
+		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
 	daemonStore := state.NewStore(state.Paths{
@@ -1796,7 +1782,7 @@ func TestInstallCancelSkipsChanges(t *testing.T) {
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
-	if err := app.Run([]string{"install"}); err != nil {
+	if err := app.run([]string{"install"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	if len(installer.sudoCalls) != 0 || len(installer.installs) != 0 {
@@ -1820,7 +1806,7 @@ func TestInstallSkipNewsyslogAvoidsPromptAndManualSudo(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 	store := state.NewStore(state.Paths{
-		Home:         filepath.Join(home, "managed"),
+		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
 	daemonStore := state.NewStore(state.Paths{
@@ -1832,7 +1818,7 @@ func TestInstallSkipNewsyslogAvoidsPromptAndManualSudo(t *testing.T) {
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
-	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
+	if err := app.run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	if got := stdout.String(); !strings.Contains(got, "install will:\n") || !strings.Contains(got, "- skip newsyslog generation and system install\n") || !strings.Contains(got, "Proceed with install? [y/N]: ") {
@@ -1863,7 +1849,7 @@ func TestInstallPlanShowsExistingConfigUnchangedWithoutOverwrite(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
+	if err := app.run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	if got := stdout.String(); !strings.Contains(got, "- leave unchanged starter config: ") {
@@ -1899,18 +1885,18 @@ func TestUninstallRemovesManagedArtifacts(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if err := app.Run([]string{"apply", configPath}); err != nil {
+	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
 	stdout.Reset()
 	app.stdin = strings.NewReader("y\n")
-	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
+	if err := app.run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	stdout.Reset()
 
 	app.stdin = strings.NewReader("y\n")
-	if err := app.Run([]string{"uninstall"}); err != nil {
+	if err := app.run([]string{"uninstall"}); err != nil {
 		t.Fatalf("uninstall error = %v", err)
 	}
 	if got := stdout.String(); !strings.Contains(got, "uninstall will:\n") || !strings.Contains(got, "Proceed with uninstall? [y/N]: ") {
@@ -1937,7 +1923,7 @@ func TestUninstallPermissionDeniedPromptsForNewsyslogCleanup(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 	store := state.NewStore(state.Paths{
-		Home:         filepath.Join(home, "managed"),
+		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
 	daemonStore := state.NewStore(state.Paths{
@@ -1950,14 +1936,14 @@ func TestUninstallPermissionDeniedPromptsForNewsyslogCleanup(t *testing.T) {
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
-	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
+	if err := app.run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	installer.removeErr = &bootstrap.PermissionError{Err: os.ErrPermission}
 	stdout.Reset()
 	app.stdin = strings.NewReader("y\ny\n")
 
-	if err := app.Run([]string{"uninstall"}); err != nil {
+	if err := app.run([]string{"uninstall"}); err != nil {
 		t.Fatalf("uninstall error = %v", err)
 	}
 	if len(installer.sudoCalls) != 1 {
@@ -1981,7 +1967,7 @@ func TestUninstallCancelSkipsChanges(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 	store := state.NewStore(state.Paths{
-		Home:         filepath.Join(home, "managed"),
+		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
 	daemonStore := state.NewStore(state.Paths{
@@ -1995,14 +1981,14 @@ func TestUninstallCancelSkipsChanges(t *testing.T) {
 	app.stdout = &stdout
 
 	app.stdin = strings.NewReader("y\n")
-	if err := app.Run([]string{"install", "--skip-newsyslog"}); err != nil {
+	if err := app.run([]string{"install", "--skip-newsyslog"}); err != nil {
 		t.Fatalf("install error = %v", err)
 	}
 	installer.removeErr = &bootstrap.PermissionError{Err: os.ErrPermission}
 	stdout.Reset()
 
 	app.stdin = strings.NewReader("n\n")
-	if err := app.Run([]string{"uninstall"}); err != nil {
+	if err := app.run([]string{"uninstall"}); err != nil {
 		t.Fatalf("uninstall error = %v", err)
 	}
 	if len(installer.sudoCalls) != 0 {
@@ -2019,7 +2005,7 @@ func TestRunEnvSetGetList(t *testing.T) {
 	app.stdout = &stdout
 
 	// set a new key
-	if err := app.Run([]string{"env", "set", "MY_KEY=hello"}); err != nil {
+	if err := app.run([]string{"env", "set", "MY_KEY=hello"}); err != nil {
 		t.Fatalf("env set error = %v", err)
 	}
 	if got := strings.TrimSpace(stdout.String()); got != "set MY_KEY" {
@@ -2028,7 +2014,7 @@ func TestRunEnvSetGetList(t *testing.T) {
 
 	// get it back
 	stdout.Reset()
-	if err := app.Run([]string{"env", "get", "MY_KEY"}); err != nil {
+	if err := app.run([]string{"env", "get", "MY_KEY"}); err != nil {
 		t.Fatalf("env get error = %v", err)
 	}
 	if got := strings.TrimSpace(stdout.String()); got != "hello" {
@@ -2037,7 +2023,7 @@ func TestRunEnvSetGetList(t *testing.T) {
 
 	// update the key
 	stdout.Reset()
-	if err := app.Run([]string{"env", "set", "MY_KEY=world"}); err != nil {
+	if err := app.run([]string{"env", "set", "MY_KEY=world"}); err != nil {
 		t.Fatalf("env set update error = %v", err)
 	}
 	if got := strings.TrimSpace(stdout.String()); got != "updated MY_KEY" {
@@ -2046,7 +2032,7 @@ func TestRunEnvSetGetList(t *testing.T) {
 
 	// list shows the key
 	stdout.Reset()
-	if err := app.Run([]string{"env", "list"}); err != nil {
+	if err := app.run([]string{"env", "list"}); err != nil {
 		t.Fatalf("env list error = %v", err)
 	}
 	if !strings.Contains(stdout.String(), "MY_KEY=world") {
@@ -2054,7 +2040,7 @@ func TestRunEnvSetGetList(t *testing.T) {
 	}
 
 	// get missing key returns error
-	if err := app.Run([]string{"env", "get", "DOES_NOT_EXIST"}); err == nil {
+	if err := app.run([]string{"env", "get", "DOES_NOT_EXIST"}); err == nil {
 		t.Fatal("expected error for missing key")
 	}
 
@@ -2118,7 +2104,7 @@ func newTestApp(t *testing.T) *App {
 	t.Helper()
 	home := testHome(t)
 	agentStore := state.NewStore(state.Paths{
-		Home:         filepath.Join(home, "managed"),
+		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
 	daemonStore := state.NewStore(state.Paths{
@@ -2140,7 +2126,7 @@ func newRawTestApp(t *testing.T) *App {
 	t.Helper()
 	home := testHome(t)
 	agentStore := state.NewStore(state.Paths{
-		Home:         filepath.Join(home, "managed"),
+		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
 	daemonStore := state.NewStore(state.Paths{
