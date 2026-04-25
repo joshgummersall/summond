@@ -105,26 +105,6 @@ type logsOptions struct {
 	lastRun   bool
 }
 
-type envSetOptions struct {
-	key    string
-	value  string
-	daemon bool
-}
-
-type envGetOptions struct {
-	key    string
-	daemon bool
-}
-
-type envRemoveOptions struct {
-	key    string
-	daemon bool
-}
-
-type envListOptions struct {
-	daemon bool
-}
-
 type privilegedOperator interface {
 	InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string) error
 	RemoveDaemonArtifactsWithSudo(plistPaths []string, cleanupPaths []string, extraPaths []string) error
@@ -791,112 +771,6 @@ func (a *App) writeEnvFileContents(path string, data []byte) error {
 	}
 	return nil
 }
-
-func (a *App) runEnvSet(opts envSetOptions) error {
-	path, err := a.ensureEnvFile(a.envStore(opts.daemon))
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read env file: %w", err)
-	}
-	env, err := readEnvJSON(data)
-	if err != nil {
-		return fmt.Errorf("parse env file: %w", err)
-	}
-	_, existed := env[opts.key]
-	env[opts.key] = opts.value
-	data, err = json.MarshalIndent(env, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode env file: %w", err)
-	}
-	if err := a.writeEnvFileContents(path, append(data, '\n')); err != nil {
-		return fmt.Errorf("write env file: %w", err)
-	}
-	if existed {
-		_, err = fmt.Fprintf(a.stdout, "updated %s\n", opts.key)
-	} else {
-		_, err = fmt.Fprintf(a.stdout, "set %s\n", opts.key)
-	}
-	return err
-}
-
-func (a *App) runEnvGet(opts envGetOptions) error {
-	path, err := a.ensureEnvFile(a.envStore(opts.daemon))
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read env file: %w", err)
-	}
-	env, err := readEnvJSON(data)
-	if err != nil {
-		return fmt.Errorf("parse env file: %w", err)
-	}
-	value, ok := env[opts.key]
-	if !ok {
-		return fmt.Errorf("key %q not found in env file", opts.key)
-	}
-	_, err = fmt.Fprintf(a.stdout, "%s\n", value)
-	return err
-}
-
-func (a *App) runEnvRemove(opts envRemoveOptions) error {
-	path, err := a.ensureEnvFile(a.envStore(opts.daemon))
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read env file: %w", err)
-	}
-	env, err := readEnvJSON(data)
-	if err != nil {
-		return fmt.Errorf("parse env file: %w", err)
-	}
-	if _, ok := env[opts.key]; !ok {
-		return fmt.Errorf("key %q not found in env file", opts.key)
-	}
-	delete(env, opts.key)
-	data, err = json.MarshalIndent(env, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode env file: %w", err)
-	}
-	if err := a.writeEnvFileContents(path, append(data, '\n')); err != nil {
-		return fmt.Errorf("write env file: %w", err)
-	}
-	_, err = fmt.Fprintf(a.stdout, "removed %s\n", opts.key)
-	return err
-}
-
-func (a *App) runEnvList(opts envListOptions) error {
-	path, err := a.ensureEnvFile(a.envStore(opts.daemon))
-	if err != nil {
-		return err
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read env file: %w", err)
-	}
-	env, err := readEnvJSON(data)
-	if err != nil {
-		return fmt.Errorf("parse env file: %w", err)
-	}
-	keys := make([]string, 0, len(env))
-	for k := range env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		if _, err := fmt.Fprintf(a.stdout, "%s=%s\n", k, env[k]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 
 func (a *App) runLogs(opts logsOptions) error {
 	a.logger.Debug("logs start", "name", opts.name, "follow", opts.follow, "lines", opts.lineCount, "lastRun", opts.lastRun)
