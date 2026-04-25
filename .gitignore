@@ -1,4 +1,5 @@
 .mise/
+.claude/worktrees/
 bin/
 dist/
 coverage.out
