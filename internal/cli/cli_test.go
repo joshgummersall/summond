@@ -237,4 +237,3 @@ func newRawTestApp(t *testing.T) *App {
 	app.priv = &fakePrivilegedOperator{}
 	return app
 }
-

@@ -659,7 +659,6 @@ func TestApplyPrunesPerJobLogsAndLockFiles(t *testing.T) {
 	}
 }
 
-
 func TestApplyWithPruneReportsNoJobsToPrune(t *testing.T) {
 	app := newTestApp(t)
 	var stdout bytes.Buffer
