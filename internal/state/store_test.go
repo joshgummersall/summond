@@ -41,7 +41,7 @@ func TestDiscoverPathSetUsesFixedPlatformPaths(t *testing.T) {
 func TestInstallCreatesManagedLogFiles(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(Paths{
-		Home:       filepath.Join(dir, "state"),
+		Home:      filepath.Join(dir, "state"),
 		LaunchDir: filepath.Join(dir, "LaunchAgents"),
 	})
 
@@ -74,7 +74,7 @@ func TestInstallCreatesManagedLogFiles(t *testing.T) {
 func TestInstallAlwaysUsesManagedLogPaths(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(Paths{
-		Home:       filepath.Join(dir, "state"),
+		Home:      filepath.Join(dir, "state"),
 		LaunchDir: filepath.Join(dir, "LaunchAgents"),
 	})
 	stdoutPath := filepath.Join(dir, "custom", "logs", "stdout.log")
@@ -107,7 +107,7 @@ func TestInstallAlwaysUsesManagedLogPaths(t *testing.T) {
 func TestInstallPreservesRuntimeState(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(Paths{
-		Home:       filepath.Join(dir, "state"),
+		Home:      filepath.Join(dir, "state"),
 		LaunchDir: filepath.Join(dir, "LaunchAgents"),
 	})
 
@@ -160,7 +160,7 @@ func TestInstallPreservesRuntimeState(t *testing.T) {
 func TestRecordExecutionUpdatesMetadata(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(Paths{
-		Home:       filepath.Join(dir, "state"),
+		Home:      filepath.Join(dir, "state"),
 		LaunchDir: filepath.Join(dir, "LaunchAgents"),
 	})
 

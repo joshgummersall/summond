@@ -48,7 +48,7 @@ func jsonEnvPreamble(path string) string {
 }
 
 // shellQuote wraps s in POSIX single quotes so it is safe to use in a shell
-// command. Single quotes inside the value are escaped as '\''.
+// command. Single quotes inside the value are escaped as '\”.
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
