@@ -7,12 +7,17 @@ Schedule and manage macOS background jobs without writing a single plist.
 ## Install
 
 ```sh
+brew tap joshgummersall/summond
+brew install summond
+```
+
+Or install from source (requires Go 1.24+):
+
+```sh
 go install github.com/joshgummersall/summond/cmd/summond@latest
 ```
 
-Requires Go 1.24+ and macOS.
-
-Prebuilt binaries for macOS (arm64 and amd64) are available on the [Releases](https://github.com/joshgummersall/summond/releases) page. They are not code-signed, so macOS will quarantine them on first download. Clear the quarantine attribute before running:
+Prebuilt binaries for macOS (arm64 and amd64) are also available on the [Releases](https://github.com/joshgummersall/summond/releases) page. They are not code-signed, so macOS will quarantine them on first download. Clear the quarantine attribute before running:
 
 ```sh
 xattr -d com.apple.quarantine summond
