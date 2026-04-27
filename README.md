@@ -1,123 +1,85 @@
 # summond
 
-A macOS-focused CLI for managing friendly `launchd` jobs with native LaunchAgents and LaunchDaemons.
+Schedule and manage macOS background jobs without writing a single plist.
 
-## Prerequisites
+`launchd` is powerful but painful to use directly. Summond wraps it with a CLI that handles plist generation, log management, and job lifecycle — so you can focus on what the job actually does.
 
-- `mise` installed
-- macOS
-
-## Setup
+## Install
 
 ```sh
-mise install
+go install github.com/joshgummersall/summond/cmd/summond@latest
 ```
 
-## Getting started
+Requires Go 1.24+ and macOS.
 
-```sh
-mise test
-mise install
-summond version
-summond install
-```
+## How it works
 
-## Examples
-
-Bootstrap the default config and log rotation:
-
-```sh
-summond install
-```
-
-This creates `./summond.toml`, generates a `newsyslog` snippet for Summond-managed logs, and will ask to retry with `sudo` if the system install step needs elevated privileges.
-
-Apply the generated config:
-
-```sh
-summond apply
-```
-
-Apply and automatically remove managed jobs that were removed from the config:
-
-```sh
-summond apply --prune
-```
-
-Add an agent job directly:
-
-```sh
-summond add agent cleanup --schedule daily --hour 3 --minute 45 -- /bin/echo cleanup
-```
-
-Add a shell-based job from stdin:
-
-```sh
-summond add agent rotate-logs --schedule daily --hour 3 --minute 30 <<'EOF'
-find /tmp -type f -mtime +7 -delete
-EOF
-```
-
-Add a daemon job directly:
-
-```sh
-summond add daemon boot-task --schedule boot -- /usr/local/bin/task
-```
-
-Define jobs in TOML and apply them:
+Define jobs in a TOML file and apply them:
 
 ```toml
 [jobs.cleanup]
-command = "/bin/echo"
-args = ["cleanup"]
+command  = "/usr/local/bin/my-script"
 schedule = "daily"
-hour = 3
-minute = 45
+hour     = 3
+minute   = 0
 
 [jobs.cleanup.env]
 MODE = "nightly"
 ```
 
-Set `abandon_process_group = true` for launcher-style jobs whose child processes should keep running after the managed job exits.
-
 ```sh
 summond apply
 ```
 
-If you later delete jobs from `summond.toml`, `summond apply` will prompt to remove the orphaned managed jobs and their managed logs/state. To skip the prompt:
+That's it. Summond generates and loads the launchd plist, creates log files, configures `newsyslog` rotation, and tracks execution history. When you delete a job from the config, `summond apply --prune` removes it cleanly.
+
+## Or skip the config file entirely
 
 ```sh
-summond apply --prune
+# Run a binary on a schedule
+summond add agent cleanup --schedule daily --hour 3 --minute 0 -- /usr/local/bin/my-script
+
+# Run a shell snippet
+summond add agent rotate-logs --schedule daily --hour 3 --minute 30 <<'EOF'
+find /tmp -type f -mtime +7 -delete
+EOF
 ```
 
-## Logs
+## Schedules
 
-Summond writes stdout and stderr to managed log files under `~/Library/Application Support/summond/logs/` by default. Those files are created during install/update. `summond install` scaffolds `newsyslog` configuration so those files can be rotated using the native macOS mechanism.
+`login`, `boot`, `hourly`, `daily`, `weekly`, `interval`, and `calendar` — with `--hour`, `--minute`, `--weekday`, and `--interval-minutes` flags to tune them. Omit the timing flags and summond deterministically seeds them from the job name to spread load.
 
-```sh
-summond logs cleanup
-```
+## File watch trigger
 
-## File Watch Triggers
-
-Use `trigger = "on_change"` with `watch_paths` to run a job when files change. Relative `watch_paths` are resolved against the TOML file being applied.
+Run a job when files change instead of on a schedule:
 
 ```toml
-[jobs.watcher]
-command = "/bin/echo"
-args = ["config changed"]
-trigger = "on_change"
-watch_paths = ["../fixtures/input.txt"]
+[jobs.on-config-change]
+command     = "/usr/local/bin/reload"
+trigger     = "on_change"
+watch_paths = ["./config.json"]
 ```
 
-`target` defaults to `"agent"` when omitted. Set `target = "daemon"` for system LaunchDaemon jobs.
+## Logs, status, and execution history
 
-## Supported schedules
+```sh
+summond list                  # all jobs with last-run status
+summond logs cleanup          # output from the last execution
+summond logs cleanup -f       # stream new output live
+summond exec cleanup          # run immediately in the foreground
+summond state cleanup         # full execution history as JSON
+```
 
-- `hourly` with `--minute`
-- `daily` with `--hour` and `--minute`
-- `weekly` with `--weekday`, `--hour`, and `--minute`
-- `login` for LaunchAgents
-- `boot` for LaunchDaemons
-- `interval` with `--interval-minutes`
-- `calendar` with `--month`, `--day`, `--weekday`, `--hour`, and `--minute`
+Stdout and stderr go to `~/Library/Application Support/summond/logs/` and are rotated by macOS's native `newsyslog`. No third-party log management needed.
+
+## Agents and daemons
+
+Jobs run as LaunchAgents (per-user) by default. Set `target = "daemon"` for system-wide LaunchDaemons — summond will prompt for `sudo` when needed.
+
+## Shared environment
+
+```sh
+summond env set API_KEY=secret   # injected into every job at runtime
+```
+
+Per-job `[jobs.name.env]` values are merged on top.
