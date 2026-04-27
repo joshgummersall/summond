@@ -7,7 +7,7 @@ Schedule and manage macOS background jobs without writing a single plist.
 ## Install
 
 ```sh
-brew tap joshgummersall/summond
+brew tap joshgummersall/summond https://github.com/joshgummersall/summond
 brew install summond
 ```
 

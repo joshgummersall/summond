@@ -22,6 +22,6 @@ class Summond < Formula
   end
 
   test do
-    system "#{bin}/summond", "--version"
+    system "#{bin}/summond", "version"
   end
 end
