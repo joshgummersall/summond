@@ -20,7 +20,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "1.0.0"
+var version = "dev"
 const shellPreamble = "set -euo pipefail\n"
 
 type ExitError struct {

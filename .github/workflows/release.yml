@@ -17,7 +17,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Build
-        run: go build -o summond ./cmd/summond
+        run: go build -ldflags "-X github.com/joshgummersall/summond/internal/cli.version=${GITHUB_REF_NAME}" -o summond ./cmd/summond
 
       - name: Release
         uses: softprops/action-gh-release@v2
