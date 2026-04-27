@@ -6,7 +6,7 @@ on:
 
 jobs:
   release:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
@@ -27,9 +27,15 @@ jobs:
             exit 1
           fi
 
-      - run: go build -ldflags "-X github.com/joshgummersall/summond/internal/cli.version=${GITHUB_REF_NAME}" -o summond ./cmd/summond
+      - name: build arm64
+        run: GOOS=darwin GOARCH=arm64 go build -ldflags "-X github.com/joshgummersall/summond/internal/cli.version=${GITHUB_REF_NAME}" -o summond-darwin-arm64 ./cmd/summond
+
+      - name: build amd64
+        run: GOOS=darwin GOARCH=amd64 go build -ldflags "-X github.com/joshgummersall/summond/internal/cli.version=${GITHUB_REF_NAME}" -o summond-darwin-amd64 ./cmd/summond
 
       - name: release
         uses: softprops/action-gh-release@v2
         with:
-          files: summond
+          files: |
+            summond-darwin-arm64
+            summond-darwin-amd64
