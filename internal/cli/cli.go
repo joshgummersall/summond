@@ -21,6 +21,7 @@ import (
 )
 
 var version = "dev"
+
 const shellPreamble = "set -euo pipefail\n"
 
 type ExitError struct {
