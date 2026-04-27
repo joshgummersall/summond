@@ -16,10 +16,20 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build
-        run: go build -ldflags "-X github.com/joshgummersall/summond/internal/cli.version=${GITHUB_REF_NAME}" -o summond ./cmd/summond
+      - run: go test ./...
 
-      - name: Release
+      - name: fmt
+        run: |
+          gofmt_out=$(gofmt -l .)
+          if [ -n "$gofmt_out" ]; then
+            echo "Files not formatted:"
+            echo "$gofmt_out"
+            exit 1
+          fi
+
+      - run: go build -ldflags "-X github.com/joshgummersall/summond/internal/cli.version=${GITHUB_REF_NAME}" -o summond ./cmd/summond
+
+      - name: release
         uses: softprops/action-gh-release@v2
         with:
           files: summond
