@@ -12,6 +12,12 @@ go install github.com/joshgummersall/summond/cmd/summond@latest
 
 Requires Go 1.24+ and macOS.
 
+Prebuilt binaries for macOS (arm64 and amd64) are available on the [Releases](https://github.com/joshgummersall/summond/releases) page. They are not code-signed, so macOS will quarantine them on first download. Clear the quarantine attribute before running:
+
+```sh
+xattr -d com.apple.quarantine summond
+```
+
 ## How it works
 
 Define jobs in a TOML file and apply them:
