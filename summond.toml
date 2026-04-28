@@ -1,14 +1,85 @@
-[jobs.agent]
+[jobs.agent-login]
 schedule = "login"
-shell_command = """
-echo "agent.login"
-env
-"""
+shell_command = "echo $SUMMOND_JOB_NAME && env"
 
-[jobs.daemon]
+[jobs.agent-hourly]
+schedule = "hourly"
+minute = 15
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.agent-daily]
+schedule = "daily"
+hour = 2
+minute = 30
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.agent-weekly]
+schedule = "weekly"
+weekday = 1
+hour = 3
+minute = 0
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.agent-interval]
+schedule = "interval"
+interval_minutes = 5
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.agent-calendar]
+schedule = "calendar"
+day = 1
+hour = 9
+minute = 0
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.agent-on-change]
+trigger = "on_change"
+watch_paths = ["/tmp"]
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-boot]
 schedule = "boot"
 target = "daemon"
-shell_command = """
-echo "daemon.boot"
-env
-"""
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-hourly]
+schedule = "hourly"
+target = "daemon"
+minute = 45
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-daily]
+schedule = "daily"
+target = "daemon"
+hour = 4
+minute = 0
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-weekly]
+schedule = "weekly"
+target = "daemon"
+weekday = 3
+hour = 5
+minute = 30
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-interval]
+schedule = "interval"
+target = "daemon"
+interval_minutes = 10
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-calendar]
+schedule = "calendar"
+target = "daemon"
+month = 1
+day = 1
+hour = 0
+minute = 0
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-on-change]
+trigger = "on_change"
+target = "daemon"
+watch_paths = ["/tmp"]
+shell_command = "echo $SUMMOND_JOB_NAME && env"
