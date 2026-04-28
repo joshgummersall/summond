@@ -73,6 +73,8 @@ Exits with code 1 if any job fails to apply, even if other jobs succeeded.`,
 			daemonRuntimePath := a.daemonStore.RuntimeBinaryPath()
 			applied := 0
 			var failures []string
+			sudoApproved := false
+			sudoPrompted := false
 			for _, spec := range specs {
 				if spec.Target == job.TargetDaemon {
 					spec.EnvironmentFilePath = a.daemonStore.EnvFilePath()
@@ -81,7 +83,7 @@ Exits with code 1 if any job fails to apply, even if other jobs succeeded.`,
 				}
 				if spec.Target == job.TargetDaemon {
 					spec.RuntimeBinaryPath = daemonRuntimePath
-					installedSpec, applyErr := a.applyDaemonSpec(spec, runtimeSource)
+					installedSpec, applyErr := a.applyDaemonSpec(spec, runtimeSource, &sudoApproved, &sudoPrompted)
 					if applyErr != nil {
 						failures = append(failures, fmt.Sprintf("%s: %v", spec.Name, applyErr))
 						continue
@@ -269,7 +271,7 @@ func (a *App) rollbackApplyState(store *state.Store, installed job.Spec, previou
 	return nil
 }
 
-func (a *App) applyDaemonSpec(spec job.Spec, runtimeSource string) (job.Spec, error) {
+func (a *App) applyDaemonSpec(spec job.Spec, runtimeSource string, sudoApproved *bool, sudoPrompted *bool) (job.Spec, error) {
 	installed, err := a.daemonStore.Install(spec)
 	if err == nil {
 		return installed, nil
@@ -277,11 +279,15 @@ func (a *App) applyDaemonSpec(spec job.Spec, runtimeSource string) (job.Spec, er
 	if !errors.Is(err, os.ErrPermission) {
 		return job.Spec{}, err
 	}
-	approved, promptErr := a.confirmWithDefault("applying daemon jobs requires sudo. Retry with sudo? [Y/n]: ", true)
-	if promptErr != nil {
-		return job.Spec{}, promptErr
+	if !*sudoPrompted {
+		*sudoPrompted = true
+		approved, promptErr := a.confirmWithDefault("applying daemon jobs requires sudo. Retry with sudo? [Y/n]: ", true)
+		if promptErr != nil {
+			return job.Spec{}, promptErr
+		}
+		*sudoApproved = approved
 	}
-	if !approved {
+	if !*sudoApproved {
 		return job.Spec{}, err
 	}
 	return a.installDaemonSpecWithSudo(spec, runtimeSource)
