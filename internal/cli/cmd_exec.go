@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/joshgummersall/summond/internal/job"
+	"github.com/joshgummersall/summond/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -114,12 +115,13 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 			if spec.Target != job.TargetDaemon && euid == 0 {
 				return fmt.Errorf("agent jobs run as the logged-in user; re-run without sudo: summond exec %s", spec.Name)
 			}
+			changedPaths, newFingerprints := watchChanges(spec, managed.store)
 			startedAt := time.Now()
 			if err := managed.store.RecordExecutionStart(spec.Name, startedAt); err != nil {
 				return err
 			}
 			record := job.ExecutionRecord{StartedAt: startedAt}
-			exitCode, runErr := a.executeSpec(spec)
+			exitCode, runErr := a.executeSpec(spec, changedPaths)
 			finishedAt := time.Now()
 			record.FinishedAt = &finishedAt
 			record.ExitCode = &exitCode
@@ -128,6 +130,9 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 			}
 			if err := managed.store.RecordExecutionFinish(spec.Name, record); err != nil {
 				return err
+			}
+			if runErr == nil && len(newFingerprints) > 0 {
+				_ = managed.store.UpdateWatchFingerprints(spec.Name, newFingerprints)
 			}
 			if runErr != nil {
 				return ExitError{Code: exitCode, Message: runErr.Error()}
@@ -138,7 +143,7 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 	}
 }
 
-func (a *App) executeSpec(spec job.Spec) (int, error) {
+func (a *App) executeSpec(spec job.Spec, changedPaths []string) (int, error) {
 	var cmd *exec.Cmd
 	envFilePath := a.environmentFilePath(spec)
 	envPreamble := jsonEnvPreamble(envFilePath)
@@ -152,9 +157,10 @@ func (a *App) executeSpec(spec job.Spec) (int, error) {
 	cmd.Dir = spec.WorkingDir
 	cmd.Env = mergeEnvironment(nil, spec.Environment)
 	cmd.Env = mergeEnvironment(cmd.Env, map[string]string{
-		"SUMMOND_JOB_NAME":  spec.Name,
-		"SUMMOND_JOB_LABEL": spec.Label,
-		"SUMMOND_STATE_DIR": a.storeForTarget(spec.Target).JobDirForSpec(spec),
+		"SUMMOND_JOB_NAME":      spec.Name,
+		"SUMMOND_JOB_LABEL":     spec.Label,
+		"SUMMOND_STATE_DIR":     a.storeForTarget(spec.Target).JobDirForSpec(spec),
+		"SUMMOND_CHANGED_PATHS": strings.Join(changedPaths, ":"),
 	})
 	cmd.Stdout = a.stdout
 	cmd.Stderr = a.stderr
@@ -167,4 +173,32 @@ func (a *App) executeSpec(spec job.Spec) (int, error) {
 		return 1, err
 	}
 	return 0, nil
+}
+
+func pathFingerprint(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d", info.ModTime().UnixNano(), info.Size())
+}
+
+func watchChanges(spec job.Spec, store *state.Store) (changedPaths []string, newFingerprints map[string]string) {
+	if len(spec.WatchPaths) == 0 {
+		return nil, nil
+	}
+	newFingerprints = make(map[string]string, len(spec.WatchPaths))
+	for _, p := range spec.WatchPaths {
+		newFingerprints[p] = pathFingerprint(p)
+	}
+	existing, err := store.Load(spec.Name)
+	if err != nil || existing.WatchFingerprints == nil {
+		return append([]string(nil), spec.WatchPaths...), newFingerprints
+	}
+	for _, p := range spec.WatchPaths {
+		if newFingerprints[p] != existing.WatchFingerprints[p] {
+			changedPaths = append(changedPaths, p)
+		}
+	}
+	return changedPaths, newFingerprints
 }

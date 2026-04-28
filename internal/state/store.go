@@ -528,6 +528,12 @@ func (s *Store) resolveManagedKey(name string) (string, error) {
 	}
 }
 
+func (s *Store) UpdateWatchFingerprints(name string, fingerprints map[string]string) error {
+	return s.updateRuntimeState(name, func(spec *job.Spec) {
+		spec.WatchFingerprints = fingerprints
+	})
+}
+
 func preserveRuntimeState(dst *job.Spec, src job.Spec) {
 	dst.LastStartedAt = src.LastStartedAt
 	dst.LastFinishedAt = src.LastFinishedAt
@@ -539,4 +545,10 @@ func preserveRuntimeState(dst *job.Spec, src job.Spec) {
 	dst.SuccessCount = src.SuccessCount
 	dst.FailureCount = src.FailureCount
 	dst.RecentRuns = append([]job.ExecutionRecord(nil), src.RecentRuns...)
+	if src.WatchFingerprints != nil {
+		dst.WatchFingerprints = make(map[string]string, len(src.WatchFingerprints))
+		for k, v := range src.WatchFingerprints {
+			dst.WatchFingerprints[k] = v
+		}
+	}
 }

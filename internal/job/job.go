@@ -92,6 +92,7 @@ type Spec struct {
 	SuccessCount            int               `json:"success_count,omitempty"`
 	FailureCount            int               `json:"failure_count,omitempty"`
 	RecentRuns              []ExecutionRecord `json:"recent_runs,omitempty"`
+	WatchFingerprints       map[string]string `json:"watch_fingerprints,omitempty"`
 }
 
 var invalidNameChars = regexp.MustCompile(`[^a-z0-9.-]+`)
