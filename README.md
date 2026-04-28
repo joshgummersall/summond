@@ -65,6 +65,15 @@ trigger     = "on_change"
 watch_paths = ["./config.json"]
 ```
 
+The job receives a `SUMMOND_CHANGED_PATHS` environment variable — a colon-separated list of entries from `watch_paths` that changed since the last successful run. Note that these are the paths you listed in `watch_paths`, so a watched directory appears as the directory itself, not the individual file that changed within it. On the first execution (no prior baseline), all `watch_paths` are included.
+
+```sh
+# shell_command example
+for path in ${SUMMOND_CHANGED_PATHS//:/ }; do
+  reload "$path"
+done
+```
+
 ## Logs, status, and execution history
 
 ```sh
