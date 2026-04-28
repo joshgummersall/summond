@@ -219,7 +219,8 @@ Schedule kinds (%s):
 			}
 			if opts.target == job.TargetDaemon {
 				spec.RuntimeBinaryPath = a.daemonStore.RuntimeBinaryPath()
-				installedSpec, err := a.applyDaemonSpec(spec, runtimeSource)
+				sudoApproved, sudoPrompted := false, false
+				installedSpec, err := a.applyDaemonSpec(spec, runtimeSource, &sudoApproved, &sudoPrompted)
 				if err != nil {
 					return err
 				}
