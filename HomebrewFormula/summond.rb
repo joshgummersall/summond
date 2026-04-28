@@ -1,15 +1,15 @@
 class Summond < Formula
   desc "Schedule and manage macOS background jobs without writing a single plist"
   homepage "https://github.com/joshgummersall/summond"
-  version "v0.0.1"
+  version "v0.0.2"
 
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/joshgummersall/summond/releases/download/#{version}/summond-darwin-arm64"
-      sha256 "406f027012535f817e23c733ab4c27564a7d6d735f0af7f99d6812b21365c93c"
+      sha256 "15f013ef410b90ddccc7a65eb76d64a793c8536de55eae14e4bb2fc5162e8ff2"
     else
       url "https://github.com/joshgummersall/summond/releases/download/#{version}/summond-darwin-amd64"
-      sha256 "8fbfee6a38ea4baf90df45abf7e69c5c1dcc70c3b1b5990bde1b550479b84f17"
+      sha256 "e27a52ce53e44bb4200d1cc94867f79c9bb8772b21355932e3a02acc77e6319b"
     end
   end
 
