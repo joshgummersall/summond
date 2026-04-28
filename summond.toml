@@ -1,0 +1,14 @@
+[jobs.agent]
+schedule = "login"
+shell_command = """
+echo "agent.login"
+env
+"""
+
+[jobs.daemon]
+schedule = "boot"
+target = "daemon"
+shell_command = """
+echo "daemon.boot"
+env
+"""
