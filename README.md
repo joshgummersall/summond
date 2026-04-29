@@ -60,10 +60,15 @@ Run a job when files change instead of on a schedule:
 
 ```toml
 [jobs.on-config-change]
-command     = "/usr/local/bin/reload"
-trigger     = "on_change"
-watch_paths = ["./config.json"]
+command = "/usr/local/bin/reload"
+trigger = "on_change"
+
+[jobs.on-config-change.watch]
+paths            = ["./config.json"]
+throttle_seconds = 2   # debounce delay; defaults to 2
 ```
+
+The flat keys `watch_paths` and `throttle_interval_seconds` are also accepted for backwards compatibility.
 
 The job receives a `SUMMOND_CHANGED_PATHS` environment variable — a colon-separated list of entries from `watch_paths` that changed since the last successful run. Note that these are the paths you listed in `watch_paths`, so a watched directory appears as the directory itself, not the individual file that changed within it. On the first execution (no prior baseline), all `watch_paths` are included.
 
@@ -96,12 +101,16 @@ Jobs that exit non-zero can be automatically retried with exponential backoff:
 
 ```toml
 [jobs.flaky-api-sync]
-command              = "/usr/local/bin/sync"
-schedule             = "hourly"
-retry_attempts       = 3   # retries after the initial attempt
-retry_delay_seconds  = 5   # wait before first retry (default 1)
-retry_max_delay_seconds = 60  # cap the doubling delay (0 = no cap)
+command  = "/usr/local/bin/sync"
+schedule = "hourly"
+
+[jobs.flaky-api-sync.retry]
+attempts         = 3   # retries after the initial attempt
+delay_seconds    = 5   # wait before first retry (default 1)
+max_delay_seconds = 60  # cap the doubling delay (0 = no cap)
 ```
+
+The flat keys `retry_attempts`, `retry_delay_seconds`, and `retry_max_delay_seconds` are also accepted for backwards compatibility.
 
 Or via `summond add`:
 

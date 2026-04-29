@@ -202,6 +202,71 @@ abandon_process_group = true
 	}
 }
 
+func TestLoadFileParsesNestedRetry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[jobs.flaky]
+command = "/bin/echo"
+args = ["retry"]
+target = "agent"
+schedule = "login"
+
+[jobs.flaky.retry]
+attempts = 3
+delay_seconds = 2
+max_delay_seconds = 60
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	specs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if got, want := specs[0].RetryAttempts, 3; got != want {
+		t.Fatalf("RetryAttempts = %d, want %d", got, want)
+	}
+	if got, want := specs[0].RetryDelaySeconds, 2; got != want {
+		t.Fatalf("RetryDelaySeconds = %d, want %d", got, want)
+	}
+	if got, want := specs[0].RetryMaxDelaySeconds, 60; got != want {
+		t.Fatalf("RetryMaxDelaySeconds = %d, want %d", got, want)
+	}
+}
+
+func TestLoadFileParsesNestedWatch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[jobs.watcher2]
+command = "/bin/echo"
+args = ["watch"]
+target = "agent"
+trigger = "on_change"
+
+[jobs.watcher2.watch]
+paths = ["/tmp"]
+throttle_seconds = 5
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	specs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if got, want := len(specs[0].WatchPaths), 1; got != want {
+		t.Fatalf("len(WatchPaths) = %d, want %d", got, want)
+	}
+	if got, want := specs[0].WatchPaths[0], "/tmp"; got != want {
+		t.Fatalf("WatchPaths[0] = %q, want %q", got, want)
+	}
+	if got, want := specs[0].ThrottleIntervalSeconds, 5; got != want {
+		t.Fatalf("ThrottleIntervalSeconds = %d, want %d", got, want)
+	}
+}
+
 func TestLoadFileRejectsManagedLogOverrides(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "summond.toml")

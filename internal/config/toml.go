@@ -19,6 +19,17 @@ type fileConfig struct {
 	Jobs  map[string]rawJob `toml:"jobs"`
 }
 
+type rawRetry struct {
+	Attempts        *int `toml:"attempts"`
+	DelaySeconds    *int `toml:"delay_seconds"`
+	MaxDelaySeconds *int `toml:"max_delay_seconds"`
+}
+
+type rawWatch struct {
+	Paths           []string `toml:"paths"`
+	ThrottleSeconds *int     `toml:"throttle_seconds"`
+}
+
 type rawJob struct {
 	Label                   string            `toml:"label"`
 	Target                  string            `toml:"target"`
@@ -41,6 +52,8 @@ type rawJob struct {
 	RetryDelaySeconds       *int              `toml:"retry_delay_seconds"`
 	RetryMaxDelaySeconds    *int              `toml:"retry_max_delay_seconds"`
 	AbandonProcessGroup     bool              `toml:"abandon_process_group"`
+	Retry                   *rawRetry         `toml:"retry"`
+	Watch                   *rawWatch         `toml:"watch"`
 }
 
 func LoadFile(path string) ([]job.Spec, error) {
@@ -143,6 +156,25 @@ func (r rawJob) toSpec(name string, group string) job.Spec {
 	}
 	if r.RetryMaxDelaySeconds != nil {
 		spec.RetryMaxDelaySeconds = *r.RetryMaxDelaySeconds
+	}
+	if r.Retry != nil {
+		if r.Retry.Attempts != nil {
+			spec.RetryAttempts = *r.Retry.Attempts
+		}
+		if r.Retry.DelaySeconds != nil {
+			spec.RetryDelaySeconds = *r.Retry.DelaySeconds
+		}
+		if r.Retry.MaxDelaySeconds != nil {
+			spec.RetryMaxDelaySeconds = *r.Retry.MaxDelaySeconds
+		}
+	}
+	if r.Watch != nil {
+		if len(r.Watch.Paths) > 0 {
+			spec.WatchPaths = r.Watch.Paths
+		}
+		if r.Watch.ThrottleSeconds != nil {
+			spec.ThrottleIntervalSeconds = *r.Watch.ThrottleSeconds
+		}
 	}
 	return spec
 }
