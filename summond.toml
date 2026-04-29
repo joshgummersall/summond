@@ -34,8 +34,10 @@ shell_command = "echo $SUMMOND_JOB_NAME && env"
 
 [jobs.agent-on-change]
 trigger = "on_change"
-watch_paths = ["/tmp"]
 shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.agent-on-change.watch]
+paths = ["/tmp"]
 
 [jobs.daemon-boot]
 schedule = "boot"
@@ -81,12 +83,13 @@ shell_command = "echo $SUMMOND_JOB_NAME && env"
 [jobs.daemon-on-change]
 trigger = "on_change"
 target = "daemon"
-watch_paths = ["/tmp"]
 shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-on-change.watch]
+paths = ["/tmp"]
 
 [jobs.agent-retry]
 schedule = "login"
-retry_attempts = 2
 shell_command = """
 echo $SUMMOND_JOB_NAME
 echo "attempt $SUMMOND_ATTEMPT"
@@ -96,3 +99,6 @@ if [ "$SUMMOND_ATTEMPT" -lt 2 ]; then
 fi
 echo "succeeded on attempt $SUMMOND_ATTEMPT"
 """
+
+[jobs.agent-retry.retry]
+attempts = 2
