@@ -233,7 +233,7 @@ func TestExecuteSpecSourcesEnvFileForCommandJobs(t *testing.T) {
 		Schedule: job.Schedule{
 			Kind: job.ScheduleDaily,
 		},
-	}, nil)
+	}, nil, 0)
 	if err != nil {
 		t.Fatalf("executeSpec() error = %v", err)
 	}

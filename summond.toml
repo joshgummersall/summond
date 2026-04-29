@@ -83,3 +83,15 @@ trigger = "on_change"
 target = "daemon"
 watch_paths = ["/tmp"]
 shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.agent-retry-test]
+schedule = "daily"
+retry_attempts = 2
+shell_command = """
+echo "attempt $SUMMOND_ATTEMPT"
+if [ "$SUMMOND_ATTEMPT" -lt 2 ]; then
+  echo "failing on attempt $SUMMOND_ATTEMPT"
+  exit 1
+fi
+echo "succeeded on attempt $SUMMOND_ATTEMPT"
+"""

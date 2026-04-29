@@ -76,6 +76,9 @@ type Spec struct {
 	Trigger                 TriggerKind       `json:"trigger,omitempty"`
 	WatchPaths              []string          `json:"watch_paths,omitempty"`
 	ThrottleIntervalSeconds int               `json:"throttle_interval_seconds,omitempty"`
+	RetryAttempts           int               `json:"retry_attempts,omitempty"`
+	RetryDelaySeconds       int               `json:"retry_delay_seconds,omitempty"`
+	RetryMaxDelaySeconds    int               `json:"retry_max_delay_seconds,omitempty"`
 	AbandonProcessGroup     bool              `json:"abandon_process_group,omitempty"`
 	StdoutPath              string            `json:"stdout_path,omitempty"`
 	StderrPath              string            `json:"stderr_path,omitempty"`
@@ -165,6 +168,21 @@ func (s *Spec) Normalize() error {
 	}
 	if s.ThrottleIntervalSeconds < 0 {
 		return errors.New("throttle_interval_seconds must be >= 0")
+	}
+	if s.RetryAttempts < 0 {
+		return errors.New("retry_attempts must be >= 0")
+	}
+	if s.RetryDelaySeconds < 0 {
+		return errors.New("retry_delay_seconds must be >= 0")
+	}
+	if s.RetryMaxDelaySeconds < 0 {
+		return errors.New("retry_max_delay_seconds must be >= 0")
+	}
+	if s.RetryAttempts > 0 && s.RetryDelaySeconds == 0 {
+		s.RetryDelaySeconds = 1
+	}
+	if s.RetryMaxDelaySeconds > 0 && s.RetryDelaySeconds > s.RetryMaxDelaySeconds {
+		return errors.New("retry_delay_seconds must be <= retry_max_delay_seconds")
 	}
 	if s.Trigger == "" && s.Schedule.Kind == "" {
 		return errors.New("either schedule or trigger is required")
@@ -429,6 +447,9 @@ func (s Spec) SpecChecksum() (string, error) {
 		Trigger                 TriggerKind `json:"trigger,omitempty"`
 		WatchPaths              []string    `json:"watch_paths,omitempty"`
 		ThrottleIntervalSeconds int         `json:"throttle_interval_seconds,omitempty"`
+		RetryAttempts           int         `json:"retry_attempts,omitempty"`
+		RetryDelaySeconds       int         `json:"retry_delay_seconds,omitempty"`
+		RetryMaxDelaySeconds    int         `json:"retry_max_delay_seconds,omitempty"`
 		AbandonProcessGroup     bool        `json:"abandon_process_group,omitempty"`
 		StdoutPath              string      `json:"stdout_path,omitempty"`
 		StderrPath              string      `json:"stderr_path,omitempty"`
@@ -461,6 +482,9 @@ func (s Spec) SpecChecksum() (string, error) {
 		Trigger:                 s.Trigger,
 		WatchPaths:              s.WatchPaths,
 		ThrottleIntervalSeconds: s.ThrottleIntervalSeconds,
+		RetryAttempts:           s.RetryAttempts,
+		RetryDelaySeconds:       s.RetryDelaySeconds,
+		RetryMaxDelaySeconds:    s.RetryMaxDelaySeconds,
 		AbandonProcessGroup:     s.AbandonProcessGroup,
 		StdoutPath:              s.StdoutPath,
 		StderrPath:              s.StderrPath,
