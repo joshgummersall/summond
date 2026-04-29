@@ -37,6 +37,9 @@ type rawJob struct {
 	Month                   *int              `toml:"month"`
 	WatchPaths              []string          `toml:"watch_paths"`
 	ThrottleIntervalSeconds *int              `toml:"throttle_interval_seconds"`
+	RetryAttempts           *int              `toml:"retry_attempts"`
+	RetryDelaySeconds       *int              `toml:"retry_delay_seconds"`
+	RetryMaxDelaySeconds    *int              `toml:"retry_max_delay_seconds"`
 	AbandonProcessGroup     bool              `toml:"abandon_process_group"`
 }
 
@@ -131,6 +134,15 @@ func (r rawJob) toSpec(name string, group string) job.Spec {
 	}
 	if r.ThrottleIntervalSeconds != nil {
 		spec.ThrottleIntervalSeconds = *r.ThrottleIntervalSeconds
+	}
+	if r.RetryAttempts != nil {
+		spec.RetryAttempts = *r.RetryAttempts
+	}
+	if r.RetryDelaySeconds != nil {
+		spec.RetryDelaySeconds = *r.RetryDelaySeconds
+	}
+	if r.RetryMaxDelaySeconds != nil {
+		spec.RetryMaxDelaySeconds = *r.RetryMaxDelaySeconds
 	}
 	return spec
 }

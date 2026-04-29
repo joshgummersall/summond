@@ -39,22 +39,28 @@ func (a *App) newAddCommand() *cobra.Command {
 }
 
 type addOptions struct {
-	target              job.Target
-	name                string
-	schedule            string
-	workingDir          string
-	hour                int
-	hourSet             bool
-	minute              int
-	minuteSet           bool
-	weekday             int
-	weekdaySet          bool
-	intervalMinutes     int
-	intervalSet         bool
-	abandonProcessGroup bool
-	commandArgs         []string
-	stdinScript         string
-	dryRun              bool
+	target               job.Target
+	name                 string
+	schedule             string
+	workingDir           string
+	hour                 int
+	hourSet              bool
+	minute               int
+	minuteSet            bool
+	weekday              int
+	weekdaySet           bool
+	intervalMinutes      int
+	intervalSet          bool
+	abandonProcessGroup  bool
+	retryAttempts        int
+	retryAttemptsSet     bool
+	retryDelaySeconds    int
+	retryDelaySet        bool
+	retryMaxDelaySeconds int
+	retryMaxDelaySet     bool
+	commandArgs          []string
+	stdinScript          string
+	dryRun               bool
 }
 
 func (a *App) newAddTargetCommand(target string) *cobra.Command {
@@ -65,6 +71,9 @@ func (a *App) newAddTargetCommand(target string) *cobra.Command {
 	var weekday int
 	var intervalMinutes int
 	var abandonProcessGroup bool
+	var retryAttempts int
+	var retryDelaySeconds int
+	var retryMaxDelaySeconds int
 	var dryRun bool
 	targetLabel := "LaunchAgent"
 	exampleSchedule := "login"
@@ -114,19 +123,25 @@ Schedule kinds (%s):
 			target, stdinName),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := addOptions{
-				name:                args[0],
-				schedule:            schedule,
-				workingDir:          workingDir,
-				hour:                hour,
-				hourSet:             cmd.Flags().Changed("hour"),
-				minute:              minute,
-				minuteSet:           cmd.Flags().Changed("minute"),
-				weekday:             weekday,
-				weekdaySet:          cmd.Flags().Changed("weekday"),
-				intervalMinutes:     intervalMinutes,
-				intervalSet:         cmd.Flags().Changed("interval-minutes"),
-				abandonProcessGroup: abandonProcessGroup,
-				dryRun:              dryRun,
+				name:                 args[0],
+				schedule:             schedule,
+				workingDir:           workingDir,
+				hour:                 hour,
+				hourSet:              cmd.Flags().Changed("hour"),
+				minute:               minute,
+				minuteSet:            cmd.Flags().Changed("minute"),
+				weekday:              weekday,
+				weekdaySet:           cmd.Flags().Changed("weekday"),
+				intervalMinutes:      intervalMinutes,
+				intervalSet:          cmd.Flags().Changed("interval-minutes"),
+				abandonProcessGroup:  abandonProcessGroup,
+				retryAttempts:        retryAttempts,
+				retryAttemptsSet:     cmd.Flags().Changed("retry-attempts"),
+				retryDelaySeconds:    retryDelaySeconds,
+				retryDelaySet:        cmd.Flags().Changed("retry-delay-seconds"),
+				retryMaxDelaySeconds: retryMaxDelaySeconds,
+				retryMaxDelaySet:     cmd.Flags().Changed("retry-max-delay-seconds"),
+				dryRun:               dryRun,
 			}
 			if target == "daemon" {
 				opts.target = job.TargetDaemon
@@ -202,6 +217,15 @@ Schedule kinds (%s):
 				spec.Schedule.IntervalMinutes = opts.intervalMinutes
 				spec.Schedule.IntervalSet = true
 			}
+			if opts.retryAttemptsSet {
+				spec.RetryAttempts = opts.retryAttempts
+			}
+			if opts.retryDelaySet {
+				spec.RetryDelaySeconds = opts.retryDelaySeconds
+			}
+			if opts.retryMaxDelaySet {
+				spec.RetryMaxDelaySeconds = opts.retryMaxDelaySeconds
+			}
 			if err := spec.Normalize(); err != nil {
 				return err
 			}
@@ -249,6 +273,9 @@ Schedule kinds (%s):
 	cmd.Flags().IntVar(&weekday, "weekday", 0, "weekday for weekly/calendar schedules (0-7, 0 and 7 = Sunday)")
 	cmd.Flags().IntVar(&intervalMinutes, "interval-minutes", 0, "run interval in minutes; required for --schedule interval")
 	cmd.Flags().BoolVar(&abandonProcessGroup, "abandon-process-group", false, "allow child processes to continue after the job exits")
+	cmd.Flags().IntVar(&retryAttempts, "retry-attempts", 0, "number of retries after initial failure (0 = no retry)")
+	cmd.Flags().IntVar(&retryDelaySeconds, "retry-delay-seconds", 0, "initial delay in seconds before first retry (default 1 when retries are enabled)")
+	cmd.Flags().IntVar(&retryMaxDelaySeconds, "retry-max-delay-seconds", 0, "cap on delay between retries in seconds (0 = no cap)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what add would do without changing job state")
 	return cmd
 }

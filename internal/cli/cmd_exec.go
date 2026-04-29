@@ -121,7 +121,31 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 				return err
 			}
 			record := job.ExecutionRecord{StartedAt: startedAt}
-			exitCode, runErr := a.executeSpec(spec, changedPaths)
+
+			maxAttempts := 1 + spec.RetryAttempts
+			delay := time.Duration(spec.RetryDelaySeconds) * time.Second
+			exitCode, runErr := 0, error(nil)
+
+			for attempt := 0; attempt < maxAttempts; attempt++ {
+				if attempt > 0 {
+					time.Sleep(delay)
+					delay *= 2
+					if spec.RetryMaxDelaySeconds > 0 {
+						if cap := time.Duration(spec.RetryMaxDelaySeconds) * time.Second; delay > cap {
+							delay = cap
+						}
+					}
+				}
+				exitCode, runErr = a.executeSpec(spec, changedPaths, attempt)
+				if runErr == nil {
+					break
+				}
+				var exitErr *exec.ExitError
+				if !errors.As(runErr, &exitErr) {
+					break
+				}
+			}
+
 			finishedAt := time.Now()
 			record.FinishedAt = &finishedAt
 			record.ExitCode = &exitCode
@@ -143,7 +167,7 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 	}
 }
 
-func (a *App) executeSpec(spec job.Spec, changedPaths []string) (int, error) {
+func (a *App) executeSpec(spec job.Spec, changedPaths []string, attempt int) (int, error) {
 	var cmd *exec.Cmd
 	envFilePath := a.environmentFilePath(spec)
 	envPreamble := jsonEnvPreamble(envFilePath)
@@ -161,6 +185,7 @@ func (a *App) executeSpec(spec job.Spec, changedPaths []string) (int, error) {
 		"SUMMOND_JOB_LABEL":     spec.Label,
 		"SUMMOND_STATE_DIR":     a.storeForTarget(spec.Target).JobDirForSpec(spec),
 		"SUMMOND_CHANGED_PATHS": strings.Join(changedPaths, ":"),
+		"SUMMOND_ATTEMPT":       fmt.Sprintf("%d", attempt),
 	})
 	cmd.Stdout = a.stdout
 	cmd.Stderr = a.stderr

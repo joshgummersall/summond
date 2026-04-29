@@ -90,6 +90,43 @@ Stdout and stderr go to `~/Library/Application Support/summond/logs/` and are ro
 
 Jobs run as LaunchAgents (per-user) by default. Set `target = "daemon"` for system-wide LaunchDaemons — summond will prompt for `sudo` when needed.
 
+## Retry and backoff
+
+Jobs that exit non-zero can be automatically retried with exponential backoff:
+
+```toml
+[jobs.flaky-api-sync]
+command              = "/usr/local/bin/sync"
+schedule             = "hourly"
+retry_attempts       = 3   # retries after the initial attempt
+retry_delay_seconds  = 5   # wait before first retry (default 1)
+retry_max_delay_seconds = 60  # cap the doubling delay (0 = no cap)
+```
+
+Or via `summond add`:
+
+```sh
+summond add agent flaky-api-sync --schedule hourly \
+  --retry-attempts 3 \
+  --retry-delay-seconds 5 \
+  --retry-max-delay-seconds 60 \
+  -- /usr/local/bin/sync
+```
+
+Delay doubles between each retry (5 s → 10 s → 20 s … up to the cap). Only exit-code failures are retried; if the binary can't be launched at all, summond gives up immediately.
+
+Each job receives a `SUMMOND_ATTEMPT` environment variable (0-indexed) so scripts can adapt their behavior on retries:
+
+```sh
+# shell_command example — skip expensive setup on retries
+if [ "$SUMMOND_ATTEMPT" -eq 0 ]; then
+  do-expensive-preflight
+fi
+do-the-actual-work
+```
+
+Retry annotations (`[summond] retry attempt N/M after Xs`) are written to the job's stderr log between attempts.
+
 ## Shared environment
 
 ```sh
