@@ -128,7 +128,6 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 
 			for attempt := 0; attempt < maxAttempts; attempt++ {
 				if attempt > 0 {
-					fmt.Fprintf(a.stderr, "\n[summond] retry attempt %d/%d after %s\n", attempt, spec.RetryAttempts, delay)
 					time.Sleep(delay)
 					delay *= 2
 					if spec.RetryMaxDelaySeconds > 0 {
