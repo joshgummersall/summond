@@ -291,8 +291,9 @@ func renderStateContent(spec job.Spec) string {
 		b.WriteString(fmt.Sprintf("Dir:      %s\n", spec.WorkingDir))
 	}
 	if spec.ShellCommand != "" {
-		b.WriteString("\nShell:\n")
-		b.WriteString(batHighlight(spec.ShellCommand, "bash"))
+		b.WriteString("Shell:    ")
+		b.WriteString(strings.Trim(batHighlight(spec.ShellCommand, "bash"), "\n"))
+		b.WriteString("\n")
 	}
 	b.WriteString("\n")
 
@@ -360,11 +361,13 @@ func batHighlight(src, lang string) string {
 }
 
 func indent(s string) string {
+	const prefix = "          " // 10 spaces, aligns with "Schedule: "
 	lines := strings.Split(s, "\n")
 	for i, l := range lines {
-		if l != "" {
-			lines[i] = "  " + l
+		if i == 0 || l == "" {
+			continue
 		}
+		lines[i] = prefix + l
 	}
 	return strings.Join(lines, "\n")
 }
