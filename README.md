@@ -79,6 +79,31 @@ for path in ${SUMMOND_CHANGED_PATHS//:/ }; do
 done
 ```
 
+## Interactive TUI
+
+```sh
+summond tui
+```
+
+Opens a two-pane terminal UI. The left pane lists all jobs; the right pane shows details for the selected job across three tabs:
+
+- **State** — schedule, command, last run status, execution counts, and file paths
+- **Plist** — the generated launchd plist XML
+- **Logs** — last 500 lines of stdout and stderr
+
+Keybindings:
+
+| Key | Action |
+|---|---|
+| `↑` / `↓` or `j` / `k` | Navigate job list |
+| `tab` / `shift+tab` | Cycle tabs forward / backward |
+| scroll wheel | Scroll right pane |
+| `X` | Run selected job immediately in the foreground |
+| `r` | Force refresh |
+| `q` / `ctrl+c` | Quit |
+
+Shell commands and plist XML are syntax-highlighted if [`bat`](https://github.com/sharkdp/bat) is installed, with graceful fallback to plain text.
+
 ## Logs, status, and execution history
 
 ```sh
