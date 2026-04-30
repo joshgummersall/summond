@@ -225,7 +225,7 @@ func (m *tuiModel) loadCurrentContent() tea.Cmd {
 		if err != nil {
 			m.content = fmt.Sprintf("(plist not available: %s)", err.Error())
 		} else {
-			m.content = batHighlight(string(data), "xml")
+			m.content = batHighlightPlain(string(data), "xml")
 		}
 		m.viewport.SetContent(m.content)
 		m.viewport.GotoTop()
@@ -343,21 +343,31 @@ func renderStateContent(spec job.Spec) string {
 	return b.String()
 }
 
-// batHighlight pipes src through bat for syntax highlighting. Falls back to
-// indenting the raw text if bat is not installed or fails.
+// batHighlight pipes src through bat and indents output to align with the
+// value column. Falls back to indented plain text if bat is not installed.
 func batHighlight(src, lang string) string {
+	return indent(batRaw(src, lang))
+}
+
+// batHighlightPlain pipes src through bat without any extra indentation.
+// Falls back to plain text if bat is not installed.
+func batHighlightPlain(src, lang string) string {
+	return batRaw(src, lang)
+}
+
+func batRaw(src, lang string) string {
 	bat, err := exec.LookPath("bat")
 	if err != nil {
-		return indent(src)
+		return src
 	}
 	var out bytes.Buffer
 	cmd := exec.Command(bat, "--language="+lang, "--color=always", "--style=plain", "--paging=never")
 	cmd.Stdin = strings.NewReader(src)
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {
-		return indent(src)
+		return src
 	}
-	return indent(out.String())
+	return out.String()
 }
 
 func indent(s string) string {
@@ -476,7 +486,7 @@ func (m tuiModel) View() string {
 	innerH := m.innerHeight()
 
 	leftContent := m.renderJobList(m.listHeight())
-	leftPane := activeBorderStyle.Width(leftWidth).Height(innerH).Render(leftContent)
+	leftPane := inactiveBorderStyle.Width(leftWidth).Height(innerH).Render(leftContent)
 
 	tabs := m.renderTabs()
 	rightContent := lipgloss.JoinVertical(lipgloss.Left, tabs, m.viewport.View())
