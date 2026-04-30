@@ -135,6 +135,7 @@ Exit codes:
 		a.newEnvCommand(),
 		a.newCDCommand(),
 		a.newVersionCommand(),
+		a.newTUICommand(),
 	)
 
 	return root
