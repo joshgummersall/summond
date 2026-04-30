@@ -33,6 +33,13 @@ jobs:
       - name: build amd64
         run: GOOS=darwin GOARCH=amd64 go build -ldflags "-X github.com/joshgummersall/summond/internal/cli.version=${GITHUB_REF_NAME}" -o summond-darwin-amd64 ./cmd/summond
 
+      - name: release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            summond-darwin-arm64
+            summond-darwin-amd64
+
       - name: configure ssh
         run: |
           mkdir -p ~/.ssh
@@ -54,10 +61,3 @@ jobs:
           git add Formula/summond.rb
           git commit -m "chore: update formula to ${GITHUB_REF_NAME}"
           git push
-
-      - name: release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            summond-darwin-arm64
-            summond-darwin-amd64
