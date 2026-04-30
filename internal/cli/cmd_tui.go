@@ -287,12 +287,12 @@ func renderStateContent(spec job.Spec) string {
 			b.WriteString(fmt.Sprintf("Args:     %s\n", strings.Join(spec.Args, " ")))
 		}
 	}
-	if spec.ShellCommand != "" {
-		b.WriteString("Shell:\n")
-		b.WriteString(batHighlight(spec.ShellCommand, "bash"))
-	}
 	if spec.WorkingDir != "" {
 		b.WriteString(fmt.Sprintf("Dir:      %s\n", spec.WorkingDir))
+	}
+	if spec.ShellCommand != "" {
+		b.WriteString("\nShell:\n")
+		b.WriteString(batHighlight(spec.ShellCommand, "bash"))
 	}
 	b.WriteString("\n")
 
