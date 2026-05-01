@@ -34,7 +34,14 @@ shell_command = "echo $SUMMOND_JOB_NAME && env"
 
 [jobs.agent-on-change]
 trigger = "on_change"
-shell_command = "echo $SUMMOND_JOB_NAME && env"
+shell_command = """
+echo $SUMMOND_JOB_NAME && env
+if [ -n "$SUMMOND_CHANGED_PATHS" ]; then
+  for path in ${SUMMOND_CHANGED_PATHS//:/ }; do
+    stat "$path"
+  done
+fi
+"""
 
 [jobs.agent-on-change.watch]
 paths = ["/tmp/summond"]
@@ -83,7 +90,14 @@ shell_command = "echo $SUMMOND_JOB_NAME && env"
 [jobs.daemon-on-change]
 trigger = "on_change"
 target = "daemon"
-shell_command = "echo $SUMMOND_JOB_NAME && env"
+shell_command = """
+echo $SUMMOND_JOB_NAME && env
+if [ -n "$SUMMOND_CHANGED_PATHS" ]; then
+  for path in ${SUMMOND_CHANGED_PATHS//:/ }; do
+    stat "$path"
+  done
+fi
+"""
 
 [jobs.daemon-on-change.watch]
 paths = ["/tmp/summond"]
