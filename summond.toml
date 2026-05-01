@@ -37,7 +37,7 @@ trigger = "on_change"
 shell_command = "echo $SUMMOND_JOB_NAME && env"
 
 [jobs.agent-on-change.watch]
-paths = ["/tmp"]
+paths = ["/tmp/summond"]
 
 [jobs.daemon-boot]
 schedule = "boot"
@@ -86,7 +86,7 @@ target = "daemon"
 shell_command = "echo $SUMMOND_JOB_NAME && env"
 
 [jobs.daemon-on-change.watch]
-paths = ["/tmp"]
+paths = ["/tmp/summond"]
 
 [jobs.agent-retry]
 schedule = "login"
