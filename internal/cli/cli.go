@@ -132,6 +132,7 @@ Exit codes:
 		a.newPlistCommand(),
 		a.newLogsCommand(),
 		a.newExecCommand(),
+		a.newKillCommand(),
 		a.newEnvCommand(),
 		a.newCDCommand(),
 		a.newVersionCommand(),
