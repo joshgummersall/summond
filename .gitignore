@@ -3,4 +3,4 @@
 bin/
 dist/
 coverage.out
-
+.claude/*.local.json

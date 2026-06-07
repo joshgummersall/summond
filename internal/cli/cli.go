@@ -71,7 +71,6 @@ func NewApp(stdin io.Reader, stdout io.Writer, store *state.Store, daemonStore *
 	}
 }
 
-// Note: main.go entrypoint
 func Run(args []string, stdout io.Writer) error {
 	paths, err := state.DiscoverPathSet()
 	if err != nil {
