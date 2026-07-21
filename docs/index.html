@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>summond — launchd for humans</title>
+  <meta name="description" content="Schedule and manage macOS background jobs without writing a single plist.">
+  <link rel="icon" href="data:,">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0d0f;
+      --fg: #e8e8e8;
+      --muted: #8a8f98;
+      --accent: #7dd3fc;
+      --card: #14171a;
+      --border: #24282d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+      font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 4rem 1.5rem 6rem;
+    }
+    h1 {
+      font-size: 2.4rem;
+      margin: 0 0 0.25rem;
+      letter-spacing: -0.02em;
+    }
+    .tagline {
+      color: var(--muted);
+      font-size: 1.15rem;
+      margin: 0 0 2.5rem;
+    }
+    p { color: #cfd2d6; }
+    .badges { margin: 0 0 2rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .badges img { display: block; }
+    pre {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      overflow-x: auto;
+      font-size: 0.9rem;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    :not(pre) > code {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.1rem 0.35rem;
+      font-size: 0.9em;
+    }
+    a { color: var(--accent); }
+    h2 {
+      margin-top: 2.5rem;
+      font-size: 1.2rem;
+      color: var(--fg);
+      border-top: 1px solid var(--border);
+      padding-top: 2rem;
+    }
+    .cta {
+      display: flex;
+      gap: 0.75rem;
+      margin: 1.5rem 0 0;
+      flex-wrap: wrap;
+    }
+    .cta a {
+      display: inline-block;
+      padding: 0.6rem 1.1rem;
+      border-radius: 6px;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    .cta a.primary { background: var(--accent); color: #0b0d0f; }
+    .cta a.secondary { border: 1px solid var(--border); color: var(--fg); }
+    footer {
+      margin-top: 3rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>summond</h1>
+    <p class="tagline">Schedule and manage macOS background jobs without writing a single plist.</p>
+
+    <p>
+      <code>launchd</code> is powerful but painful to use directly. Summond wraps it with a CLI
+      that handles plist generation, log management, and job lifecycle — so you can focus on
+      what the job actually does.
+    </p>
+
+    <div class="cta">
+      <a class="primary" href="https://github.com/joshgummersall/summond">View on GitHub</a>
+      <a class="secondary" href="https://github.com/joshgummersall/summond#readme">Read the docs</a>
+    </div>
+
+    <h2>Install</h2>
+    <pre><code>brew install --cask joshgummersall/summond/summond</code></pre>
+    <p>Or from source (requires Go 1.24+):</p>
+    <pre><code>go install github.com/joshgummersall/summond/cmd/summond@latest</code></pre>
+
+    <h2>How it works</h2>
+    <p>Define jobs in a TOML file and apply them:</p>
+    <pre><code>[jobs.cleanup]
+command  = "/usr/local/bin/my-script"
+schedule = "daily"
+hour     = 3
+minute   = 0
+
+[jobs.cleanup.env]
+MODE = "nightly"</code></pre>
+    <pre><code>summond apply</code></pre>
+    <p>
+      That's it. Summond generates and loads the launchd plist, creates log files, configures
+      <code>newsyslog</code> rotation, and tracks execution history. When you delete a job from
+      the config, <code>summond apply --prune</code> removes it cleanly.
+    </p>
+
+    <footer>
+      <a href="https://github.com/joshgummersall/summond">github.com/joshgummersall/summond</a>
+    </footer>
+  </main>
+</body>
+</html>
