@@ -7,7 +7,7 @@ Schedule and manage macOS background jobs without writing a single plist.
 ## Install
 
 ```sh
-brew install joshgummersall/summond/summond
+brew install --cask joshgummersall/summond/summond
 ```
 
 Or install from source (requires Go 1.24+):
