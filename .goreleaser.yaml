@@ -29,3 +29,16 @@ homebrew_casks:
     description: Schedule and manage macOS background jobs without writing a single plist
     binaries:
       - summond
+    hooks:
+      post:
+        install: |
+          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}"]
+    uninstall:
+      launchctl:
+        - "com.joshgummersall.summond.*"
+    zap:
+      launchctl:
+        - "com.joshgummersall.summond.*"
+      trash:
+        - "~/Library/LaunchAgents/com.joshgummersall.summond.*.plist"
+        - "~/Library/Application Support/summond"
