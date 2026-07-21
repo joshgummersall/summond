@@ -11,6 +11,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -27,37 +29,16 @@ jobs:
             exit 1
           fi
 
-      - name: build arm64
-        run: GOOS=darwin GOARCH=arm64 go build -ldflags "-X github.com/joshgummersall/summond/internal/cli.version=${GITHUB_REF_NAME}" -o summond-darwin-arm64 ./cmd/summond
-
-      - name: build amd64
-        run: GOOS=darwin GOARCH=amd64 go build -ldflags "-X github.com/joshgummersall/summond/internal/cli.version=${GITHUB_REF_NAME}" -o summond-darwin-amd64 ./cmd/summond
-
-      - name: release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            summond-darwin-arm64
-            summond-darwin-amd64
-
       - name: configure ssh
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.TAP_DEPLOY_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.TAP_DEPLOY_KEY }}" > ~/.ssh/homebrew-tap
+          chmod 600 ~/.ssh/homebrew-tap
           ssh-keyscan github.com >> ~/.ssh/known_hosts
 
-      - name: update formula
-        run: |
-          SHA256_ARM64=$(sha256sum summond-darwin-arm64 | awk '{print $1}')
-          SHA256_AMD64=$(sha256sum summond-darwin-amd64 | awk '{print $1}')
-          git clone git@github.com:joshgummersall/homebrew-summond.git
-          sed -i "s/version \".*\"/version \"${GITHUB_REF_NAME}\"/" homebrew-summond/Formula/summond.rb
-          sed -i "/summond-darwin-arm64/{n;s/sha256 \".*\"/sha256 \"${SHA256_ARM64}\"/}" homebrew-summond/Formula/summond.rb
-          sed -i "/summond-darwin-amd64/{n;s/sha256 \".*\"/sha256 \"${SHA256_AMD64}\"/}" homebrew-summond/Formula/summond.rb
-          cd homebrew-summond
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/summond.rb
-          git commit -m "chore: update formula to ${GITHUB_REF_NAME}"
-          git push
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_DEPLOY_KEY_PATH: /home/runner/.ssh/homebrew-tap

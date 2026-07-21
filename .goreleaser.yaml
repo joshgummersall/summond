@@ -1,0 +1,31 @@
+version: 2
+
+builds:
+  - main: ./cmd/summond
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/joshgummersall/summond/internal/cli.version={{.Version}}
+
+archives:
+  - formats: [binary]
+    name_template: "summond-{{.Os}}-{{.Arch}}"
+
+checksum:
+  name_template: checksums.txt
+
+homebrew_casks:
+  - repository:
+      owner: joshgummersall
+      name: homebrew-summond
+      git:
+        url: ssh://git@github.com/joshgummersall/homebrew-summond.git
+        private_key: "{{ .Env.HOMEBREW_TAP_DEPLOY_KEY_PATH }}"
+    directory: Casks
+    homepage: https://github.com/joshgummersall/summond
+    description: Schedule and manage macOS background jobs without writing a single plist
+    binaries:
+      - summond
