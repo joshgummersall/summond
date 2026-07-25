@@ -94,7 +94,9 @@ func LoadFile(path string) ([]job.Spec, error) {
 	}
 	for _, name := range names {
 		spec := cfg.Jobs[name].toSpec(name, group)
-		resolvePaths(&spec, baseDir)
+		if err := resolvePaths(&spec, baseDir); err != nil {
+			return nil, fmt.Errorf("job %s: %w", spec.Name, err)
+		}
 		if err := spec.Normalize(); err != nil {
 			return nil, fmt.Errorf("job %s: %w", spec.Name, err)
 		}
@@ -184,7 +186,52 @@ func defaultGroup(path string) string {
 	return hex.EncodeToString(sum[:6])
 }
 
-func resolvePaths(spec *job.Spec, baseDir string) {
+// expandEnv expands $var/${var} references using the current process
+// environment, returning an error if any referenced variable is unset so
+// that typos don't silently resolve to an empty string.
+func expandEnv(s string) (string, error) {
+	var missing []string
+	expanded := os.Expand(s, func(name string) string {
+		value, ok := os.LookupEnv(name)
+		if !ok {
+			missing = append(missing, name)
+		}
+		return value
+	})
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return "", fmt.Errorf("unset environment variable(s) referenced: %s", strings.Join(missing, ", "))
+	}
+	return expanded, nil
+}
+
+func resolvePaths(spec *job.Spec, baseDir string) error {
+	var err error
+	if spec.WorkingDir, err = expandEnv(spec.WorkingDir); err != nil {
+		return err
+	}
+	for i, path := range spec.WatchPaths {
+		if spec.WatchPaths[i], err = expandEnv(path); err != nil {
+			return err
+		}
+	}
+	if spec.Command, err = expandEnv(spec.Command); err != nil {
+		return err
+	}
+	if spec.ShellCommand, err = expandEnv(spec.ShellCommand); err != nil {
+		return err
+	}
+	for i, arg := range spec.Args {
+		if spec.Args[i], err = expandEnv(arg); err != nil {
+			return err
+		}
+	}
+	for k, v := range spec.Environment {
+		if spec.Environment[k], err = expandEnv(v); err != nil {
+			return err
+		}
+	}
+
 	if spec.WorkingDir == "" {
 		spec.WorkingDir = filepath.Clean(baseDir)
 	}
@@ -195,4 +242,5 @@ func resolvePaths(spec *job.Spec, baseDir string) {
 		}
 		spec.WatchPaths[i] = filepath.Clean(filepath.Join(baseDir, path))
 	}
+	return nil
 }
