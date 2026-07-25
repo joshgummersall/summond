@@ -143,8 +143,6 @@ delay_seconds    = 5   # wait before first retry (default 1)
 max_delay_seconds = 60  # cap the doubling delay (0 = no cap)
 ```
 
-The flat keys `retry_attempts`, `retry_delay_seconds`, and `retry_max_delay_seconds` are also accepted for backwards compatibility.
-
 Or via `summond add`:
 
 ```sh
