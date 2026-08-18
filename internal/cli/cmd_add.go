@@ -49,6 +49,7 @@ type addOptions struct {
 	minuteSet            bool
 	weekday              int
 	weekdaySet           bool
+	window               string
 	intervalMinutes      int
 	intervalSet          bool
 	abandonProcessGroup  bool
@@ -69,6 +70,7 @@ func (a *App) newAddTargetCommand(target string) *cobra.Command {
 	var hour int
 	var minute int
 	var weekday int
+	var window string
 	var intervalMinutes int
 	var abandonProcessGroup bool
 	var retryAttempts int
@@ -109,7 +111,11 @@ Schedule kinds (%s):
   daily     runs once per day; use --hour (0-23) and --minute (0-59) (auto-seeded if omitted)
   weekly    runs once per week; use --weekday (0-7, 0=Sun), --hour, --minute (auto-seeded if omitted)
   interval  runs every N minutes; requires --interval-minutes
-  calendar  flexible calendar schedule; use --weekday, --hour, --minute`, targetLabel, target, target, target, scheduleNote, loginOrBootLine),
+  calendar  flexible calendar schedule; use --weekday, --hour, --minute
+
+For daily/weekly schedules, --window constrains the auto-seeded hour to a
+time-of-day range instead of the full day: morning (05:00-11:59), afternoon
+(12:00-16:59), or evening (17:00-21:59). Ignored if --hour is also set.`, targetLabel, target, target, target, scheduleNote, loginOrBootLine),
 		Args: cobra.MinimumNArgs(1),
 		Example: fmt.Sprintf(`  summond add %s my-job --schedule %s -- %s
   summond add %s my-job --schedule hourly --minute 30 -- /path/to/binary
@@ -132,6 +138,7 @@ Schedule kinds (%s):
 				minuteSet:            cmd.Flags().Changed("minute"),
 				weekday:              weekday,
 				weekdaySet:           cmd.Flags().Changed("weekday"),
+				window:               window,
 				intervalMinutes:      intervalMinutes,
 				intervalSet:          cmd.Flags().Changed("interval-minutes"),
 				abandonProcessGroup:  abandonProcessGroup,
@@ -183,7 +190,8 @@ Schedule kinds (%s):
 				WorkingDir:          opts.workingDir,
 				AbandonProcessGroup: opts.abandonProcessGroup,
 				Schedule: job.Schedule{
-					Kind: job.ScheduleKind(opts.schedule),
+					Kind:   job.ScheduleKind(opts.schedule),
+					Window: job.WindowKind(opts.window),
 				},
 			}
 			switch {
@@ -271,6 +279,7 @@ Schedule kinds (%s):
 	cmd.Flags().IntVar(&hour, "hour", 0, "hour for daily/weekly/calendar schedules (0-23)")
 	cmd.Flags().IntVar(&minute, "minute", 0, "minute for hourly/daily/weekly/calendar schedules (0-59)")
 	cmd.Flags().IntVar(&weekday, "weekday", 0, "weekday for weekly/calendar schedules (0-7, 0 and 7 = Sunday)")
+	cmd.Flags().StringVar(&window, "window", "", "constrain the auto-seeded hour for daily/weekly schedules to a window: morning, afternoon, evening")
 	cmd.Flags().IntVar(&intervalMinutes, "interval-minutes", 0, "run interval in minutes; required for --schedule interval")
 	cmd.Flags().BoolVar(&abandonProcessGroup, "abandon-process-group", false, "allow child processes to continue after the job exits")
 	cmd.Flags().IntVar(&retryAttempts, "retry-attempts", 0, "number of retries after initial failure (0 = no retry)")

@@ -85,6 +85,132 @@ func TestNormalizeDerivesStableWeeklyFields(t *testing.T) {
 	}
 }
 
+func TestNormalizeDerivesStableWindowedHour(t *testing.T) {
+	cases := []struct {
+		kind       ScheduleKind
+		window     WindowKind
+		start, end int
+	}{
+		{ScheduleDaily, WindowMorning, 5, 11},
+		{ScheduleDaily, WindowAfternoon, 12, 16},
+		{ScheduleDaily, WindowEvening, 17, 21},
+		{ScheduleWeekly, WindowMorning, 5, 11},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.kind)+"/"+string(tc.window), func(t *testing.T) {
+			specA := Spec{
+				Name:    "job",
+				Target:  TargetAgent,
+				Command: "/bin/echo",
+				Schedule: Schedule{
+					Kind:   tc.kind,
+					Window: tc.window,
+				},
+			}
+			specB := specA
+
+			if err := specA.Normalize(); err != nil {
+				t.Fatalf("Normalize() error = %v", err)
+			}
+			if err := specB.Normalize(); err != nil {
+				t.Fatalf("Normalize() error = %v", err)
+			}
+			if specA.Schedule.Hour != specB.Schedule.Hour || specA.Schedule.Minute != specB.Schedule.Minute {
+				t.Fatalf("unstable derivation: %02d:%02d != %02d:%02d",
+					specA.Schedule.Hour, specA.Schedule.Minute, specB.Schedule.Hour, specB.Schedule.Minute)
+			}
+			if specA.Schedule.Hour < tc.start || specA.Schedule.Hour > tc.end {
+				t.Fatalf("hour %d out of default window [%d,%d]", specA.Schedule.Hour, tc.start, tc.end)
+			}
+			if specA.Schedule.Minute < 0 || specA.Schedule.Minute > 59 {
+				t.Fatalf("minute out of range: %d", specA.Schedule.Minute)
+			}
+		})
+	}
+}
+
+func TestNormalizeDerivesWindowedHourWithinCustomBounds(t *testing.T) {
+	spec := Spec{
+		Name:    "job",
+		Target:  TargetAgent,
+		Command: "/bin/echo",
+		Schedule: Schedule{
+			Kind:            ScheduleDaily,
+			Window:          WindowMorning,
+			WindowStartHour: 6,
+			WindowEndHour:   6,
+			WindowSet:       true,
+		},
+	}
+	if err := spec.Normalize(); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	if spec.Schedule.Hour != 6 {
+		t.Fatalf("hour = %d, want 6 (custom single-hour window)", spec.Schedule.Hour)
+	}
+}
+
+func TestNormalizeWindowRejectsInvertedBounds(t *testing.T) {
+	spec := Spec{
+		Name:    "job",
+		Target:  TargetAgent,
+		Command: "/bin/echo",
+		Schedule: Schedule{
+			Kind:            ScheduleDaily,
+			Window:          WindowMorning,
+			WindowStartHour: 10,
+			WindowEndHour:   5,
+			WindowSet:       true,
+		},
+	}
+	if err := spec.Normalize(); err == nil {
+		t.Fatal("expected error for inverted window bounds")
+	}
+}
+
+func TestNormalizeWindowRejectsUnsupportedSchedules(t *testing.T) {
+	for _, kind := range []ScheduleKind{ScheduleHourly, ScheduleLogin, ScheduleBoot, ScheduleInterval, ScheduleCalendar} {
+		t.Run(string(kind), func(t *testing.T) {
+			schedule := Schedule{Kind: kind, Window: WindowMorning}
+			if kind == ScheduleInterval {
+				schedule.IntervalMinutes = 5
+			}
+			spec := Spec{
+				Name:     "job",
+				Target:   TargetAgent,
+				Command:  "/bin/echo",
+				Schedule: schedule,
+			}
+			if err := spec.Normalize(); err == nil {
+				t.Fatalf("expected error for window on %s schedule", kind)
+			}
+		})
+	}
+}
+
+func TestNormalizePreservesWeeklyWindowWithExplicitWeekday(t *testing.T) {
+	spec := Spec{
+		Name:    "job",
+		Target:  TargetAgent,
+		Command: "/bin/echo",
+		Schedule: Schedule{
+			Kind:       ScheduleWeekly,
+			Window:     WindowMorning,
+			Weekday:    3,
+			WeekdaySet: true,
+		},
+	}
+	if err := spec.Normalize(); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	if spec.Schedule.Weekday != 3 {
+		t.Fatalf("weekday = %d, want 3", spec.Schedule.Weekday)
+	}
+	if spec.Schedule.Hour < 5 || spec.Schedule.Hour > 11 {
+		t.Fatalf("hour %d out of default morning window", spec.Schedule.Hour)
+	}
+}
+
 func TestSpecChecksumStableAcrossMapOrder(t *testing.T) {
 	specA := Spec{
 		Name:    "job",

@@ -15,8 +15,14 @@ import (
 )
 
 type fileConfig struct {
-	Group string            `toml:"group"`
-	Jobs  map[string]rawJob `toml:"jobs"`
+	Group   string               `toml:"group"`
+	Windows map[string]rawWindow `toml:"windows"`
+	Jobs    map[string]rawJob    `toml:"jobs"`
+}
+
+type rawWindow struct {
+	StartHour *int `toml:"start_hour"`
+	EndHour   *int `toml:"end_hour"`
 }
 
 type rawRetry struct {
@@ -46,6 +52,7 @@ type rawJob struct {
 	Weekday                 *int              `toml:"weekday"`
 	Day                     *int              `toml:"day"`
 	Month                   *int              `toml:"month"`
+	Window                  string            `toml:"window"`
 	WatchPaths              []string          `toml:"watch_paths"`
 	ThrottleIntervalSeconds *int              `toml:"throttle_interval_seconds"`
 	AbandonProcessGroup     bool              `toml:"abandon_process_group"`
@@ -77,6 +84,11 @@ func LoadFile(path string) ([]job.Spec, error) {
 		return nil, fmt.Errorf("unknown config key(s): %s", strings.Join(keys, ", "))
 	}
 
+	windows, err := resolveWindows(cfg.Windows)
+	if err != nil {
+		return nil, err
+	}
+
 	names := make([]string, 0, len(cfg.Jobs))
 	for name := range cfg.Jobs {
 		names = append(names, name)
@@ -91,6 +103,11 @@ func LoadFile(path string) ([]job.Spec, error) {
 	}
 	for _, name := range names {
 		spec := cfg.Jobs[name].toSpec(name, group)
+		if window, ok := windows[spec.Schedule.Window]; ok {
+			spec.Schedule.WindowStartHour = window.start
+			spec.Schedule.WindowEndHour = window.end
+			spec.Schedule.WindowSet = true
+		}
 		if err := resolvePaths(&spec, baseDir); err != nil {
 			return nil, fmt.Errorf("job %s: %w", spec.Name, err)
 		}
@@ -100,6 +117,42 @@ func LoadFile(path string) ([]job.Spec, error) {
 		specs = append(specs, spec)
 	}
 	return specs, nil
+}
+
+var windowKinds = map[string]job.WindowKind{
+	"morning":   job.WindowMorning,
+	"afternoon": job.WindowAfternoon,
+	"evening":   job.WindowEvening,
+}
+
+type windowBounds struct {
+	start int
+	end   int
+}
+
+func resolveWindows(raw map[string]rawWindow) (map[job.WindowKind]windowBounds, error) {
+	resolved := make(map[job.WindowKind]windowBounds, len(raw))
+	for name, w := range raw {
+		kind, ok := windowKinds[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown window %q (must be one of morning, afternoon, evening)", name)
+		}
+		if w.StartHour == nil || w.EndHour == nil {
+			return nil, fmt.Errorf("window %q requires both start_hour and end_hour", name)
+		}
+		start, end := *w.StartHour, *w.EndHour
+		if start < 0 || start > 23 {
+			return nil, fmt.Errorf("window %q start_hour must be between 0 and 23, got %d", name, start)
+		}
+		if end < 0 || end > 23 {
+			return nil, fmt.Errorf("window %q end_hour must be between 0 and 23, got %d", name, end)
+		}
+		if start > end {
+			return nil, fmt.Errorf("window %q start_hour must be <= end_hour, got %d > %d", name, start, end)
+		}
+		resolved[kind] = windowBounds{start: start, end: end}
+	}
+	return resolved, nil
 }
 
 func (r rawJob) toSpec(name string, group string) job.Spec {
@@ -114,7 +167,8 @@ func (r rawJob) toSpec(name string, group string) job.Spec {
 		WorkingDir:   r.WorkingDir,
 		Environment:  r.Environment,
 		Schedule: job.Schedule{
-			Kind: job.ScheduleKind(r.Schedule),
+			Kind:   job.ScheduleKind(r.Schedule),
+			Window: job.WindowKind(r.Window),
 		},
 		Trigger:    job.TriggerKind(r.Trigger),
 		WatchPaths: r.WatchPaths,

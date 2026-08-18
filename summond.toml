@@ -1,3 +1,12 @@
+[windows]
+morning = { start_hour = 6, end_hour = 10 }
+
+[jobs.agent-weekly-morning]
+schedule = "weekly"
+weekday = 1
+window = "morning"
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
 [jobs.agent-login]
 schedule = "login"
 shell_command = "echo $SUMMOND_JOB_NAME && env"
