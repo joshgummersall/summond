@@ -274,8 +274,14 @@ func describeSchedule(schedule job.Schedule) string {
 	case job.ScheduleHourly:
 		return fmt.Sprintf("hourly at minute %d", schedule.Minute)
 	case job.ScheduleDaily:
+		if schedule.Window != "" {
+			return fmt.Sprintf("daily at %02d:%02d (%s window)", schedule.Hour, schedule.Minute, schedule.Window)
+		}
 		return fmt.Sprintf("daily at %02d:%02d", schedule.Hour, schedule.Minute)
 	case job.ScheduleWeekly:
+		if schedule.Window != "" {
+			return fmt.Sprintf("weekly weekday %d at %02d:%02d (%s window)", schedule.Weekday, schedule.Hour, schedule.Minute, schedule.Window)
+		}
 		return fmt.Sprintf("weekly weekday %d at %02d:%02d", schedule.Weekday, schedule.Hour, schedule.Minute)
 	case job.ScheduleLogin:
 		return "login"

@@ -32,6 +32,29 @@ const (
 	ScheduleCalendar ScheduleKind = "calendar"
 )
 
+// WindowKind names a time-of-day window that constrains the hash-derived
+// hour for daily/weekly schedules that leave hour unset.
+type WindowKind string
+
+const (
+	WindowMorning   WindowKind = "morning"
+	WindowAfternoon WindowKind = "afternoon"
+	WindowEvening   WindowKind = "evening"
+)
+
+// defaultWindows provides sane default hour ranges (inclusive) for each
+// WindowKind when config.toml does not customize them.
+var defaultWindows = map[WindowKind]struct{ start, end int }{
+	WindowMorning:   {start: 5, end: 11},
+	WindowAfternoon: {start: 12, end: 16},
+	WindowEvening:   {start: 17, end: 21},
+}
+
+func isValidWindow(window WindowKind) bool {
+	_, ok := defaultWindows[window]
+	return ok
+}
+
 type TriggerKind string
 
 const (
@@ -52,6 +75,10 @@ type Schedule struct {
 	WeekdaySet      bool         `json:"weekday_set,omitempty"`
 	DaySet          bool         `json:"day_set,omitempty"`
 	MonthSet        bool         `json:"month_set,omitempty"`
+	Window          WindowKind   `json:"window,omitempty"`
+	WindowStartHour int          `json:"window_start_hour,omitempty"`
+	WindowEndHour   int          `json:"window_end_hour,omitempty"`
+	WindowSet       bool         `json:"window_set,omitempty"`
 }
 
 type ExecutionRecord struct {
@@ -204,6 +231,24 @@ func (s *Spec) applyScheduleDefaults() error {
 		next++
 		return value
 	}
+	deriveHour := func() {
+		if s.Schedule.HourSet {
+			return
+		}
+		if s.Schedule.Window != "" {
+			if !s.Schedule.WindowSet {
+				window := defaultWindows[s.Schedule.Window]
+				s.Schedule.WindowStartHour = window.start
+				s.Schedule.WindowEndHour = window.end
+				s.Schedule.WindowSet = true
+			}
+			span := s.Schedule.WindowEndHour - s.Schedule.WindowStartHour + 1
+			s.Schedule.Hour = s.Schedule.WindowStartHour + pick(span)
+		} else {
+			s.Schedule.Hour = pick(24)
+		}
+		s.Schedule.HourSet = true
+	}
 	switch s.Schedule.Kind {
 	case ScheduleHourly:
 		if !s.Schedule.MinuteSet {
@@ -211,10 +256,7 @@ func (s *Spec) applyScheduleDefaults() error {
 			s.Schedule.MinuteSet = true
 		}
 	case ScheduleDaily:
-		if !s.Schedule.HourSet {
-			s.Schedule.Hour = pick(24)
-			s.Schedule.HourSet = true
-		}
+		deriveHour()
 		if !s.Schedule.MinuteSet {
 			s.Schedule.Minute = pick(60)
 			s.Schedule.MinuteSet = true
@@ -224,10 +266,7 @@ func (s *Spec) applyScheduleDefaults() error {
 			s.Schedule.Weekday = 1 + pick(7)
 			s.Schedule.WeekdaySet = true
 		}
-		if !s.Schedule.HourSet {
-			s.Schedule.Hour = pick(24)
-			s.Schedule.HourSet = true
-		}
+		deriveHour()
 		if !s.Schedule.MinuteSet {
 			s.Schedule.Minute = pick(60)
 			s.Schedule.MinuteSet = true
@@ -362,11 +401,17 @@ func (s Schedule) NormalizeForTarget(target Target) error {
 		if s.Minute < 0 || s.Minute > 59 {
 			return fmt.Errorf("minute must be between 0 and 59, got %d", s.Minute)
 		}
+		if err := s.rejectWindow(); err != nil {
+			return err
+		}
 	case ScheduleDaily:
 		if s.Weekday != 0 || s.Day != 0 || s.Month != 0 || s.IntervalMinutes != 0 {
 			return errors.New("daily schedule only supports hour and minute")
 		}
 		if err := validateClock(s.Hour, s.Minute); err != nil {
+			return err
+		}
+		if err := s.validateWindow(); err != nil {
 			return err
 		}
 	case ScheduleWeekly:
@@ -379,17 +424,29 @@ func (s Schedule) NormalizeForTarget(target Target) error {
 		if s.Weekday < 0 || s.Weekday > 7 {
 			return fmt.Errorf("weekday must be between 0 and 7, got %d", s.Weekday)
 		}
+		if err := s.validateWindow(); err != nil {
+			return err
+		}
 	case ScheduleLogin:
 		if target != TargetAgent {
 			return errors.New("login schedule is only valid for agent jobs")
+		}
+		if err := s.rejectWindow(); err != nil {
+			return err
 		}
 	case ScheduleBoot:
 		if target != TargetDaemon {
 			return errors.New("boot schedule is only valid for daemon jobs")
 		}
+		if err := s.rejectWindow(); err != nil {
+			return err
+		}
 	case ScheduleInterval:
 		if s.IntervalMinutes <= 0 {
 			return errors.New("interval schedule requires interval_minutes > 0")
+		}
+		if err := s.rejectWindow(); err != nil {
+			return err
 		}
 	case ScheduleCalendar:
 		if s.IntervalMinutes != 0 {
@@ -409,10 +466,41 @@ func (s Schedule) NormalizeForTarget(target Target) error {
 		if s.Month < 0 || s.Month > 12 {
 			return fmt.Errorf("month must be between 0 and 12, got %d", s.Month)
 		}
+		if err := s.rejectWindow(); err != nil {
+			return err
+		}
 	case "":
 		return errors.New("schedule is required")
 	default:
 		return fmt.Errorf("invalid schedule kind %q", s.Kind)
+	}
+	return nil
+}
+
+func (s Schedule) validateWindow() error {
+	if s.Window == "" {
+		return nil
+	}
+	if !isValidWindow(s.Window) {
+		return fmt.Errorf("invalid window %q (must be one of morning, afternoon, evening)", s.Window)
+	}
+	if s.WindowSet {
+		if s.WindowStartHour < 0 || s.WindowStartHour > 23 {
+			return fmt.Errorf("window start hour must be between 0 and 23, got %d", s.WindowStartHour)
+		}
+		if s.WindowEndHour < 0 || s.WindowEndHour > 23 {
+			return fmt.Errorf("window end hour must be between 0 and 23, got %d", s.WindowEndHour)
+		}
+		if s.WindowStartHour > s.WindowEndHour {
+			return fmt.Errorf("window start hour must be <= end hour, got %d > %d", s.WindowStartHour, s.WindowEndHour)
+		}
+	}
+	return nil
+}
+
+func (s Schedule) rejectWindow() error {
+	if s.Window != "" {
+		return fmt.Errorf("window is only supported for daily and weekly schedules, got %q", s.Kind)
 	}
 	return nil
 }

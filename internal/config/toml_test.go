@@ -285,3 +285,117 @@ stdout_path = "/tmp/custom.out"
 		t.Fatalf("LoadFile() error = %v", err)
 	}
 }
+
+func TestLoadFileAppliesCustomWindow(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[windows]
+morning = { start_hour = 6, end_hour = 6 }
+
+[jobs.report]
+command = "/bin/echo"
+schedule = "daily"
+window = "morning"
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	specs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("len(specs) = %d", len(specs))
+	}
+	if got, want := specs[0].Schedule.Hour, 6; got != want {
+		t.Fatalf("Hour = %d, want %d", got, want)
+	}
+}
+
+func TestLoadFileAppliesCustomWindowToWeeklySchedule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[windows]
+morning = { start_hour = 6, end_hour = 6 }
+
+[jobs.report]
+command = "/bin/echo"
+schedule = "weekly"
+weekday = 3
+window = "morning"
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	specs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("len(specs) = %d", len(specs))
+	}
+	if got, want := specs[0].Schedule.Weekday, 3; got != want {
+		t.Fatalf("Weekday = %d, want %d", got, want)
+	}
+	if got, want := specs[0].Schedule.Hour, 6; got != want {
+		t.Fatalf("Hour = %d, want %d", got, want)
+	}
+}
+
+func TestLoadFileRejectsWindowOnHourlySchedule(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[jobs.report]
+command = "/bin/echo"
+schedule = "hourly"
+window = "morning"
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := LoadFile(path); err == nil {
+		t.Fatal("expected error for window on hourly schedule")
+	}
+}
+
+func TestLoadFileRejectsUnknownWindowName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[windows]
+night = { start_hour = 22, end_hour = 23 }
+
+[jobs.report]
+command = "/bin/echo"
+schedule = "daily"
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := LoadFile(path); err == nil {
+		t.Fatal("expected error for unknown window name")
+	}
+}
+
+func TestLoadFileRejectsInvertedWindowBounds(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[windows]
+morning = { start_hour = 10, end_hour = 5 }
+
+[jobs.report]
+command = "/bin/echo"
+schedule = "daily"
+window = "morning"
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := LoadFile(path); err == nil {
+		t.Fatal("expected error for inverted window bounds")
+	}
+}

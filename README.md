@@ -59,7 +59,30 @@ EOF
 
 ## Schedules
 
-`login`, `boot`, `hourly`, `daily`, `weekly`, `interval`, and `calendar` — with `--hour`, `--minute`, `--weekday`, and `--interval-minutes` flags to tune them. Omit the timing flags and summond deterministically seeds them from the job name to spread load.
+`login`, `boot`, `hourly`, `daily`, `weekly`, `interval`, and `calendar` — with `--hour`, `--minute`, `--weekday`, and `--interval-minutes` flags to tune them. Omit the timing flags and summond deterministically seeds them from the job spec to spread load.
+
+`daily` and `weekly` schedules also accept a `window`, which constrains the seeded hour to a named time-of-day range instead of the full day:
+
+| Window      | Default hours |
+| ----------- | ------------- |
+| `morning`   | 05:00-11:59   |
+| `afternoon` | 12:00-16:59   |
+| `evening`   | 17:00-21:59   |
+
+```toml
+[jobs.report]
+command  = "/usr/local/bin/weekly-report"
+schedule = "weekly"
+weekday  = 1
+window   = "morning"
+```
+
+Override the default window bounds in `summond.toml`:
+
+```toml
+[windows]
+morning = { start_hour = 6, end_hour = 10 }
+```
 
 ## File watch trigger
 
