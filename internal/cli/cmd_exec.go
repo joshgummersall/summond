@@ -115,6 +115,18 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 			if spec.Target != job.TargetDaemon && euid == 0 {
 				return fmt.Errorf("agent jobs run as the logged-in user; re-run without sudo: summond exec %s", spec.Name)
 			}
+			if !spec.Concurrency {
+				unlock, acquired, err := managed.store.TryLockExecution(spec.Name)
+				if err != nil {
+					return err
+				}
+				if !acquired {
+					fmt.Fprintf(a.stderr, "summond: %s is already running, skipping this run (concurrency=false)\n", spec.Name)
+					return nil
+				}
+				defer unlock()
+			}
+
 			changedPaths, newFingerprints := watchChanges(spec, managed.store)
 			startedAt := time.Now()
 			if err := managed.store.RecordExecutionStart(spec.Name, startedAt); err != nil {

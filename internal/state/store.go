@@ -305,6 +305,7 @@ func (s *Store) cleanupPaths(spec job.Spec) []string {
 	paths := []string{
 		spec.PlistPath,
 		s.metadataPath(spec.ManagedKey()) + ".lock",
+		filepath.Join(s.jobDir(spec.ManagedKey()), "exec.lock"),
 	}
 	seen := make(map[string]struct{}, len(paths))
 	unique := make([]string, 0, len(paths))
@@ -481,6 +482,33 @@ func (s *Store) writeMetadataUnlocked(spec job.Spec) error {
 		return fmt.Errorf("write job metadata: %w", err)
 	}
 	return nil
+}
+
+// TryLockExecution attempts to acquire an exclusive, non-blocking lock held
+// for the duration of a job run, so an overlapping trigger can detect that a
+// previous run is still in progress. acquired is false (with a nil error) if
+// another process already holds the lock.
+func (s *Store) TryLockExecution(name string) (unlock func(), acquired bool, err error) {
+	key, err := s.resolveManagedKey(name)
+	if err != nil {
+		return nil, false, err
+	}
+	lockPath := filepath.Join(s.jobDir(key), "exec.lock")
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, false, fmt.Errorf("open execution lock file: %w", err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		file.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("lock execution lock file: %w", err)
+	}
+	return func() {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	}, true, nil
 }
 
 func (s *Store) lockMetadata(key string) (func(), error) {

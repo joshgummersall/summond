@@ -55,6 +55,7 @@ type rawJob struct {
 	Window                  string            `toml:"window"`
 	WatchPaths              []string          `toml:"watch_paths"`
 	ThrottleIntervalSeconds *int              `toml:"throttle_interval_seconds"`
+	Concurrency             bool              `toml:"concurrency"`
 	AbandonProcessGroup     bool              `toml:"abandon_process_group"`
 	Retry                   *rawRetry         `toml:"retry"`
 	Watch                   *rawWatch         `toml:"watch"`
@@ -173,6 +174,7 @@ func (r rawJob) toSpec(name string, group string) job.Spec {
 		Trigger:    job.TriggerKind(r.Trigger),
 		WatchPaths: r.WatchPaths,
 	}
+	spec.Concurrency = r.Concurrency
 	spec.AbandonProcessGroup = r.AbandonProcessGroup
 	if r.IntervalMinutes != nil {
 		spec.Schedule.IntervalMinutes = *r.IntervalMinutes
