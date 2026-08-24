@@ -53,6 +53,7 @@ type addOptions struct {
 	intervalMinutes      int
 	intervalSet          bool
 	abandonProcessGroup  bool
+	concurrency          bool
 	retryAttempts        int
 	retryAttemptsSet     bool
 	retryDelaySeconds    int
@@ -73,6 +74,7 @@ func (a *App) newAddTargetCommand(target string) *cobra.Command {
 	var window string
 	var intervalMinutes int
 	var abandonProcessGroup bool
+	var concurrency bool
 	var retryAttempts int
 	var retryDelaySeconds int
 	var retryMaxDelaySeconds int
@@ -142,6 +144,7 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 				intervalMinutes:      intervalMinutes,
 				intervalSet:          cmd.Flags().Changed("interval-minutes"),
 				abandonProcessGroup:  abandonProcessGroup,
+				concurrency:          concurrency,
 				retryAttempts:        retryAttempts,
 				retryAttemptsSet:     cmd.Flags().Changed("retry-attempts"),
 				retryDelaySeconds:    retryDelaySeconds,
@@ -189,6 +192,7 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 				Target:              opts.target,
 				WorkingDir:          opts.workingDir,
 				AbandonProcessGroup: opts.abandonProcessGroup,
+				Concurrency:         opts.concurrency,
 				Schedule: job.Schedule{
 					Kind:   job.ScheduleKind(opts.schedule),
 					Window: job.WindowKind(opts.window),
@@ -282,6 +286,7 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 	cmd.Flags().StringVar(&window, "window", "", "constrain the auto-seeded hour for daily/weekly schedules to a window: morning, afternoon, evening")
 	cmd.Flags().IntVar(&intervalMinutes, "interval-minutes", 0, "run interval in minutes; required for --schedule interval")
 	cmd.Flags().BoolVar(&abandonProcessGroup, "abandon-process-group", false, "allow child processes to continue after the job exits")
+	cmd.Flags().BoolVar(&concurrency, "concurrency", false, "allow overlapping runs instead of skipping a trigger while a previous run is still in progress")
 	cmd.Flags().IntVar(&retryAttempts, "retry-attempts", 0, "number of retries after initial failure (0 = no retry)")
 	cmd.Flags().IntVar(&retryDelaySeconds, "retry-delay-seconds", 0, "initial delay in seconds before first retry (default 1 when retries are enabled)")
 	cmd.Flags().IntVar(&retryMaxDelaySeconds, "retry-max-delay-seconds", 0, "cap on delay between retries in seconds (0 = no cap)")

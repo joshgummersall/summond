@@ -190,6 +190,29 @@ do-the-actual-work
 
 Retry annotations (`[summond] retry attempt N/M after Xs`) are written to the job's stderr log between attempts.
 
+## Concurrency
+
+By default, a job's next scheduled trigger is skipped while a previous run of that job is still in progress:
+
+```toml
+[jobs.long-running-sync]
+command  = "/usr/local/bin/sync"
+schedule = "interval"
+interval_minutes = 5
+```
+
+If `sync` takes longer than 5 minutes, the overlapping trigger is skipped (logged to stderr) rather than starting a second instance. Set `concurrency = true` to allow overlapping runs instead:
+
+```toml
+[jobs.long-running-sync]
+command     = "/usr/local/bin/sync"
+schedule    = "interval"
+interval_minutes = 5
+concurrency = true
+```
+
+Or via `summond add --concurrency`.
+
 ## Shared environment
 
 ```sh

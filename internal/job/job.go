@@ -106,6 +106,7 @@ type Spec struct {
 	RetryAttempts           int               `json:"retry_attempts,omitempty"`
 	RetryDelaySeconds       int               `json:"retry_delay_seconds,omitempty"`
 	RetryMaxDelaySeconds    int               `json:"retry_max_delay_seconds,omitempty"`
+	Concurrency             bool              `json:"concurrency,omitempty"`
 	AbandonProcessGroup     bool              `json:"abandon_process_group,omitempty"`
 	StdoutPath              string            `json:"stdout_path,omitempty"`
 	StderrPath              string            `json:"stderr_path,omitempty"`
@@ -538,6 +539,7 @@ func (s Spec) SpecChecksum() (string, error) {
 		RetryAttempts           int         `json:"retry_attempts,omitempty"`
 		RetryDelaySeconds       int         `json:"retry_delay_seconds,omitempty"`
 		RetryMaxDelaySeconds    int         `json:"retry_max_delay_seconds,omitempty"`
+		Concurrency             bool        `json:"concurrency,omitempty"`
 		AbandonProcessGroup     bool        `json:"abandon_process_group,omitempty"`
 		StdoutPath              string      `json:"stdout_path,omitempty"`
 		StderrPath              string      `json:"stderr_path,omitempty"`
@@ -573,6 +575,7 @@ func (s Spec) SpecChecksum() (string, error) {
 		RetryAttempts:           s.RetryAttempts,
 		RetryDelaySeconds:       s.RetryDelaySeconds,
 		RetryMaxDelaySeconds:    s.RetryMaxDelaySeconds,
+		Concurrency:             s.Concurrency,
 		AbandonProcessGroup:     s.AbandonProcessGroup,
 		StdoutPath:              s.StdoutPath,
 		StderrPath:              s.StderrPath,
