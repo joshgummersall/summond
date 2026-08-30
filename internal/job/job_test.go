@@ -369,3 +369,80 @@ func TestNormalizeRejectsPathLikeLabel(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestNormalizeUSBAttachTrigger(t *testing.T) {
+	spec := Spec{
+		Name:         "brio-zoom",
+		Target:       TargetAgent,
+		Command:      "/usr/local/bin/uvc-util",
+		Trigger:      TriggerUSBAttach,
+		USBVendorID:  0x046d,
+		USBProductID: 0x085e,
+	}
+	if err := spec.Normalize(); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	if got, want := spec.ThrottleIntervalSeconds, 2; got != want {
+		t.Fatalf("ThrottleIntervalSeconds = %d, want %d", got, want)
+	}
+}
+
+func TestNormalizeUSBAttachRequiresBothIDs(t *testing.T) {
+	spec := Spec{
+		Name:        "brio-zoom",
+		Target:      TargetAgent,
+		Command:     "/usr/local/bin/uvc-util",
+		Trigger:     TriggerUSBAttach,
+		USBVendorID: 0x046d,
+	}
+	if err := spec.Normalize(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestNormalizeUSBAttachRejectsSchedule(t *testing.T) {
+	spec := Spec{
+		Name:         "brio-zoom",
+		Target:       TargetAgent,
+		Command:      "/usr/local/bin/uvc-util",
+		Trigger:      TriggerUSBAttach,
+		USBVendorID:  0x046d,
+		USBProductID: 0x085e,
+		Schedule: Schedule{
+			Kind: ScheduleDaily,
+		},
+	}
+	if err := spec.Normalize(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestNormalizeUSBAttachRejectsWatchPaths(t *testing.T) {
+	spec := Spec{
+		Name:         "brio-zoom",
+		Target:       TargetAgent,
+		Command:      "/usr/local/bin/uvc-util",
+		Trigger:      TriggerUSBAttach,
+		USBVendorID:  0x046d,
+		USBProductID: 0x085e,
+		WatchPaths:   []string{"/tmp/watch.txt"},
+	}
+	if err := spec.Normalize(); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestNormalizeUSBIDsRequireUSBTrigger(t *testing.T) {
+	spec := Spec{
+		Name:        "job",
+		Target:      TargetAgent,
+		Command:     "/bin/echo",
+		USBVendorID: 0x046d,
+		Schedule: Schedule{
+			Kind: ScheduleDaily,
+		},
+	}
+	if err := spec.Normalize(); err == nil {
+		t.Fatal("expected error")
+	}
+}

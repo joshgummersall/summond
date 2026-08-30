@@ -11,6 +11,7 @@ import (
 
 	"github.com/joshgummersall/summond/internal/job"
 	"github.com/joshgummersall/summond/internal/state"
+	"github.com/joshgummersall/summond/internal/xpcevent"
 	"github.com/spf13/cobra"
 )
 
@@ -114,6 +115,13 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 			}
 			if spec.Target != job.TargetDaemon && euid == 0 {
 				return fmt.Errorf("agent jobs run as the logged-in user; re-run without sudo: summond exec %s", spec.Name)
+			}
+			// A job launched by launchd for an IOKit event must consume the
+			// event, or launchd relaunches it every ThrottleInterval forever.
+			// Skip for manual runs (parent is a shell, not launchd).
+			if spec.Trigger == job.TriggerUSBAttach && os.Getppid() == 1 {
+				delivered := xpcevent.ConsumeStream("com.apple.iokit.matching", 3*time.Second)
+				a.logger.Debug("consumed iokit matching event", "delivered", delivered)
 			}
 			if !spec.Concurrency {
 				unlock, acquired, err := managed.store.TryLockExecution(spec.Name)

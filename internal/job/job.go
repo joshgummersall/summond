@@ -58,7 +58,8 @@ func isValidWindow(window WindowKind) bool {
 type TriggerKind string
 
 const (
-	TriggerOnChange TriggerKind = "on_change"
+	TriggerOnChange  TriggerKind = "on_change"
+	TriggerUSBAttach TriggerKind = "on_usb_attach"
 )
 
 type Schedule struct {
@@ -102,6 +103,8 @@ type Spec struct {
 	Schedule                Schedule          `json:"schedule"`
 	Trigger                 TriggerKind       `json:"trigger,omitempty"`
 	WatchPaths              []string          `json:"watch_paths,omitempty"`
+	USBVendorID             int               `json:"usb_vendor_id,omitempty"`
+	USBProductID            int               `json:"usb_product_id,omitempty"`
 	ThrottleIntervalSeconds int               `json:"throttle_interval_seconds,omitempty"`
 	RetryAttempts           int               `json:"retry_attempts,omitempty"`
 	RetryDelaySeconds       int               `json:"retry_delay_seconds,omitempty"`
@@ -185,13 +188,27 @@ func (s *Spec) Normalize() error {
 			return fmt.Errorf("watch path must be an absolute path: %q", path)
 		}
 	}
-	if s.Trigger == "" && len(s.WatchPaths) > 0 {
-		return errors.New("watch_paths requires a trigger")
+	if s.Trigger != TriggerOnChange && len(s.WatchPaths) > 0 {
+		return errors.New("watch_paths requires the on_change trigger")
 	}
-	if s.Trigger != "" && len(s.WatchPaths) == 0 {
+	if s.Trigger == TriggerOnChange && len(s.WatchPaths) == 0 {
 		return errors.New("trigger requires watch_paths")
 	}
-	if s.Trigger == TriggerOnChange && s.ThrottleIntervalSeconds == 0 {
+	if s.Trigger != TriggerUSBAttach && (s.USBVendorID != 0 || s.USBProductID != 0) {
+		return errors.New("usb_vendor_id and usb_product_id require the on_usb_attach trigger")
+	}
+	if s.Trigger == TriggerUSBAttach {
+		if s.USBVendorID == 0 || s.USBProductID == 0 {
+			return errors.New("on_usb_attach trigger requires usb_vendor_id and usb_product_id")
+		}
+		if s.USBVendorID < 0 || s.USBVendorID > 0xffff {
+			return fmt.Errorf("usb_vendor_id must be between 0x0001 and 0xffff, got %#x", s.USBVendorID)
+		}
+		if s.USBProductID < 0 || s.USBProductID > 0xffff {
+			return fmt.Errorf("usb_product_id must be between 0x0001 and 0xffff, got %#x", s.USBProductID)
+		}
+	}
+	if s.Trigger != "" && s.ThrottleIntervalSeconds == 0 {
 		s.ThrottleIntervalSeconds = 2
 	}
 	if s.ThrottleIntervalSeconds < 0 {
@@ -304,6 +321,8 @@ func (s Spec) scheduleSeed() ([32]byte, error) {
 		Schedule            scheduleSeed `json:"schedule"`
 		Trigger             TriggerKind  `json:"trigger,omitempty"`
 		WatchPaths          []string     `json:"watch_paths,omitempty"`
+		USBVendorID         int          `json:"usb_vendor_id,omitempty"`
+		USBProductID        int          `json:"usb_product_id,omitempty"`
 	}
 
 	keys := make([]string, 0, len(s.Environment))
@@ -349,6 +368,8 @@ func (s Spec) scheduleSeed() ([32]byte, error) {
 		Schedule:            seedSchedule,
 		Trigger:             s.Trigger,
 		WatchPaths:          s.WatchPaths,
+		USBVendorID:         s.USBVendorID,
+		USBProductID:        s.USBProductID,
 	})
 	if err != nil {
 		return [32]byte{}, err
@@ -361,6 +382,8 @@ func (s *Spec) normalizeTrigger() error {
 	case "":
 		return nil
 	case TriggerOnChange:
+		return nil
+	case TriggerUSBAttach:
 		return nil
 	default:
 		return fmt.Errorf("invalid trigger %q", s.Trigger)
@@ -535,6 +558,8 @@ func (s Spec) SpecChecksum() (string, error) {
 		Schedule                Schedule    `json:"schedule"`
 		Trigger                 TriggerKind `json:"trigger,omitempty"`
 		WatchPaths              []string    `json:"watch_paths,omitempty"`
+		USBVendorID             int         `json:"usb_vendor_id,omitempty"`
+		USBProductID            int         `json:"usb_product_id,omitempty"`
 		ThrottleIntervalSeconds int         `json:"throttle_interval_seconds,omitempty"`
 		RetryAttempts           int         `json:"retry_attempts,omitempty"`
 		RetryDelaySeconds       int         `json:"retry_delay_seconds,omitempty"`
@@ -571,6 +596,8 @@ func (s Spec) SpecChecksum() (string, error) {
 		Schedule:                s.Schedule,
 		Trigger:                 s.Trigger,
 		WatchPaths:              s.WatchPaths,
+		USBVendorID:             s.USBVendorID,
+		USBProductID:            s.USBProductID,
 		ThrottleIntervalSeconds: s.ThrottleIntervalSeconds,
 		RetryAttempts:           s.RetryAttempts,
 		RetryDelaySeconds:       s.RetryDelaySeconds,

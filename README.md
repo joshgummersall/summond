@@ -109,6 +109,29 @@ for path in ${SUMMOND_CHANGED_PATHS//:/ }; do
 done
 ```
 
+## USB attach trigger
+
+Run a job whenever a specific USB device is plugged in — for example, reapplying a webcam setting that doesn't persist across unplug/replug:
+
+```toml
+[jobs.brio-zoom]
+shell_command = "uvc-util -I 0 -s zoom-abs=150"
+trigger       = "on_usb_attach"
+
+[jobs.brio-zoom.usb]
+vendor_id  = "0x046d"   # Logitech
+product_id = "0x085e"   # Brio
+```
+
+`vendor_id` and `product_id` identify the device and are both required. They can be hex strings (`"0x046d"`), TOML hex integers (`0x046d`), or decimal (`1133`). Find them with `system_profiler SPUSBDataType`, `ioreg -p IOUSB -l`, or `uvc-util --list-devices`.
+
+Under the hood this renders a launchd `LaunchEvents` > `com.apple.iokit.matching` subscription, so launchd itself watches for the device — no summond process stays resident. The trigger fires whenever the device enumerates, including behind a hub or dock. Two things to know:
+
+- If the device is already attached when the job loads (e.g. after a reboot), the matching event fires once at load. For idempotent device-setup commands this is usually what you want.
+- There is no `on_usb_detach`: launchd only delivers IOKit *matching* (arrival) events, not termination events, and watching for removal would require a resident daemon. To react to an unmounted volume, watch its mount point with the `on_change` trigger instead.
+
+Like `on_change`, the trigger debounces via `throttle_interval_seconds` (default 2) in case the device enumerates more than once on attach.
+
 ## Interactive TUI
 
 ```sh

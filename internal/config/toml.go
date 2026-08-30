@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -36,6 +37,13 @@ type rawWatch struct {
 	ThrottleSeconds *int     `toml:"throttle_seconds"`
 }
 
+// rawUSB accepts vendor/product ids as TOML integers (including 0x hex
+// literals) or as strings like "0x046d" copied from ioreg/system_profiler.
+type rawUSB struct {
+	VendorID  any `toml:"vendor_id"`
+	ProductID any `toml:"product_id"`
+}
+
 type rawJob struct {
 	Label                   string            `toml:"label"`
 	Target                  string            `toml:"target"`
@@ -59,6 +67,7 @@ type rawJob struct {
 	AbandonProcessGroup     bool              `toml:"abandon_process_group"`
 	Retry                   *rawRetry         `toml:"retry"`
 	Watch                   *rawWatch         `toml:"watch"`
+	USB                     *rawUSB           `toml:"usb"`
 }
 
 func LoadFile(path string) ([]job.Spec, error) {
@@ -103,7 +112,10 @@ func LoadFile(path string) ([]job.Spec, error) {
 		group = defaultGroup(absPath)
 	}
 	for _, name := range names {
-		spec := cfg.Jobs[name].toSpec(name, group)
+		spec, err := cfg.Jobs[name].toSpec(name, group)
+		if err != nil {
+			return nil, fmt.Errorf("job %s: %w", name, err)
+		}
 		if window, ok := windows[spec.Schedule.Window]; ok {
 			spec.Schedule.WindowStartHour = window.start
 			spec.Schedule.WindowEndHour = window.end
@@ -156,7 +168,7 @@ func resolveWindows(raw map[string]rawWindow) (map[job.WindowKind]windowBounds, 
 	return resolved, nil
 }
 
-func (r rawJob) toSpec(name string, group string) job.Spec {
+func (r rawJob) toSpec(name string, group string) (job.Spec, error) {
 	spec := job.Spec{
 		Name:         name,
 		Group:        group,
@@ -222,7 +234,41 @@ func (r rawJob) toSpec(name string, group string) job.Spec {
 			spec.ThrottleIntervalSeconds = *r.Watch.ThrottleSeconds
 		}
 	}
-	return spec
+	if r.USB != nil {
+		var err error
+		if spec.USBVendorID, err = parseUSBID("usb.vendor_id", r.USB.VendorID); err != nil {
+			return job.Spec{}, err
+		}
+		if spec.USBProductID, err = parseUSBID("usb.product_id", r.USB.ProductID); err != nil {
+			return job.Spec{}, err
+		}
+	}
+	return spec, nil
+}
+
+// parseUSBID converts a [jobs.X.usb] id to an int. TOML integers (including
+// 0x hex literals) pass through; strings are parsed as hex with an optional
+// 0x prefix or as decimal, matching how ioreg/system_profiler print ids.
+func parseUSBID(key string, value any) (int, error) {
+	switch v := value.(type) {
+	case nil:
+		return 0, fmt.Errorf("%s is required", key)
+	case int64:
+		return int(v), nil
+	case string:
+		text := strings.TrimSpace(v)
+		base := 10
+		if rest, ok := strings.CutPrefix(strings.ToLower(text), "0x"); ok {
+			text, base = rest, 16
+		}
+		id, err := strconv.ParseUint(text, base, 16)
+		if err != nil {
+			return 0, fmt.Errorf("%s: cannot parse %q as a USB id (use hex like \"0x046d\" or decimal)", key, v)
+		}
+		return int(id), nil
+	default:
+		return 0, fmt.Errorf("%s must be an integer or string, got %T", key, value)
+	}
 }
 
 func defaultGroup(path string) string {

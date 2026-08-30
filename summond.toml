@@ -55,6 +55,14 @@ fi
 [jobs.agent-on-change.watch]
 paths = ["/tmp/summond"]
 
+[jobs.agent-usb-attach]
+trigger = "on_usb_attach"
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.agent-usb-attach.usb]
+vendor_id  = "0x046d"  # Logitech
+product_id = "0x085e"  # Brio
+
 [jobs.daemon-boot]
 schedule = "boot"
 target = "daemon"
