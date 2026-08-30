@@ -2,6 +2,8 @@ version: 2
 
 builds:
   - main: ./cmd/summond
+    env:
+      - CGO_ENABLED=1
     goos:
       - darwin
     goarch:

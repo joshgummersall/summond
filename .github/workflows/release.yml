@@ -6,7 +6,9 @@ on:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # macOS runner: the xpcevent package needs cgo, which cross-compiling
+    # from Linux silently disables (the no-op stub would ship instead).
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
@@ -41,4 +43,4 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_DEPLOY_KEY_PATH: /home/runner/.ssh/homebrew-tap
+          HOMEBREW_TAP_DEPLOY_KEY_PATH: /Users/runner/.ssh/homebrew-tap
