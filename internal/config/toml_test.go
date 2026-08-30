@@ -399,3 +399,94 @@ window = "morning"
 		t.Fatal("expected error for inverted window bounds")
 	}
 }
+
+func TestLoadFileParsesUSBTriggerHexStrings(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[jobs.brio-zoom]
+command = "/usr/local/bin/uvc-util"
+args = ["-I", "0", "-s", "zoom-abs=150"]
+trigger = "on_usb_attach"
+
+[jobs.brio-zoom.usb]
+vendor_id  = "0x046d"
+product_id = "0x085e"
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	specs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if got, want := specs[0].USBVendorID, 0x046d; got != want {
+		t.Fatalf("USBVendorID = %#x, want %#x", got, want)
+	}
+	if got, want := specs[0].USBProductID, 0x085e; got != want {
+		t.Fatalf("USBProductID = %#x, want %#x", got, want)
+	}
+}
+
+func TestLoadFileParsesUSBTriggerIntegerIDs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[jobs.brio-zoom]
+command = "/usr/local/bin/uvc-util"
+trigger = "on_usb_attach"
+
+[jobs.brio-zoom.usb]
+vendor_id  = 0x046d
+product_id = 2142
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	specs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	if got, want := specs[0].USBVendorID, 0x046d; got != want {
+		t.Fatalf("USBVendorID = %#x, want %#x", got, want)
+	}
+	if got, want := specs[0].USBProductID, 0x085e; got != want {
+		t.Fatalf("USBProductID = %#x, want %#x", got, want)
+	}
+}
+
+func TestLoadFileRejectsInvalidUSBID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[jobs.brio-zoom]
+command = "/usr/local/bin/uvc-util"
+trigger = "on_usb_attach"
+
+[jobs.brio-zoom.usb]
+vendor_id  = "046d"
+product_id = "0x085e"
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := LoadFile(path); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestLoadFileRejectsUSBTriggerWithoutIDs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[jobs.brio-zoom]
+command = "/usr/local/bin/uvc-util"
+trigger = "on_usb_attach"
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := LoadFile(path); err == nil {
+		t.Fatal("expected error")
+	}
+}

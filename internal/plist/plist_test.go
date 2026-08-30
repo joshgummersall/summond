@@ -170,3 +170,50 @@ func TestRenderShellCommandUsesBashStrictMode(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderUSBAttachPlist(t *testing.T) {
+	data, err := Render(job.Spec{
+		Name:              "brio-zoom",
+		Target:            job.TargetAgent,
+		Command:           "/usr/local/bin/uvc-util",
+		Args:              []string{"-I", "0", "-s", "zoom-abs=150"},
+		Trigger:           job.TriggerUSBAttach,
+		USBVendorID:       0x046d,
+		USBProductID:      0x085e,
+		RuntimeBinaryPath: "/tmp/summond",
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	text := string(data)
+	for _, needle := range []string{
+		"<key>LaunchEvents</key>",
+		"<key>com.apple.iokit.matching</key>",
+		"<key>com.joshgummersall.summond.brio-zoom.usb-attach</key>",
+		"<key>IOProviderClass</key>",
+		"<string>IOUSBDevice</string>",
+		"<key>idVendor</key>",
+		"<integer>1133</integer>",
+		"<key>idProduct</key>",
+		"<integer>2142</integer>",
+		"<key>IOMatchLaunchStream</key>",
+		"<key>ThrottleInterval</key>",
+		"<integer>2</integer>",
+		"<string>/tmp/summond</string>",
+		"<string>exec</string>",
+		"<string>brio-zoom</string>",
+	} {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("plist missing %q: %s", needle, text)
+		}
+	}
+	if !strings.Contains(text, "<key>RunAtLoad</key>\n  <false/>") {
+		t.Fatalf("expected RunAtLoad false: %s", text)
+	}
+	if strings.Contains(text, "<key>WatchPaths</key>") {
+		t.Fatalf("unexpected WatchPaths in plist: %s", text)
+	}
+	if strings.Contains(text, "<key>StartCalendarInterval</key>") {
+		t.Fatalf("unexpected StartCalendarInterval in plist: %s", text)
+	}
+}

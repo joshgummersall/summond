@@ -311,6 +311,9 @@ func describeTriggerOrSchedule(spec job.Spec) string {
 	if spec.Trigger == job.TriggerOnChange {
 		return "on_change"
 	}
+	if spec.Trigger == job.TriggerUSBAttach {
+		return fmt.Sprintf("on_usb_attach 0x%04x:0x%04x", spec.USBVendorID, spec.USBProductID)
+	}
 	return describeSchedule(spec.Schedule)
 }
 

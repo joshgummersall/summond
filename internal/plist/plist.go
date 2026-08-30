@@ -56,6 +56,9 @@ func Render(spec job.Spec) ([]byte, error) {
 	if len(spec.WatchPaths) > 0 {
 		writeStringArray(&buf, "WatchPaths", spec.WatchPaths)
 	}
+	if spec.Trigger == job.TriggerUSBAttach {
+		writeUSBMatch(&buf, spec)
+	}
 	if spec.ThrottleIntervalSeconds > 0 {
 		writeInteger(&buf, "ThrottleInterval", spec.ThrottleIntervalSeconds)
 	}
@@ -119,6 +122,26 @@ func writeSchedule(buf *bytes.Buffer, schedule job.Schedule) {
 		}
 		writeCalendarInterval(buf, fields)
 	}
+}
+
+// writeUSBMatch emits a LaunchEvents IOKit matching dict so launchd starts
+// the job whenever a USB device with the given vendor/product ids attaches.
+// The event also fires once at load if the device is already attached.
+func writeUSBMatch(buf *bytes.Buffer, spec job.Spec) {
+	buf.WriteString("  <key>LaunchEvents</key>\n")
+	buf.WriteString("  <dict>\n")
+	buf.WriteString("    <key>com.apple.iokit.matching</key>\n")
+	buf.WriteString("    <dict>\n")
+	buf.WriteString(fmt.Sprintf("      <key>%s</key>\n", xmlEscape(spec.Label+".usb-attach")))
+	buf.WriteString("      <dict>\n")
+	writeStringIndented(buf, 4, "IOProviderClass", "IOUSBDevice")
+	writeIntegerIndented(buf, 4, "idVendor", spec.USBVendorID)
+	writeIntegerIndented(buf, 4, "idProduct", spec.USBProductID)
+	buf.WriteString("        <key>IOMatchLaunchStream</key>\n")
+	buf.WriteString("        <true/>\n")
+	buf.WriteString("      </dict>\n")
+	buf.WriteString("    </dict>\n")
+	buf.WriteString("  </dict>\n")
 }
 
 func writeCalendarInterval(buf *bytes.Buffer, fields map[string]int) {
