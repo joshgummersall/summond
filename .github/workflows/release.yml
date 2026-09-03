@@ -12,11 +12,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -38,8 +38,12 @@ jobs:
           chmod 600 ~/.ssh/homebrew-tap
           ssh-keyscan github.com >> ~/.ssh/known_hosts
 
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@v7
         with:
+          # Pin the GoReleaser CLI's major explicitly. v7 of the action
+          # happens to default to this, but the pin is the thing we
+          # actually want to depend on, not the default.
+          version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
