@@ -8,13 +8,25 @@ _.file = ".env"
 description = "Format Go code"
 run = "gofmt -w ./cmd ./internal"
 
+[tasks.dev]
+description = "Run the CLI from source"
+run = "go run ./cmd/summond"
+
 [tasks.test]
 description = "Run Go tests"
 run = "go test ./..."
 
+[tasks.vet]
+description = "Run go vet"
+run = "go vet ./..."
+
 [tasks.build]
-description = "Build the CLI"
-run = "go build -o ./bin/summond ./cmd/summond"
+description = "Build the CLI into bin/"
+run = "mkdir -p bin && go build -o ./bin/summond ./cmd/summond"
+
+[tasks.clean]
+description = "Remove build artifacts"
+run = "rm -rf bin"
 
 [tasks.install-bin]
 description = "Build the CLI and copy it into ~/.bin and Application Support dirs"
