@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/joshgummersall/summond/internal/job"
 	"github.com/spf13/cobra"
 )
@@ -131,11 +132,10 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case logContentMsg:
 		if msg.err != nil {
-			m.content = "(no logs: " + msg.err.Error() + ")"
+			m.setContent("(no logs: " + msg.err.Error() + ")")
 		} else {
-			m.content = msg.content
+			m.setContent(msg.content)
 		}
-		m.viewport.SetContent(m.content)
 		m.viewport.GotoTop()
 		return m, nil
 
@@ -201,33 +201,29 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *tuiModel) loadCurrentContent() tea.Cmd {
 	if len(m.jobs) == 0 {
-		m.content = "(no jobs)"
-		m.viewport.SetContent(m.content)
+		m.setContent("(no jobs)")
 		return nil
 	}
 	spec := m.jobs[m.cursor].spec
 
 	switch m.activeTab {
 	case tabState:
-		m.content = renderStateContent(spec)
-		m.viewport.SetContent(m.content)
+		m.setContent(renderStateContent(spec))
 		m.viewport.GotoTop()
 		return nil
 
 	case tabPlist:
 		if spec.PlistPath == "" {
-			m.content = "(no plist path configured)"
-			m.viewport.SetContent(m.content)
+			m.setContent("(no plist path configured)")
 			m.viewport.GotoTop()
 			return nil
 		}
 		data, err := os.ReadFile(spec.PlistPath)
 		if err != nil {
-			m.content = fmt.Sprintf("(plist not available: %s)", err.Error())
+			m.setContent(fmt.Sprintf("(plist not available: %s)", err.Error()))
 		} else {
-			m.content = batHighlightPlain(string(data), "xml")
+			m.setContent(batHighlightPlain(string(data), "xml"))
 		}
-		m.viewport.SetContent(m.content)
 		m.viewport.GotoTop()
 		return nil
 
@@ -417,7 +413,18 @@ func (m *tuiModel) resizeViewport() {
 	}
 	m.viewport.Width = w
 	m.viewport.Height = m.viewportHeight()
-	m.viewport.SetContent(m.content)
+	m.applyContent()
+}
+
+// setContent stores sanitized pane content and pushes it to the viewport.
+func (m *tuiModel) setContent(s string) {
+	m.content = sanitizeContent(s)
+	m.applyContent()
+}
+
+// applyContent re-truncates the stored content for the current viewport width.
+func (m *tuiModel) applyContent() {
+	m.viewport.SetContent(fitWidth(m.content, m.viewport.Width))
 }
 
 func adjustListScroll(cursor, offset, height int) int {
@@ -446,6 +453,7 @@ func (m tuiModel) renderJobList(height int) string {
 		if spec.Target == job.TargetDaemon {
 			label += " (daemon)"
 		}
+		label = ansi.Truncate(sanitizeLine(label), m.leftPaneWidth(), "")
 		if i == m.cursor {
 			lines = append(lines, selectedItemStyle.Width(m.leftPaneWidth()).Render(label))
 		} else {
