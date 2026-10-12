@@ -244,3 +244,95 @@ func TestExecuteSpecSourcesEnvFileForCommandJobs(t *testing.T) {
 		t.Fatalf("stdout = %q", got)
 	}
 }
+
+func TestExecWritesOutputToLogFiles(t *testing.T) {
+	app := newTestApp(t)
+	var stdout, stderr bytes.Buffer
+	app.stdout = &stdout
+	app.stderr = &stderr
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.logger]",
+		`command = "/bin/sh"`,
+		`args = ["-c", "echo out; echo err >&2"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := app.run([]string{"exec", "logger"}); err != nil {
+		t.Fatalf("exec error = %v", err)
+	}
+	if got := stdout.String(); got != "out\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	if got := stderr.String(); got != "err\n" {
+		t.Fatalf("stderr = %q", got)
+	}
+	spec, err := app.store.Load("logger")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	for path, want := range map[string]string{spec.StdoutPath: "out\n", spec.StderrPath: "err\n"} {
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("ReadFile(%s) error = %v", path, err)
+		}
+		if string(got) != want {
+			t.Fatalf("%s = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestExecDoesNotDuplicateWhenStdoutIsLogFile(t *testing.T) {
+	app := newTestApp(t)
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.logger]",
+		`command = "/bin/echo"`,
+		`args = ["once"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	app.stdout = &bytes.Buffer{}
+	if err := app.run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	spec, err := app.store.Load("logger")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	// Simulate launchd, which redirects stdout to the log file via the plist.
+	f, err := os.OpenFile(spec.StdoutPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	defer f.Close()
+	app.stdout = f
+	if err := app.run([]string{"exec", "logger"}); err != nil {
+		t.Fatalf("exec error = %v", err)
+	}
+	got, err := os.ReadFile(spec.StdoutPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(got) != "once\n" {
+		t.Fatalf("log = %q, want %q", got, "once\n")
+	}
+}
