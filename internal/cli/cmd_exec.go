@@ -3,6 +3,7 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"sort"
@@ -89,7 +90,8 @@ func (a *App) newExecCommand() *cobra.Command {
 		Long: `Run a managed job immediately in the foreground and record its execution result.
 
 The job runs with the same command, working directory, and environment as it would on
-its normal schedule. stdout and stderr are written to the terminal. The execution is
+its normal schedule. stdout and stderr are written to the terminal and appended to the
+job's log files, so 'summond logs' shows manual runs too. The execution is
 recorded in the job's state (last run time, exit code, run count).
 
 Exits with the job's exit code. A non-zero exit means the job itself failed, not summond.`,
@@ -207,8 +209,12 @@ func (a *App) executeSpec(spec job.Spec, changedPaths []string, attempt int) (in
 		"SUMMOND_CHANGED_PATHS": strings.Join(changedPaths, ":"),
 		"SUMMOND_ATTEMPT":       fmt.Sprintf("%d", attempt),
 	})
-	cmd.Stdout = a.stdout
-	cmd.Stderr = a.stderr
+	stdout, closeStdout := a.teeToLog(a.stdout, spec.StdoutPath)
+	defer closeStdout()
+	stderr, closeStderr := a.teeToLog(a.stderr, spec.StderrPath)
+	defer closeStderr()
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.Stdin = a.stdin
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
@@ -218,6 +224,30 @@ func (a *App) executeSpec(spec job.Spec, changedPaths []string, attempt int) (in
 		return 1, err
 	}
 	return 0, nil
+}
+
+// teeToLog also writes w's output to the job log at path, so manual runs land
+// in the same log files as launchd runs. It returns w unchanged when w already
+// is the log file (launchd redirected stdout/stderr there via the plist).
+func (a *App) teeToLog(w io.Writer, path string) (io.Writer, func()) {
+	noop := func() {}
+	if path == "" {
+		return w, noop
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	if err != nil {
+		a.logger.Debug("open job log", "path", path, "error", err)
+		return w, noop
+	}
+	if wf, ok := w.(*os.File); ok {
+		wInfo, wErr := wf.Stat()
+		fInfo, fErr := f.Stat()
+		if wErr == nil && fErr == nil && os.SameFile(wInfo, fInfo) {
+			f.Close()
+			return w, noop
+		}
+	}
+	return io.MultiWriter(w, f), func() { f.Close() }
 }
 
 func pathFingerprint(path string) string {
