@@ -40,10 +40,11 @@ jobs:
 
       - uses: goreleaser/goreleaser-action@v7
         with:
-          # Pin the GoReleaser CLI's major explicitly. v7 of the action
-          # happens to default to this, but the pin is the thing we
-          # actually want to depend on, not the default.
-          version: "~> v2"
+          # Pin the GoReleaser CLI explicitly rather than relying on the
+          # action's default. v2.19 is the floor: the cask's
+          # hooks.post.install_steps key and .StagedPath field were added
+          # there.
+          version: "~> v2.19"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

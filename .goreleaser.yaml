@@ -33,8 +33,8 @@ homebrew_casks:
       - summond
     hooks:
       post:
-        install: |
-          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}"]
+        install_steps: |
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}"]
     uninstall:
       launchctl:
         - "com.joshgummersall.summond.*"
