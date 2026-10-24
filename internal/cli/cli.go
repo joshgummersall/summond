@@ -132,6 +132,7 @@ Exit codes:
 		a.newLogsCommand(),
 		a.newExecCommand(),
 		a.newKillCommand(),
+		a.newRestartCommand(),
 		a.newEnvCommand(),
 		a.newCDCommand(),
 		a.newVersionCommand(),
