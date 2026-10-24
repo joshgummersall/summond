@@ -165,6 +165,7 @@ summond logs cleanup          # output from the last execution
 summond logs cleanup -f       # stream new output live
 summond exec cleanup          # run immediately in the foreground
 summond kill cleanup          # stop a running job and reconcile its state
+summond restart cleanup       # restart through launchd (useful for login jobs)
 summond state cleanup         # full execution history as JSON
 ```
 
