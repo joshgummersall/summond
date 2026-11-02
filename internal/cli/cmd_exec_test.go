@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/joshgummersall/summond/internal/job"
 )
@@ -225,7 +228,7 @@ func TestExecuteSpecSourcesEnvFileForCommandJobs(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	exitCode, err := app.executeSpec(job.Spec{
+	exitCode, _, err := app.executeSpec(job.Spec{
 		Name:                "hello",
 		Target:              job.TargetAgent,
 		Command:             "hello",
@@ -233,7 +236,7 @@ func TestExecuteSpecSourcesEnvFileForCommandJobs(t *testing.T) {
 		Schedule: job.Schedule{
 			Kind: job.ScheduleDaily,
 		},
-	}, nil, 0)
+	}, nil, 0, nil)
 	if err != nil {
 		t.Fatalf("executeSpec() error = %v", err)
 	}
@@ -335,4 +338,103 @@ func TestExecDoesNotDuplicateWhenStdoutIsLogFile(t *testing.T) {
 	if string(got) != "once\n" {
 		t.Fatalf("log = %q, want %q", got, "once\n")
 	}
+}
+
+// A SIGTERM from launchd (restart, kill, logout) must not leave the run
+// recorded as "running". summond runs in its own process group, as under
+// launchd, and only summond is signaled. The shell_command case covers bash
+// deferring SIGTERM while it waits on a foreground child (brew in issue #22).
+func TestExecRecordsRunStoppedBySIGTERM(t *testing.T) {
+	cases := map[string]string{
+		"command":       "command = \"/bin/sh\"\nargs = [\"-c\", \"touch $MARKER && exec sleep 30\"]",
+		"shell_command": "shell_command = \"touch $MARKER && sleep 30\"",
+	}
+	for name, job := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := testHome(t)
+			marker := filepath.Join(home, "started")
+			app := newTestAppAt(t, home)
+			configPath := filepath.Join(home, "summond.toml")
+			data := strings.Join([]string{
+				"[jobs.sleeper]",
+				strings.ReplaceAll(job, "$MARKER", marker),
+				`target = "agent"`,
+				`schedule = "daily"`,
+				"hour = 3",
+				"minute = 45",
+				"[jobs.sleeper.retry]",
+				"attempts = 2",
+			}, "\n")
+			if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			if err := app.run([]string{"apply", configPath}); err != nil {
+				t.Fatalf("apply error = %v", err)
+			}
+
+			cmd := exec.Command(os.Args[0], "-test.run=^TestExecSIGTERMHelper$")
+			cmd.Env = append(os.Environ(), "SUMMOND_SIGTERM_HELPER_HOME="+home)
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			if err := cmd.Start(); err != nil {
+				t.Fatalf("Start() error = %v", err)
+			}
+			defer syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				if _, err := os.Stat(marker); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("job never started")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				t.Fatalf("Signal() error = %v", err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- cmd.Wait() }()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("job was not stopped by SIGTERM")
+			}
+			if got := cmd.ProcessState.ExitCode(); got != 128+int(syscall.SIGTERM) {
+				t.Fatalf("exit code = %d", got)
+			}
+
+			spec, err := app.store.Load("sleeper")
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if spec.LastFinishedAt == nil {
+				t.Fatal("run still recorded as running")
+			}
+			if spec.RunCount != 1 || spec.FailureCount != 1 {
+				t.Fatalf("RunCount = %d, FailureCount = %d", spec.RunCount, spec.FailureCount)
+			}
+			if spec.LastExitCode == nil || *spec.LastExitCode != 128+int(syscall.SIGTERM) {
+				t.Fatalf("LastExitCode = %v", spec.LastExitCode)
+			}
+		})
+	}
+}
+
+// TestExecSIGTERMHelper runs "summond exec sleeper" in a child process for
+// TestExecRecordsRunStoppedBySIGTERM.
+func TestExecSIGTERMHelper(t *testing.T) {
+	home := os.Getenv("SUMMOND_SIGTERM_HELPER_HOME")
+	if home == "" {
+		t.Skip("helper process only")
+	}
+	app := newTestAppAt(t, home)
+	err := app.run([]string{"exec", "sleeper"})
+	var exitErr ExitError
+	if errors.As(err, &exitErr) {
+		os.Exit(exitErr.Code)
+	}
+	if err != nil {
+		os.Exit(1)
+	}
+	os.Exit(0)
 }
