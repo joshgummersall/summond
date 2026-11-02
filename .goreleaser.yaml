@@ -41,21 +41,29 @@ homebrew_casks:
     # Homebrew runs uninstall stanzas and *_steps hooks on `brew upgrade` too,
     # so job cleanup belongs in zap, which runs only on `brew uninstall --zap`.
     # `summond uninstall` boots out every managed job, including idle ones that
-    # the launchctl wildcard misses (it matches running jobs only). zap lives in
-    # custom_block because GoReleaser's zap key has no script field.
+    # the launchctl wildcard misses (it matches running jobs only). It runs
+    # twice, like other summond commands: as the user for agents, then with
+    # sudo for daemons and system files. zap lives in custom_block because
+    # GoReleaser's zap key has no script field.
     custom_block: |
-      zap launchctl: "com.joshgummersall.summond.*",
-          script:    {
+      zap early_script: {
             executable:   "#{HOMEBREW_PREFIX}/bin/summond",
             args:         ["uninstall", "--yes"],
             must_succeed: false,
           },
-          delete:    [
+          launchctl:    "com.joshgummersall.summond.*",
+          script:       {
+            executable:   "#{HOMEBREW_PREFIX}/bin/summond",
+            args:         ["uninstall", "--yes"],
+            sudo:         true,
+            must_succeed: false,
+          },
+          delete:       [
             "/Library/LaunchDaemons/com.joshgummersall.summond.*.plist",
             "/Library/Application Support/summond",
             "/etc/newsyslog.d/com.joshgummersall.summond.conf",
           ],
-          trash:     [
+          trash:        [
             "~/Library/LaunchAgents/com.joshgummersall.summond.*.plist",
             "~/Library/Application Support/summond",
           ]
