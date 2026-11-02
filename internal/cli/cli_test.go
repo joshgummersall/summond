@@ -202,7 +202,11 @@ func testHome(t *testing.T) string {
 
 func newTestApp(t *testing.T) *App {
 	t.Helper()
-	home := testHome(t)
+	return newTestAppAt(t, testHome(t))
+}
+
+func newTestAppAt(t *testing.T, home string) *App {
+	t.Helper()
 	agentStore := state.NewStore(state.Paths{
 		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),

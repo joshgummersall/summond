@@ -6,8 +6,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joshgummersall/summond/internal/job"
@@ -137,59 +139,82 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 				defer unlock()
 			}
 
-			changedPaths, newFingerprints := watchChanges(spec, managed.store)
-			startedAt := time.Now()
-			if err := managed.store.RecordExecutionStart(spec.Name, startedAt); err != nil {
+			exitCode, runErr, err := a.runAndRecord(spec, managed.store)
+			if err != nil {
 				return err
-			}
-			record := job.ExecutionRecord{StartedAt: startedAt}
-
-			maxAttempts := 1 + spec.RetryAttempts
-			delay := time.Duration(spec.RetryDelaySeconds) * time.Second
-			exitCode, runErr := 0, error(nil)
-
-			for attempt := 0; attempt < maxAttempts; attempt++ {
-				if attempt > 0 {
-					time.Sleep(delay)
-					delay *= 2
-					if spec.RetryMaxDelaySeconds > 0 {
-						if cap := time.Duration(spec.RetryMaxDelaySeconds) * time.Second; delay > cap {
-							delay = cap
-						}
-					}
-				}
-				exitCode, runErr = a.executeSpec(spec, changedPaths, attempt)
-				if runErr == nil {
-					break
-				}
-				var exitErr *exec.ExitError
-				if !errors.As(runErr, &exitErr) {
-					break
-				}
-			}
-
-			finishedAt := time.Now()
-			record.FinishedAt = &finishedAt
-			record.ExitCode = &exitCode
-			if runErr != nil {
-				record.Error = runErr.Error()
-			}
-			if err := managed.store.RecordExecutionFinish(spec.Name, record); err != nil {
-				return err
-			}
-			if runErr == nil && len(newFingerprints) > 0 {
-				_ = managed.store.UpdateWatchFingerprints(spec.Name, newFingerprints)
 			}
 			if runErr != nil {
 				return ExitError{Code: exitCode, Message: runErr.Error()}
 			}
 			return nil
-
 		},
 	}
 }
 
-func (a *App) executeSpec(spec job.Spec, changedPaths []string, attempt int) (int, error) {
+// runAndRecord runs spec with retries and records the run in store. runErr is
+// the job's own failure; err is a failure to record state.
+//
+// Termination signals are trapped while the job runs, so a stop from launchd
+// (restart, kill, logout) still records the run as finished instead of leaving
+// it "running" forever. Signals are forwarded to the job and stop retries.
+func (a *App) runAndRecord(spec job.Spec, store *state.Store) (exitCode int, runErr error, err error) {
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	defer signal.Stop(sigs)
+
+	changedPaths, newFingerprints := watchChanges(spec, store)
+	startedAt := time.Now()
+	if err := store.RecordExecutionStart(spec.Name, startedAt); err != nil {
+		return 0, nil, err
+	}
+
+	maxAttempts := 1 + spec.RetryAttempts
+	delay := time.Duration(spec.RetryDelaySeconds) * time.Second
+	var received os.Signal
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case received = <-sigs:
+			case <-time.After(delay):
+			}
+			if received != nil {
+				break
+			}
+			delay *= 2
+			if spec.RetryMaxDelaySeconds > 0 {
+				if cap := time.Duration(spec.RetryMaxDelaySeconds) * time.Second; delay > cap {
+					delay = cap
+				}
+			}
+		}
+		exitCode, received, runErr = a.executeSpec(spec, changedPaths, attempt, sigs)
+		if runErr == nil || received != nil {
+			break
+		}
+		var exitErr *exec.ExitError
+		if !errors.As(runErr, &exitErr) {
+			break
+		}
+	}
+
+	finishedAt := time.Now()
+	record := job.ExecutionRecord{StartedAt: startedAt, FinishedAt: &finishedAt, ExitCode: &exitCode}
+	if runErr != nil {
+		record.Error = runErr.Error()
+	}
+	if err := store.RecordExecutionFinish(spec.Name, record); err != nil {
+		return exitCode, runErr, err
+	}
+	if runErr == nil && len(newFingerprints) > 0 {
+		_ = store.UpdateWatchFingerprints(spec.Name, newFingerprints)
+	}
+	return exitCode, runErr, nil
+}
+
+// executeSpec runs one attempt of the job. Signals that arrive on sigs while
+// the job runs are forwarded to it; the last one is returned as received so
+// the caller can stop retrying.
+func (a *App) executeSpec(spec job.Spec, changedPaths []string, attempt int, sigs <-chan os.Signal) (exitCode int, received os.Signal, err error) {
 	var cmd *exec.Cmd
 	envFilePath := a.environmentFilePath(spec)
 	envPreamble := jsonEnvPreamble(envFilePath)
@@ -216,14 +241,54 @@ func (a *App) executeSpec(spec job.Spec, changedPaths []string, attempt int) (in
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.Stdin = a.stdin
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode(), err
-		}
-		return 1, err
+	if err := cmd.Start(); err != nil {
+		return 1, nil, err
 	}
-	return 0, nil
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	forwarded := false
+	for {
+		select {
+		case sig := <-sigs:
+			received = sig
+			forwardSignal(cmd.Process, sig, !forwarded)
+			forwarded = true
+		case err := <-done:
+			return exitCodeOf(err), received, err
+		}
+	}
+}
+
+// forwardSignal passes sig on to the job. bash defers a trapped SIGTERM until
+// its foreground child exits, so signaling only bash would leave a long command
+// (such as brew) running until launchd escalates to SIGKILL and the run is never
+// recorded. When summond leads its process group, as it does under launchd, the
+// first SIGTERM goes to the whole group so every process in the job sees it.
+// Our own copy of that signal comes back on sigs, so this happens once; later
+// signals go to the direct child only. SIGINT and SIGHUP from a terminal
+// already reach the whole foreground group, so they are not re-sent to it.
+func forwardSignal(p *os.Process, sig os.Signal, first bool) {
+	if first && sig == syscall.SIGTERM && syscall.Getpgrp() == os.Getpid() {
+		_ = syscall.Kill(-os.Getpid(), syscall.SIGTERM)
+		return
+	}
+	_ = p.Signal(sig)
+}
+
+// exitCodeOf maps a cmd.Wait error to a shell-style exit code: 0 on success,
+// 128+N when the process died from signal N, 1 for non-exit errors.
+func exitCodeOf(err error) int {
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return 1
+	}
+	if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+		return 128 + int(ws.Signal())
+	}
+	return exitErr.ExitCode()
 }
 
 // teeToLog also writes w's output to the job log at path, so manual runs land
