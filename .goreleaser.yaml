@@ -35,12 +35,27 @@ homebrew_casks:
       post:
         install_steps: |
           run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}"]
-    uninstall:
-      launchctl:
-        - "com.joshgummersall.summond.*"
-    zap:
-      launchctl:
-        - "com.joshgummersall.summond.*"
-      trash:
-        - "~/Library/LaunchAgents/com.joshgummersall.summond.*.plist"
-        - "~/Library/Application Support/summond"
+    caveats: |
+      Jobs keep running after `brew uninstall`. To remove every job, log, and
+      state directory, run `summond uninstall` first or use `brew uninstall --zap`.
+    # Homebrew runs uninstall stanzas and *_steps hooks on `brew upgrade` too,
+    # so job cleanup belongs in zap, which runs only on `brew uninstall --zap`.
+    # `summond uninstall` boots out every managed job, including idle ones that
+    # the launchctl wildcard misses (it matches running jobs only). zap lives in
+    # custom_block because GoReleaser's zap key has no script field.
+    custom_block: |
+      zap launchctl: "com.joshgummersall.summond.*",
+          script:    {
+            executable:   "#{HOMEBREW_PREFIX}/bin/summond",
+            args:         ["uninstall", "--yes"],
+            must_succeed: false,
+          },
+          delete:    [
+            "/Library/LaunchDaemons/com.joshgummersall.summond.*.plist",
+            "/Library/Application Support/summond",
+            "/etc/newsyslog.d/com.joshgummersall.summond.conf",
+          ],
+          trash:     [
+            "~/Library/LaunchAgents/com.joshgummersall.summond.*.plist",
+            "~/Library/Application Support/summond",
+          ]
