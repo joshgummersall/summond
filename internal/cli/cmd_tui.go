@@ -538,44 +538,9 @@ func (e *execProcess) Run() error {
 	e.app.stdin, e.app.stdout, e.app.stderr = e.stdin, e.stdout, e.stderr
 	defer func() { e.app.stdin, e.app.stdout, e.app.stderr = saved.in, saved.out, saved.err }()
 
-	changedPaths, newFingerprints := watchChanges(spec, e.managed.store)
-	startedAt := time.Now()
-	if err := e.managed.store.RecordExecutionStart(spec.Name, startedAt); err != nil {
+	_, runErr, err := e.app.runAndRecord(spec, e.managed.store)
+	if err != nil {
 		return err
-	}
-	record := job.ExecutionRecord{StartedAt: startedAt}
-
-	maxAttempts := 1 + spec.RetryAttempts
-	delay := time.Duration(spec.RetryDelaySeconds) * time.Second
-	exitCode, runErr := 0, error(nil)
-
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if attempt > 0 {
-			time.Sleep(delay)
-			delay *= 2
-			if spec.RetryMaxDelaySeconds > 0 {
-				if cap := time.Duration(spec.RetryMaxDelaySeconds) * time.Second; delay > cap {
-					delay = cap
-				}
-			}
-		}
-		exitCode, runErr = e.app.executeSpec(spec, changedPaths, attempt)
-		if runErr == nil {
-			break
-		}
-	}
-
-	finishedAt := time.Now()
-	record.FinishedAt = &finishedAt
-	record.ExitCode = &exitCode
-	if runErr != nil {
-		record.Error = runErr.Error()
-	}
-	if err := e.managed.store.RecordExecutionFinish(spec.Name, record); err != nil {
-		return err
-	}
-	if runErr == nil && len(newFingerprints) > 0 {
-		_ = e.managed.store.UpdateWatchFingerprints(spec.Name, newFingerprints)
 	}
 	return runErr
 }
