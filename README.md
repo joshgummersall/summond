@@ -16,6 +16,16 @@ Or install from source (requires Go 1.24+):
 go install github.com/joshgummersall/summond/cmd/summond@latest
 ```
 
+## Uninstall
+
+Jobs run from a copy of summond in Application Support, so they keep running after `brew uninstall`. To remove every job, plist, log, and state directory:
+
+```sh
+brew uninstall --zap summond
+```
+
+Or run `summond uninstall` before `brew uninstall`. Homebrew runs a cask's plain uninstall steps on every upgrade too, so only `--zap` removes jobs.
+
 ## How it works
 
 Define jobs in a TOML file and apply them:
