@@ -3,7 +3,6 @@ package launchd
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"os/exec"
 
 	"github.com/joshgummersall/summond/internal/job"
@@ -17,27 +16,39 @@ type Runner interface {
 	Print(spec job.Spec) (string, error)
 }
 
-type LaunchCtl struct{}
-
-func (LaunchCtl) Bootstrap(spec job.Spec) error {
-	return run("launchctl", "bootstrap", domain(spec.Target), spec.PlistPath)
+// LaunchCtl runs launchctl against one domain: "system" for daemons or
+// "gui/<uid>" for agents.
+type LaunchCtl struct {
+	Domain string
 }
 
-func (LaunchCtl) Bootout(spec job.Spec) error {
-	return run("launchctl", "bootout", domain(spec.Target), spec.PlistPath)
+// DomainFor returns the launchd domain for the scope that euid selects.
+func DomainFor(euid int) string {
+	if euid == 0 {
+		return "system"
+	}
+	return fmt.Sprintf("gui/%d", euid)
 }
 
-func (LaunchCtl) Kickstart(spec job.Spec) error {
-	return run("launchctl", "kickstart", "-k", serviceTarget(spec))
+func (l LaunchCtl) Bootstrap(spec job.Spec) error {
+	return run("launchctl", "bootstrap", l.Domain, spec.PlistPath)
 }
 
-func (LaunchCtl) Stop(spec job.Spec) error {
-	return run("launchctl", "kill", "TERM", serviceTarget(spec))
+func (l LaunchCtl) Bootout(spec job.Spec) error {
+	return run("launchctl", "bootout", l.Domain, spec.PlistPath)
 }
 
-func (LaunchCtl) Print(spec job.Spec) (string, error) {
+func (l LaunchCtl) Kickstart(spec job.Spec) error {
+	return run("launchctl", "kickstart", "-k", l.serviceTarget(spec))
+}
+
+func (l LaunchCtl) Stop(spec job.Spec) error {
+	return run("launchctl", "kill", "TERM", l.serviceTarget(spec))
+}
+
+func (l LaunchCtl) Print(spec job.Spec) (string, error) {
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command("launchctl", "print", serviceTarget(spec))
+	cmd := exec.Command("launchctl", "print", l.serviceTarget(spec))
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -59,13 +70,6 @@ func run(name string, args ...string) error {
 	return nil
 }
 
-func domain(target job.Target) string {
-	if target == job.TargetDaemon {
-		return "system"
-	}
-	return fmt.Sprintf("gui/%d", os.Getuid())
-}
-
-func serviceTarget(spec job.Spec) string {
-	return domain(spec.Target) + "/" + spec.Label
+func (l LaunchCtl) serviceTarget(spec job.Spec) string {
+	return l.Domain + "/" + spec.Label
 }

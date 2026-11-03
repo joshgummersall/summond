@@ -24,11 +24,10 @@ the run is recorded as successful; otherwise it is marked as failed.`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			managed, err := a.loadManagedSpec(name)
+			spec, err := a.loadManagedSpec(name)
 			if err != nil {
 				return err
 			}
-			spec := managed.spec
 
 			if spec.LastStartedAt == nil || spec.LastFinishedAt != nil {
 				fmt.Fprintf(a.stdout, "%s is not running\n", spec.Name)
@@ -60,7 +59,7 @@ the run is recorded as successful; otherwise it is marked as failed.`,
 				}
 			}
 
-			if err := managed.store.RecordExecutionFinish(spec.Name, record); err != nil {
+			if err := a.store.RecordExecutionFinish(spec.Name, record); err != nil {
 				return fmt.Errorf("reconcile state: %w", err)
 			}
 			return nil

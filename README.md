@@ -59,10 +59,10 @@ working_dir = "$HOME/projects/foo"
 
 ```sh
 # Run a binary on a schedule
-summond add agent cleanup --schedule daily --hour 3 --minute 0 -- /usr/local/bin/my-script
+summond add cleanup --schedule daily --hour 3 --minute 0 -- /usr/local/bin/my-script
 
 # Run a shell snippet
-summond add agent rotate-logs --schedule daily --hour 3 --minute 30 <<'EOF'
+summond add rotate-logs --schedule daily --hour 3 --minute 30 <<'EOF'
 find /tmp -type f -mtime +7 -delete
 EOF
 ```
@@ -185,7 +185,7 @@ summond rotates these logs itself. Before each run, a log larger than 5 MiB is c
 
 ## Agents and daemons
 
-Jobs run as LaunchAgents (per-user) by default. Set `target = "daemon"` for system-wide LaunchDaemons — summond will prompt for `sudo` when needed.
+`summond` manages LaunchAgents for the current user. `sudo summond` manages system-wide LaunchDaemons, with its own state and env file under `/Library/Application Support/summond`. A job with `target = "daemon"` applies only under `sudo summond apply`.
 
 ## Retry and backoff
 
@@ -205,7 +205,7 @@ max_delay_seconds = 60  # cap the doubling delay (0 = no cap)
 Or via `summond add`:
 
 ```sh
-summond add agent flaky-api-sync --schedule hourly \
+summond add flaky-api-sync --schedule hourly \
   --retry-attempts 3 \
   --retry-delay-seconds 5 \
   --retry-max-delay-seconds 60 \

@@ -102,16 +102,14 @@ func TestRemoveDryRunPrintsPlanWithoutDeleting(t *testing.T) {
 	}
 }
 
-func TestRemoveDaemonJobRetriesWithSudo(t *testing.T) {
-	app := newTestApp(t)
+func TestRemoveDaemonJobIgnoresBootoutFailureWithoutSudo(t *testing.T) {
+	app := newDaemonTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
-	app.stdin = strings.NewReader("y\n")
 	runner := app.runner.(*fakeRunner)
 	runner.bootoutErr = map[string]error{"cleanup": errors.New("launchctl bootout failed")}
-	priv := app.priv.(*fakePrivilegedOperator)
 
-	spec, err := app.daemonStore.Install(job.Spec{
+	spec, err := app.store.Install(job.Spec{
 		Group:    "tests",
 		Name:     "cleanup",
 		Target:   job.TargetDaemon,
@@ -125,28 +123,24 @@ func TestRemoveDaemonJobRetriesWithSudo(t *testing.T) {
 	if err := app.run([]string{"remove", "cleanup"}); err != nil {
 		t.Fatalf("remove error = %v", err)
 	}
-	if got := stdout.String(); !strings.Contains(got, "removing daemon jobs requires sudo. Retry with sudo? [Y/n]: ") || !strings.Contains(got, "removed cleanup\n") {
+	if got := stdout.String(); got != "removed cleanup\n" {
 		t.Fatalf("stdout = %q", got)
 	}
-	if !containsString(priv.bootout, spec.PlistPath) {
-		t.Fatalf("priv.bootout = %#v", priv.bootout)
-	}
-	if !containsString(priv.removed, spec.PlistPath) ||
-		!containsString(priv.removed, app.daemonStore.MetadataPathForSpec(spec)) ||
-		!containsString(priv.removed, app.daemonStore.JobDirForSpec(spec)) {
-		t.Fatalf("priv.removed = %#v", priv.removed)
+	for _, path := range []string{spec.PlistPath, app.store.JobDirForSpec(spec)} {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expected %s removed, stat err = %v", path, err)
+		}
 	}
 }
 
 func TestRemoveDaemonJobDeletesStaleJobDirectoryFromList(t *testing.T) {
-	app := newTestApp(t)
+	app := newDaemonTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
-	app.stdin = strings.NewReader("y\n")
 	runner := app.runner.(*fakeRunner)
 	runner.bootoutErr = map[string]error{"cleanup": errors.New("launchctl bootout failed")}
 
-	spec, err := app.daemonStore.Install(job.Spec{
+	spec, err := app.store.Install(job.Spec{
 		Group:    "tests",
 		Name:     "cleanup",
 		Target:   job.TargetDaemon,
@@ -159,10 +153,10 @@ func TestRemoveDaemonJobDeletesStaleJobDirectoryFromList(t *testing.T) {
 	started := time.Now().Add(-time.Second).UTC()
 	finished := time.Now().UTC()
 	exitCode := 0
-	if err := app.daemonStore.RecordExecutionStart(spec.Name, started); err != nil {
+	if err := app.store.RecordExecutionStart(spec.Name, started); err != nil {
 		t.Fatalf("RecordExecutionStart() error = %v", err)
 	}
-	if err := app.daemonStore.RecordExecutionFinish(spec.Name, job.ExecutionRecord{
+	if err := app.store.RecordExecutionFinish(spec.Name, job.ExecutionRecord{
 		StartedAt:  started,
 		FinishedAt: &finished,
 		ExitCode:   &exitCode,
@@ -189,13 +183,8 @@ func TestApplyPrunePromptCancelsWithoutFlag(t *testing.T) {
 		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
-	daemonStore := state.NewStore(state.Paths{
-		Home:      filepath.Join(home, "managed-daemon"),
-		LaunchDir: filepath.Join(home, "LaunchDaemons"),
-	})
 	runner := &fakeRunner{}
-	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, daemonStore, runner, bootstrap.NewManager(state.PathSet{Agent: store.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, &fakeBootstrapInstaller{}))
-	app.priv = &fakePrivilegedOperator{}
+	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, runner, bootstrap.NewManager(store.Paths().Home, filepath.Join(home, "newsyslog.d"), &fakeBootstrapInstaller{}))
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 	if err := os.MkdirAll(store.Paths().Home, 0o755); err != nil {

@@ -54,12 +54,8 @@ func TestInstallPermissionDeniedCanUseSudoRetry(t *testing.T) {
 		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
-	daemonStore := state.NewStore(state.Paths{
-		Home:      filepath.Join(home, "managed-daemon"),
-		LaunchDir: filepath.Join(home, "LaunchDaemons"),
-	})
 	installer := &fakeBootstrapInstaller{err: &bootstrap.PermissionError{Err: os.ErrPermission}}
-	app := NewApp(strings.NewReader("y\ny\ny\n"), &bytes.Buffer{}, store, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: store.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, installer))
+	app := NewApp(strings.NewReader("y\ny\ny\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths().Home, filepath.Join(home, "newsyslog.d"), installer))
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
@@ -69,7 +65,7 @@ func TestInstallPermissionDeniedCanUseSudoRetry(t *testing.T) {
 	if len(installer.sudoCalls) != 1 {
 		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
 	}
-	if got := stdout.String(); !strings.Contains(got, "install will:\n") || !strings.Contains(got, "Proceed with install? [y/N]: ") || !strings.Contains(got, "system setup requires sudo") {
+	if got := stdout.String(); !strings.Contains(got, "install will:\n") || !strings.Contains(got, "Proceed with install? [y/N]: ") || !strings.Contains(got, "installing the newsyslog config requires sudo") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 }
@@ -90,12 +86,8 @@ func TestInstallCancelSkipsChanges(t *testing.T) {
 		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
-	daemonStore := state.NewStore(state.Paths{
-		Home:      filepath.Join(home, "managed-daemon"),
-		LaunchDir: filepath.Join(home, "LaunchDaemons"),
-	})
 	installer := &fakeBootstrapInstaller{err: &bootstrap.PermissionError{Err: os.ErrPermission}}
-	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: store.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, installer))
+	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths().Home, filepath.Join(home, "newsyslog.d"), installer))
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
@@ -126,12 +118,8 @@ func TestInstallSkipNewsyslogAvoidsPromptAndManualSudo(t *testing.T) {
 		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
-	daemonStore := state.NewStore(state.Paths{
-		Home:      filepath.Join(home, "managed-daemon"),
-		LaunchDir: filepath.Join(home, "LaunchDaemons"),
-	})
 	installer := &fakeBootstrapInstaller{err: &bootstrap.PermissionError{Err: os.ErrPermission}}
-	app := NewApp(strings.NewReader("y\n"), &bytes.Buffer{}, store, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: store.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, installer))
+	app := NewApp(strings.NewReader("y\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths().Home, filepath.Join(home, "newsyslog.d"), installer))
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 

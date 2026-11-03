@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -21,12 +22,6 @@ type Paths struct {
 	LaunchDir string
 }
 
-type PathSet struct {
-	Agent        Paths
-	Daemon       Paths
-	NewsyslogDir string
-}
-
 type Store struct {
 	paths Paths
 }
@@ -35,39 +30,23 @@ func NewStore(paths Paths) *Store {
 	return &Store{paths: paths}
 }
 
-func DiscoverPaths() (Paths, error) {
-	set, err := DiscoverPathSet()
-	if err != nil {
-		return Paths{}, err
-	}
-	return set.Agent, nil
-}
-
-func DiscoverPathSet() (PathSet, error) {
-	current, err := user.Current()
-	if err != nil {
-		return PathSet{}, fmt.Errorf("resolve user home: %w", err)
-	}
-
-	// When running under sudo, use the original user's home so that agent
-	// paths (including the install marker) resolve correctly.
-	agentUser := current
-	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" && current.Uid == "0" {
-		if u, err := user.Lookup(sudoUser); err == nil {
-			agentUser = u
-		}
-	}
-
-	return PathSet{
-		Agent: Paths{
-			Home:      filepath.Join(agentUser.HomeDir, "Library", "Application Support", "summond"),
-			LaunchDir: filepath.Join(agentUser.HomeDir, "Library", "LaunchAgents"),
-		},
-		Daemon: Paths{
+// DiscoverPaths returns the paths for the scope that euid selects: root
+// manages daemons under /Library, and any other user manages agents under
+// their own home.
+func DiscoverPaths(euid int) (Paths, error) {
+	if euid == 0 {
+		return Paths{
 			Home:      filepath.Join(string(filepath.Separator), "Library", "Application Support", "summond"),
 			LaunchDir: filepath.Join(string(filepath.Separator), "Library", "LaunchDaemons"),
-		},
-		NewsyslogDir: filepath.Join(string(filepath.Separator), "etc", "newsyslog.d"),
+		}, nil
+	}
+	current, err := user.LookupId(strconv.Itoa(euid))
+	if err != nil {
+		return Paths{}, fmt.Errorf("resolve user home: %w", err)
+	}
+	return Paths{
+		Home:      filepath.Join(current.HomeDir, "Library", "Application Support", "summond"),
+		LaunchDir: filepath.Join(current.HomeDir, "Library", "LaunchAgents"),
 	}, nil
 }
 

@@ -59,3 +59,44 @@ func TestRunEnvSetGetList(t *testing.T) {
 		t.Fatalf("MY_KEY = %q", env["MY_KEY"])
 	}
 }
+
+func TestEnvWritesAreMode0600(t *testing.T) {
+	app := newTestApp(t)
+	path := app.store.EnvFilePath()
+	assertMode := func(step string) {
+		t.Helper()
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("%s: Stat() error = %v", step, err)
+		}
+		if mode := info.Mode().Perm(); mode != 0o600 {
+			t.Fatalf("%s: mode = %o, want 600", step, mode)
+		}
+	}
+
+	if err := app.run([]string{"env", "list"}); err != nil {
+		t.Fatalf("env list error = %v", err)
+	}
+	assertMode("first write")
+
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+	if err := app.run([]string{"env", "set", "MY_KEY=hello"}); err != nil {
+		t.Fatalf("env set error = %v", err)
+	}
+	assertMode("set")
+
+	if err := app.run([]string{"env", "remove", "MY_KEY"}); err != nil {
+		t.Fatalf("env remove error = %v", err)
+	}
+	assertMode("remove")
+}
+
+func TestEnvRejectsDaemonFlag(t *testing.T) {
+	app := newTestApp(t)
+	err := app.run([]string{"env", "set", "--daemon", "MY_KEY=hello"})
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --daemon") {
+		t.Fatalf("env set error = %v", err)
+	}
+}

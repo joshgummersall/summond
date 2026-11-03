@@ -8,8 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/joshgummersall/summond/internal/state"
 )
 
 const newsyslogFilename = "com.joshgummersall.summond.conf"
@@ -29,7 +27,6 @@ type Result struct {
 	NewsyslogGenerateStatus string
 	NewsyslogInstallPath    string
 	NewsyslogInstalled      bool
-	DaemonStateInitialized  bool
 	UsedSudo                bool
 }
 
@@ -46,7 +43,6 @@ type UninstallResult struct {
 type Installer interface {
 	Install(src, dst string) error
 	InstallWithSudo(src, dst string) error
-	MkdirAllWithSudo(path string) error
 	Remove(path string) error
 	RemoveWithSudo(path string) error
 }
@@ -69,18 +65,20 @@ func (e *PermissionError) Unwrap() error {
 	return e.Err
 }
 
+// DefaultNewsyslogDir is where the system newsyslog config is installed.
+const DefaultNewsyslogDir = "/etc/newsyslog.d"
+
+// Manager sets up the state home of one scope.
 type Manager struct {
-	agentHome    string
-	daemonHome   string
+	home         string
 	newsyslogDir string
 	installer    Installer
 }
 
-func NewManager(paths state.PathSet, installer Installer) *Manager {
+func NewManager(home string, newsyslogDir string, installer Installer) *Manager {
 	return &Manager{
-		agentHome:    paths.Agent.Home,
-		daemonHome:   paths.Daemon.Home,
-		newsyslogDir: paths.NewsyslogDir,
+		home:         home,
+		newsyslogDir: newsyslogDir,
 		installer:    installer,
 	}
 }
@@ -102,39 +100,13 @@ func (m *Manager) Install(opts Options) (Result, error) {
 		return result, err
 	}
 	result.ConfigStatus = configStatus
-	envStatus, err := writeFile(result.EnvPath, []byte(RenderEnvFile()), opts.Overwrite)
+	envStatus, err := writeFileMode(result.EnvPath, []byte(RenderEnvFile()), opts.Overwrite, 0o600)
 	if err != nil {
 		return result, err
 	}
 	result.EnvStatus = envStatus
-
-	// Ensure bin/ directory exists in the agent state dir.
-	if err := os.MkdirAll(filepath.Join(m.agentHome, "bin"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(m.home, "bin"), 0o755); err != nil {
 		return result, err
-	}
-
-	// Write daemon env.json and bin/ if the daemon state dir differs from the agent dir.
-	// If the daemon home is not writable (e.g. /Library/... requires sudo), set a flag
-	// so the caller can retry with sudo via InitDaemonStateWithSudo.
-	if m.daemonHome != "" && m.daemonHome != m.agentHome {
-		daemonEnvPath := filepath.Join(m.daemonHome, "env.json")
-		binPath := filepath.Join(m.daemonHome, "bin")
-		mkdirErr := os.MkdirAll(binPath, 0o755)
-		_, envErr := writeFile(daemonEnvPath, []byte(RenderEnvFile()), opts.Overwrite)
-		if mkdirErr != nil || envErr != nil {
-			permDenied := errors.Is(mkdirErr, os.ErrPermission) || errors.Is(envErr, os.ErrPermission)
-			if !permDenied {
-				if mkdirErr != nil {
-					return result, mkdirErr
-				}
-				return result, envErr
-			}
-			// Permission denied — caller can retry with InitDaemonStateWithSudo.
-		} else {
-			result.DaemonStateInitialized = true
-		}
-	} else {
-		result.DaemonStateInitialized = true
 	}
 
 	if opts.SkipNewsyslog {
@@ -145,7 +117,7 @@ func (m *Manager) Install(opts Options) (Result, error) {
 		return result, nil
 	}
 
-	newsyslogStatus, err := writeFile(result.NewsyslogGeneratedPath, []byte(renderNewsyslog(m.agentHome, m.daemonHome)), opts.Overwrite)
+	newsyslogStatus, err := writeFile(result.NewsyslogGeneratedPath, []byte(renderNewsyslog(m.home)), opts.Overwrite)
 	if err != nil {
 		return result, err
 	}
@@ -163,47 +135,6 @@ func (m *Manager) Install(opts Options) (Result, error) {
 
 func (m *Manager) Init(opts Options) (Result, error) {
 	return m.Install(opts)
-}
-
-func (m *Manager) InitDaemonStateWithSudo(result *Result) error {
-	if m.daemonHome == "" || m.daemonHome == m.agentHome {
-		result.DaemonStateInitialized = true
-		return nil
-	}
-	if err := m.installer.MkdirAllWithSudo(filepath.Join(m.daemonHome, "bin")); err != nil {
-		return err
-	}
-	daemonEnvPath := filepath.Join(m.daemonHome, "env.json")
-	if _, statErr := os.Stat(daemonEnvPath); statErr == nil {
-		result.DaemonStateInitialized = true
-		result.UsedSudo = true
-		return nil
-	}
-	// Use a private temp directory (0700) to prevent local-user TOCTOU races
-	// before the privileged sudo-copy of the env file.
-	tmpDir, err := os.MkdirTemp("", "summond-env-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmpDir)
-	tmpFile, err := os.CreateTemp(tmpDir, "env-*.json")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmpFile.Name()
-	if _, err := tmpFile.WriteString(RenderEnvFile()); err != nil {
-		tmpFile.Close()
-		return err
-	}
-	if err := tmpFile.Close(); err != nil {
-		return err
-	}
-	if err := m.installer.InstallWithSudo(tmpPath, daemonEnvPath); err != nil {
-		return err
-	}
-	result.DaemonStateInitialized = true
-	result.UsedSudo = true
-	return nil
 }
 
 func (m *Manager) InstallNewsyslogWithSudo(result *Result) error {
@@ -257,20 +188,12 @@ func (m *Manager) UninstallNewsyslogWithSudo(result *UninstallResult) error {
 	return nil
 }
 
-func (m *Manager) stateDirs() []string {
-	dirs := []string{m.agentHome}
-	if m.daemonHome != "" && m.daemonHome != m.agentHome {
-		dirs = append(dirs, m.daemonHome)
-	}
-	return dirs
-}
-
 func (m *Manager) GeneratedNewsyslogPath() string {
-	return filepath.Join(m.agentHome, newsyslogFilename)
+	return filepath.Join(m.home, newsyslogFilename)
 }
 
 func (m *Manager) EnvFilePath() string {
-	return filepath.Join(m.agentHome, "env.json")
+	return filepath.Join(m.home, "env.json")
 }
 
 func (m *Manager) SystemNewsyslogPath() string {
@@ -278,11 +201,11 @@ func (m *Manager) SystemNewsyslogPath() string {
 }
 
 func (m *Manager) installMarkerPath() string {
-	return filepath.Join(m.agentHome, installMarkerFilename)
+	return filepath.Join(m.home, installMarkerFilename)
 }
 
 func (m *Manager) writeInstallMarker() error {
-	if err := os.MkdirAll(m.agentHome, 0o755); err != nil {
+	if err := os.MkdirAll(m.home, 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(m.installMarkerPath(), []byte("installed\n"), 0o644)
@@ -312,20 +235,6 @@ func (OSInstaller) Install(src, dst string) error {
 	if err := os.WriteFile(dst, data, 0o644); err != nil {
 		if errors.Is(err, os.ErrPermission) {
 			return &PermissionError{Err: err}
-		}
-		return err
-	}
-	return nil
-}
-
-func (OSInstaller) MkdirAllWithSudo(path string) error {
-	var stderr bytes.Buffer
-	cmd := exec.Command("sudo", "install", "-d", "-m", "0755", path)
-	cmd.Stderr = &stderr
-	cmd.Stdin = os.Stdin
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return fmt.Errorf("%w: %s", err, stderr.String())
 		}
 		return err
 	}
@@ -371,6 +280,10 @@ func (OSInstaller) RemoveWithSudo(path string) error {
 }
 
 func writeFile(path string, content []byte, force bool) (string, error) {
+	return writeFileMode(path, content, force, 0o644)
+}
+
+func writeFileMode(path string, content []byte, force bool, mode os.FileMode) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
@@ -381,7 +294,10 @@ func writeFile(path string, content []byte, force bool) (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	if err := os.WriteFile(path, content, 0o644); err != nil {
+	if err := os.WriteFile(path, content, mode); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(path, mode); err != nil {
 		return "", err
 	}
 	if force {
@@ -440,7 +356,7 @@ func renderConfig() string {
 # interval_minutes = 30
 
 # Daemon note
-# target defaults to "agent"; use target = "daemon" with schedule = "boot" for a system LaunchDaemon.
+# summond manages agents; sudo summond manages daemons (use target = "daemon").
 # Managed stdout/stderr log paths are assigned automatically.
 `) + "\n"
 }
@@ -449,16 +365,6 @@ func RenderEnvFile() string {
 	return "{\n  \"PATH\": \"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"\n}\n"
 }
 
-func renderNewsyslog(agentHome string, daemonHome string) string {
-	patterns := []string{
-		filepath.Join(agentHome, "logs", "*.log"),
-	}
-	if daemonHome != "" && daemonHome != agentHome {
-		patterns = append(patterns, filepath.Join(daemonHome, "logs", "*.log"))
-	}
-	lines := make([]string, 0, len(patterns))
-	for _, pattern := range patterns {
-		lines = append(lines, fmt.Sprintf("%s  640  7  *  @T00  Z", pattern))
-	}
-	return strings.Join(lines, "\n") + "\n"
+func renderNewsyslog(home string) string {
+	return fmt.Sprintf("%s  640  7  *  @T00  Z\n", filepath.Join(home, "logs", "*.log"))
 }

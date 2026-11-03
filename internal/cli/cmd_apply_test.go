@@ -680,3 +680,48 @@ func TestApplyWithPruneReportsNoJobsToPrune(t *testing.T) {
 		t.Fatalf("stdout = %q", got)
 	}
 }
+
+func TestApplyRejectsJobsOutsideScope(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		app     func(*testing.T) *App
+		target  string
+		wantErr string
+	}{
+		{"daemon job in agent scope", newTestApp, "daemon", "daemon jobs are managed as root; run: sudo summond apply"},
+		{"agent job in daemon scope", newDaemonTestApp, "agent", "agent jobs are managed without sudo; run: summond apply"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := tc.app(t)
+			var stdout bytes.Buffer
+			app.stdout = &stdout
+			runner := app.runner.(*fakeRunner)
+
+			configPath := filepath.Join(testHome(t), "summond.toml")
+			data := strings.Join([]string{
+				"[jobs.cleanup]",
+				`command = "/bin/echo"`,
+				`target = "` + tc.target + `"`,
+				`schedule = "daily"`,
+			}, "\n")
+			if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			err := app.run([]string{"apply", configPath})
+			var exitErr ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code != 1 {
+				t.Fatalf("apply error = %v", err)
+			}
+			if got := stdout.String(); !strings.Contains(got, "applied 0 job(s)\n") || !strings.Contains(got, tc.wantErr) {
+				t.Fatalf("stdout = %q", got)
+			}
+			if len(runner.bootstrapped) != 0 {
+				t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
+			}
+			if _, err := app.store.Load("cleanup"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("Load() error = %v, want not exist", err)
+			}
+		})
+	}
+}

@@ -20,11 +20,11 @@ Daemon plists are installed to /Library/LaunchDaemons/; agent plists to ~/Librar
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			a.logger.Debug("plist start", "name", name)
-			managed, err := a.loadManagedSpec(name)
+			spec, err := a.loadManagedSpec(name)
 			if err != nil {
 				return err
 			}
-			data, err := os.ReadFile(managed.spec.PlistPath)
+			data, err := os.ReadFile(spec.PlistPath)
 			if err != nil {
 				return fmt.Errorf("read job plist: %w", err)
 			}

@@ -28,7 +28,7 @@ const (
 )
 
 type jobsLoadedMsg struct {
-	jobs []managedSpec
+	jobs []job.Spec
 	err  error
 }
 
@@ -41,7 +41,7 @@ type tickMsg time.Time
 
 type tuiModel struct {
 	app        *App
-	jobs       []managedSpec
+	jobs       []job.Spec
 	cursor     int
 	listOffset int
 	activeTab  tuiTab
@@ -175,8 +175,8 @@ func (m tuiModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.jobs) == 0 {
 			return m, nil
 		}
-		managed := m.jobs[m.cursor]
-		return m, tea.Exec(execJobProcess(m.app, managed), func(_ error) tea.Msg {
+		spec := m.jobs[m.cursor]
+		return m, tea.Exec(execJobProcess(m.app, spec), func(_ error) tea.Msg {
 			return loadJobsCmd(m.app)()
 		})
 
@@ -204,7 +204,7 @@ func (m *tuiModel) loadCurrentContent() tea.Cmd {
 		m.setContent("(no jobs)")
 		return nil
 	}
-	spec := m.jobs[m.cursor].spec
+	spec := m.jobs[m.cursor]
 
 	switch m.activeTab {
 	case tabState:
@@ -448,7 +448,7 @@ func (m tuiModel) renderJobList(height int) string {
 	}
 	var lines []string
 	for i := start; i < end; i++ {
-		spec := m.jobs[i].spec
+		spec := m.jobs[i]
 		label := spec.ManagedKey()
 		if spec.Target == job.TargetDaemon {
 			label += " (daemon)"
@@ -512,16 +512,16 @@ func (m tuiModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-func execJobProcess(app *App, managed managedSpec) *execProcess {
-	return &execProcess{app: app, managed: managed}
+func execJobProcess(app *App, spec job.Spec) *execProcess {
+	return &execProcess{app: app, spec: spec}
 }
 
 type execProcess struct {
-	app     *App
-	managed managedSpec
-	stdin   io.Reader
-	stdout  io.Writer
-	stderr  io.Writer
+	app    *App
+	spec   job.Spec
+	stdin  io.Reader
+	stdout io.Writer
+	stderr io.Writer
 }
 
 func (e *execProcess) SetStdin(r io.Reader)  { e.stdin = r }
@@ -529,7 +529,6 @@ func (e *execProcess) SetStdout(w io.Writer) { e.stdout = w }
 func (e *execProcess) SetStderr(w io.Writer) { e.stderr = w }
 
 func (e *execProcess) Run() error {
-	spec := e.managed.spec
 
 	saved := struct {
 		in       io.Reader
@@ -538,7 +537,7 @@ func (e *execProcess) Run() error {
 	e.app.stdin, e.app.stdout, e.app.stderr = e.stdin, e.stdout, e.stderr
 	defer func() { e.app.stdin, e.app.stdout, e.app.stderr = saved.in, saved.out, saved.err }()
 
-	_, runErr, err := e.app.runAndRecord(spec, e.managed.store)
+	_, runErr, err := e.app.runAndRecord(e.spec)
 	if err != nil {
 		return err
 	}

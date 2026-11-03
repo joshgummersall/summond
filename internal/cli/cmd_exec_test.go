@@ -132,77 +132,28 @@ func TestExecRecordsFailingRun(t *testing.T) {
 	}
 }
 
-func TestExecDaemonRequiresSudo(t *testing.T) {
-	app := newTestApp(t)
-	app.geteuid = func() int { return 501 }
+func TestExecInDaemonScopeRunsDaemonJob(t *testing.T) {
+	app := newDaemonTestApp(t)
 
-	spec, err := app.daemonStore.Install(job.Spec{
+	spec, err := app.store.Install(job.Spec{
 		Name:     "daemon-job",
 		Target:   job.TargetDaemon,
-		Command:  "/bin/echo",
+		Command:  "/usr/bin/true",
 		Schedule: job.Schedule{Kind: job.ScheduleBoot},
 	})
 	if err != nil {
 		t.Fatalf("Install(daemon-job) error = %v", err)
 	}
 
-	err = app.run([]string{"exec", spec.Name})
-	if err == nil || err.Error() != "daemon jobs are owned by root; re-run as: sudo summond exec daemon-job" {
+	if err := app.run([]string{"exec", spec.Name}); err != nil {
 		t.Fatalf("exec error = %v", err)
 	}
-	loaded, loadErr := app.daemonStore.Load(spec.Name)
-	if loadErr != nil {
-		t.Fatalf("Load() error = %v", loadErr)
-	}
-	if loaded.RunCount != 0 {
-		t.Fatalf("RunCount = %d, want 0", loaded.RunCount)
-	}
-}
-
-func TestExecAgentRequiresNonRoot(t *testing.T) {
-	app := newTestApp(t)
-	app.geteuid = func() int { return 0 }
-
-	spec, err := app.store.Install(job.Spec{
-		Name:    "cleanup",
-		Command: "/bin/echo",
-		Schedule: job.Schedule{
-			Kind: job.ScheduleDaily,
-			Hour: 3, HourSet: true,
-			Minute: 45, MinuteSet: true,
-		},
-	})
+	loaded, err := app.store.Load(spec.Name)
 	if err != nil {
-		t.Fatalf("Install(cleanup) error = %v", err)
+		t.Fatalf("Load() error = %v", err)
 	}
-
-	err = app.run([]string{"exec", spec.Name})
-	if err == nil || err.Error() != "agent jobs run as the logged-in user; re-run without sudo: summond exec cleanup" {
-		t.Fatalf("exec error = %v", err)
-	}
-	loaded, loadErr := app.store.Load(spec.Name)
-	if loadErr != nil {
-		t.Fatalf("Load() error = %v", loadErr)
-	}
-	if loaded.RunCount != 0 {
-		t.Fatalf("RunCount = %d, want 0", loaded.RunCount)
-	}
-}
-
-func TestExecWithSudoHintsWhenAgentJobIsNotFoundInRootStore(t *testing.T) {
-	app := newTestApp(t)
-	app.geteuid = func() int { return 0 }
-	t.Setenv("SUDO_USER", "josh")
-
-	err := app.run([]string{"exec", "agent-test"})
-	if err == nil {
-		t.Fatal("expected exec error")
-	}
-	got := err.Error()
-	if !strings.Contains(got, "read job metadata: file does not exist") ||
-		!strings.Contains(got, "running with sudo uses root-managed jobs") ||
-		!strings.Contains(got, "re-run without sudo: summond exec agent-test") {
-		t.Fatalf("exec error = %q", got)
+	if loaded.RunCount != 1 {
+		t.Fatalf("RunCount = %d, want 1", loaded.RunCount)
 	}
 }
 
