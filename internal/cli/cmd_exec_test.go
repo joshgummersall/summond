@@ -438,3 +438,159 @@ func TestExecSIGTERMHelper(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+// applyEchoJob applies a job that prints "out" to stdout and "err" to stderr,
+// and returns its stored spec.
+func applyEchoJob(t *testing.T, app *App) job.Spec {
+	t.Helper()
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		"[jobs.rotator]",
+		`command = "/bin/sh"`,
+		`args = ["-c", "echo out; echo err >&2"]`,
+		`target = "agent"`,
+		`schedule = "daily"`,
+		"hour = 3",
+		"minute = 45",
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	spec, err := app.store.Load("rotator")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	return spec
+}
+
+func setLogRotateMax(t *testing.T, max int64) {
+	t.Helper()
+	old := logRotateMaxBytes
+	logRotateMaxBytes = max
+	t.Cleanup(func() { logRotateMaxBytes = old })
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", path, err)
+	}
+	return string(data)
+}
+
+func TestExecRotatesLogsOverCap(t *testing.T) {
+	setLogRotateMax(t, 8)
+	app := newTestApp(t)
+	var stdout, stderr bytes.Buffer
+	app.stdout = &stdout
+	app.stderr = &stderr
+	spec := applyEchoJob(t, app)
+
+	oldOut := "old stdout over cap\n"
+	oldErr := "old stderr over cap\n"
+	for path, content := range map[string]string{spec.StdoutPath: oldOut, spec.StderrPath: oldErr} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		if err := os.WriteFile(path+".1", []byte("older copy\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+	}
+
+	if err := app.run([]string{"exec", "rotator"}); err != nil {
+		t.Fatalf("exec error = %v", err)
+	}
+	for path, want := range map[string]string{
+		spec.StdoutPath:        "out\n",
+		spec.StderrPath:        "err\n",
+		spec.StdoutPath + ".1": oldOut,
+		spec.StderrPath + ".1": oldErr,
+	} {
+		if got := readFile(t, path); got != want {
+			t.Fatalf("%s = %q, want %q", path, got, want)
+		}
+	}
+
+	spec, err := app.store.Load("rotator")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if spec.LastStdoutOffset != 0 || spec.LastStderrOffset != 0 {
+		t.Fatalf("offsets = %d, %d, want 0, 0", spec.LastStdoutOffset, spec.LastStderrOffset)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if err := app.run([]string{"logs", "rotator"}); err != nil {
+		t.Fatalf("logs error = %v", err)
+	}
+	if got := stdout.String(); got != "out\n" {
+		t.Fatalf("logs stdout = %q", got)
+	}
+	if got := stderr.String(); got != "err\n" {
+		t.Fatalf("logs stderr = %q", got)
+	}
+}
+
+func TestExecLeavesLogsUnderCap(t *testing.T) {
+	setLogRotateMax(t, 1<<20)
+	app := newTestApp(t)
+	app.stdout = &bytes.Buffer{}
+	app.stderr = &bytes.Buffer{}
+	spec := applyEchoJob(t, app)
+
+	if err := os.WriteFile(spec.StdoutPath, []byte("prev\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := app.run([]string{"exec", "rotator"}); err != nil {
+		t.Fatalf("exec error = %v", err)
+	}
+	if got := readFile(t, spec.StdoutPath); got != "prev\nout\n" {
+		t.Fatalf("stdout log = %q", got)
+	}
+	if _, err := os.Stat(spec.StdoutPath + ".1"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stat(.1) error = %v, want not exist", err)
+	}
+	spec, err := app.store.Load("rotator")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if spec.LastStdoutOffset != int64(len("prev\n")) {
+		t.Fatalf("stdout offset = %d", spec.LastStdoutOffset)
+	}
+}
+
+// launchd opens the log with O_APPEND before exec starts. After rotation the
+// same open file must still be the log, so output lands in the truncated file
+// once, without a duplicate from teeToLog.
+func TestExecRotationKeepsLaunchdLogFile(t *testing.T) {
+	setLogRotateMax(t, 8)
+	app := newTestApp(t)
+	app.stdout = &bytes.Buffer{}
+	app.stderr = &bytes.Buffer{}
+	spec := applyEchoJob(t, app)
+
+	if err := os.WriteFile(spec.StdoutPath, []byte("old stdout over cap\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	f, err := os.OpenFile(spec.StdoutPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	defer f.Close()
+	app.stdout = f
+
+	if err := app.run([]string{"exec", "rotator"}); err != nil {
+		t.Fatalf("exec error = %v", err)
+	}
+	if got := readFile(t, spec.StdoutPath); got != "out\n" {
+		t.Fatalf("stdout log = %q, want %q", got, "out\n")
+	}
+	if got := readFile(t, spec.StdoutPath+".1"); got != "old stdout over cap\n" {
+		t.Fatalf("stdout log.1 = %q", got)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -163,6 +164,11 @@ func (a *App) runAndRecord(spec job.Spec, store *state.Store) (exitCode int, run
 	defer signal.Stop(sigs)
 
 	changedPaths, newFingerprints := watchChanges(spec, store)
+	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
+		if err := rotateLog(path, logRotateMaxBytes); err != nil {
+			a.logger.Debug("rotate job log", "path", path, "error", err)
+		}
+	}
 	startedAt := time.Now()
 	if err := store.RecordExecutionStart(spec.Name, startedAt); err != nil {
 		return 0, nil, err
@@ -289,6 +295,50 @@ func exitCodeOf(err error) int {
 		return 128 + int(ws.Signal())
 	}
 	return exitErr.ExitCode()
+}
+
+// logRotateMaxBytes is the size above which rotateLog rotates a job log.
+var logRotateMaxBytes int64 = 5 << 20
+
+// rotateLog copies the log at path to path+".1", replacing any older copy, and
+// truncates path to zero when it is larger than max. It copies and truncates
+// instead of renaming so that a file launchd already opened (O_APPEND, via the
+// plist) keeps writing to path, and teeToLog still sees it as the same file.
+func rotateLog(path string, max int64) error {
+	if path == "" {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if info.Size() <= max {
+		return nil
+	}
+	src, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".1.tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	_, copyErr := io.Copy(tmp, src)
+	closeErr := tmp.Close()
+	if err := errors.Join(copyErr, closeErr, os.Chmod(tmpPath, info.Mode().Perm())); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, path+".1"); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return os.Truncate(path, 0)
 }
 
 // teeToLog also writes w's output to the job log at path, so manual runs land
