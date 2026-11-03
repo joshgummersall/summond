@@ -105,10 +105,6 @@ func (f *fakeBootstrapInstaller) InstallWithSudo(src, dst string) error {
 	return f.sudoErr
 }
 
-func (f *fakeBootstrapInstaller) MkdirAllWithSudo(path string) error {
-	return f.sudoErr
-}
-
 func (f *fakeBootstrapInstaller) Remove(path string) error {
 	return f.removeErr
 }
@@ -116,68 +112,6 @@ func (f *fakeBootstrapInstaller) Remove(path string) error {
 func (f *fakeBootstrapInstaller) RemoveWithSudo(path string) error {
 	f.sudoCalls = append(f.sudoCalls, [2]string{"rm", path})
 	return f.sudoErr
-}
-
-type fakePrivilegedOperator struct {
-	removed      []string
-	created      []string
-	installed    [][2]string
-	bootstrapped []string
-	bootout      []string
-	err          error
-}
-
-func (f *fakePrivilegedOperator) InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string) error {
-	f.created = append(f.created, dirs...)
-	f.installed = append(f.installed,
-		[2]string{runtimeSource, runtimeDest},
-		[2]string{plistSource, plistDest},
-		[2]string{metadataSource, metadataDest},
-	)
-	f.bootstrapped = append(f.bootstrapped, plistDest)
-	return f.err
-}
-
-func (f *fakePrivilegedOperator) RemoveDaemonArtifactsWithSudo(plistPaths []string, cleanupPaths []string, extraPaths []string) error {
-	f.bootout = append(f.bootout, plistPaths...)
-	f.removed = append(f.removed, plistPaths...)
-	f.removed = append(f.removed, cleanupPaths...)
-	f.removed = append(f.removed, extraPaths...)
-	for _, path := range append(append([]string{}, plistPaths...), cleanupPaths...) {
-		if path == "" {
-			continue
-		}
-		if err := os.RemoveAll(path); err != nil {
-			return err
-		}
-	}
-	for _, path := range extraPaths {
-		if path == "" {
-			continue
-		}
-		if err := os.RemoveAll(path); err != nil {
-			return err
-		}
-	}
-	return f.err
-}
-
-func (f *fakePrivilegedOperator) RemovePathWithSudo(path string) error {
-	f.removed = append(f.removed, path)
-	return f.err
-}
-
-func (f *fakePrivilegedOperator) BootoutDaemonWithSudo(plistPath string) error {
-	f.bootout = append(f.bootout, plistPath)
-	return f.err
-}
-
-func (f *fakePrivilegedOperator) WriteFileWithSudo(src, dst string) error {
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(dst, data, 0o644)
 }
 
 type ioDiscard struct{}
@@ -205,22 +139,21 @@ func newTestApp(t *testing.T) *App {
 	return newTestAppAt(t, testHome(t))
 }
 
+// newDaemonTestApp returns an app in daemon scope, as if run under sudo.
+func newDaemonTestApp(t *testing.T) *App {
+	t.Helper()
+	app := newTestApp(t)
+	app.geteuid = func() int { return 0 }
+	return app
+}
+
 func newTestAppAt(t *testing.T, home string) *App {
 	t.Helper()
-	agentStore := state.NewStore(state.Paths{
-		Home:      filepath.Join(home, "managed"),
-		LaunchDir: filepath.Join(home, "LaunchAgents"),
-	})
-	daemonStore := state.NewStore(state.Paths{
-		Home:      filepath.Join(home, "managed-daemon"),
-		LaunchDir: filepath.Join(home, "LaunchDaemons"),
-	})
-	app := NewApp(strings.NewReader(""), ioDiscard{}, agentStore, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: agentStore.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, &fakeBootstrapInstaller{}))
-	app.priv = &fakePrivilegedOperator{}
-	if err := os.MkdirAll(agentStore.Paths().Home, 0o755); err != nil {
+	app := newRawTestAppAt(t, home)
+	if err := os.MkdirAll(app.store.Paths().Home, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(agentStore.Paths().Home, ".installed"), []byte("installed\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(app.store.Paths().Home, ".installed"), []byte("installed\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	return app
@@ -228,16 +161,18 @@ func newTestAppAt(t *testing.T, home string) *App {
 
 func newRawTestApp(t *testing.T) *App {
 	t.Helper()
-	home := testHome(t)
-	agentStore := state.NewStore(state.Paths{
+	return newRawTestAppAt(t, testHome(t))
+}
+
+// newRawTestAppAt returns an app in agent scope rooted at home, without the
+// install marker. Tests set geteuid to 0 for daemon scope.
+func newRawTestAppAt(t *testing.T, home string) *App {
+	t.Helper()
+	store := state.NewStore(state.Paths{
 		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
-	daemonStore := state.NewStore(state.Paths{
-		Home:      filepath.Join(home, "managed-daemon"),
-		LaunchDir: filepath.Join(home, "LaunchDaemons"),
-	})
-	app := NewApp(strings.NewReader(""), ioDiscard{}, agentStore, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: agentStore.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, &fakeBootstrapInstaller{}))
-	app.priv = &fakePrivilegedOperator{}
+	app := NewApp(strings.NewReader(""), ioDiscard{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths().Home, filepath.Join(home, "newsyslog.d"), &fakeBootstrapInstaller{}))
+	app.geteuid = func() int { return 501 }
 	return app
 }

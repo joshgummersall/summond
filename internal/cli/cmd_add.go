@@ -23,23 +23,7 @@ func stdinHasData(reader io.Reader) bool {
 	return info.Mode()&os.ModeCharDevice == 0
 }
 
-func (a *App) newAddCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "add <target> ...",
-		Short: "Add and install a managed job",
-		Long:  "Add and install a managed job without editing summond.toml.\n\nRun 'summond add <target> --help' for target-specific usage.",
-	}
-
-	cmd.AddCommand(
-		a.newAddTargetCommand("agent"),
-		a.newAddTargetCommand("daemon"),
-	)
-
-	return cmd
-}
-
 type addOptions struct {
-	target               job.Target
 	name                 string
 	schedule             string
 	workingDir           string
@@ -65,7 +49,7 @@ type addOptions struct {
 	dryRun               bool
 }
 
-func (a *App) newAddTargetCommand(target string) *cobra.Command {
+func (a *App) newAddCommand() *cobra.Command {
 	var schedule string
 	var workingDir string
 	var hour int
@@ -79,37 +63,26 @@ func (a *App) newAddTargetCommand(target string) *cobra.Command {
 	var retryDelaySeconds int
 	var retryMaxDelaySeconds int
 	var dryRun bool
-	targetLabel := "LaunchAgent"
-	exampleSchedule := "login"
-	exampleBinary := "/bin/echo hello --flag"
-	stdinName := "my-script"
-	scheduleNote := "login (agent only), hourly, daily, weekly, interval, calendar"
-	if target == "daemon" {
-		targetLabel = "LaunchDaemon"
-		exampleSchedule = "boot"
-		exampleBinary = "/usr/local/bin/task"
-		stdinName = "my-daemon-script"
-		scheduleNote = "boot (daemon only), hourly, daily, weekly, interval, calendar"
-	}
-	loginOrBootLine := "  login     runs at user login (agent only)\n"
-	if target == "daemon" {
-		loginOrBootLine = "  boot      runs at system boot (daemon only)\n"
-	}
+	scheduleNote := "login (agents only), boot (daemons only), hourly, daily, weekly, interval, calendar"
 	cmd := &cobra.Command{
-		Use:   fmt.Sprintf("%s <name> -- <command> [args]", target),
-		Short: fmt.Sprintf("Add a %s job", targetLabel),
-		Long: fmt.Sprintf(`Add and install a %s job without editing summond.toml.
+		Use:   "add <name> -- <command> [args]",
+		Short: "Add and install a managed job",
+		Long: `Add and install a managed job without editing summond.toml.
+
+summond adds a LaunchAgent for the current user. sudo summond adds a LaunchDaemon.
 
 The command to run must be provided either after -- or as a shell script on stdin:
 
-  summond add %s <name> --schedule <kind> -- /path/to/binary [args]
-  echo 'script' | summond add %s <name> --schedule <kind>
-  summond add %s <name> --schedule <kind> <<'EOF'
+  summond add <name> --schedule <kind> -- /path/to/binary [args]
+  echo 'script' | summond add <name> --schedule <kind>
+  summond add <name> --schedule <kind> <<'EOF'
   shell commands here
   EOF
 
-Schedule kinds (%s):
-%s  hourly    runs once per hour; use --minute to set the minute (0-59, auto-seeded if omitted)
+Schedule kinds:
+  login     runs at user login (agents only)
+  boot      runs at system boot (daemons only)
+  hourly    runs once per hour; use --minute to set the minute (0-59, auto-seeded if omitted)
   daily     runs once per day; use --hour (0-23) and --minute (0-59) (auto-seeded if omitted)
   weekly    runs once per week; use --weekday (0-7, 0=Sun), --hour, --minute (auto-seeded if omitted)
   interval  runs every N minutes; requires --interval-minutes
@@ -117,18 +90,16 @@ Schedule kinds (%s):
 
 For daily/weekly schedules, --window constrains the auto-seeded hour to a
 time-of-day range instead of the full day: morning (05:00-11:59), afternoon
-(12:00-16:59), or evening (17:00-21:59). Ignored if --hour is also set.`, targetLabel, target, target, target, scheduleNote, loginOrBootLine),
+(12:00-16:59), or evening (17:00-21:59). Ignored if --hour is also set.`,
 		Args: cobra.MinimumNArgs(1),
-		Example: fmt.Sprintf(`  summond add %s my-job --schedule %s -- %s
-  summond add %s my-job --schedule hourly --minute 30 -- /path/to/binary
-  summond add %s my-job --schedule daily --hour 2 --minute 0 -- /path/to/binary
-  summond add %s my-job --schedule interval --interval-minutes 15 -- /path/to/binary
-  summond add %s %s --schedule daily <<'EOF'
+		Example: `  summond add my-job --schedule login -- /bin/echo hello --flag
+  summond add my-job --schedule hourly --minute 30 -- /path/to/binary
+  summond add my-job --schedule daily --hour 2 --minute 0 -- /path/to/binary
+  summond add my-job --schedule interval --interval-minutes 15 -- /path/to/binary
+  sudo summond add my-daemon --schedule boot -- /usr/local/bin/task
+  summond add my-script --schedule daily <<'EOF'
   echo hi
   EOF`,
-			target, exampleSchedule, exampleBinary,
-			target, target, target,
-			target, stdinName),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts := addOptions{
 				name:                 args[0],
@@ -153,11 +124,6 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 				retryMaxDelaySet:     cmd.Flags().Changed("retry-max-delay-seconds"),
 				dryRun:               dryRun,
 			}
-			if target == "daemon" {
-				opts.target = job.TargetDaemon
-			} else {
-				opts.target = job.TargetAgent
-			}
 			if len(args) > 1 {
 				opts.commandArgs = append([]string(nil), args[1:]...)
 			} else if stdinHasData(a.stdin) {
@@ -167,16 +133,17 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 				}
 				opts.stdinScript = strings.TrimRight(string(data), "\n")
 			}
-			a.logger.Debug("add target start", "target", opts.target, "name", opts.name)
+			target := a.scopeTarget()
+			a.logger.Debug("add start", "target", target, "name", opts.name)
 			if opts.schedule == "" {
-				return fmt.Errorf("add %s requires --schedule", opts.target)
+				return errors.New("add requires --schedule")
 			}
 			installed, err := a.boot.IsInstalled()
 			if err != nil {
 				return err
 			}
 			if !installed {
-				return fmt.Errorf("add %s requires install to be run first", opts.target)
+				return errors.New("add requires install to be run first")
 			}
 			wd, err := os.Getwd()
 			if err != nil {
@@ -189,7 +156,7 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 			}
 			spec := job.Spec{
 				Name:                opts.name,
-				Target:              opts.target,
+				Target:              target,
 				WorkingDir:          opts.workingDir,
 				AbandonProcessGroup: opts.abandonProcessGroup,
 				Concurrency:         opts.concurrency,
@@ -241,11 +208,7 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 			if err := spec.Normalize(); err != nil {
 				return err
 			}
-			if opts.target == job.TargetDaemon {
-				spec.EnvironmentFilePath = a.daemonStore.EnvFilePath()
-			} else {
-				spec.EnvironmentFilePath = a.store.EnvFilePath()
-			}
+			spec.EnvironmentFilePath = a.store.EnvFilePath()
 			if opts.dryRun {
 				return a.printAddPlan(spec)
 			}
@@ -253,25 +216,13 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 			if err != nil {
 				return fmt.Errorf("resolve current executable: %w", err)
 			}
-			if opts.target == job.TargetDaemon {
-				spec.RuntimeBinaryPath = a.daemonStore.RuntimeBinaryPath()
-				sudoApproved, sudoPrompted := false, false
-				installedSpec, err := a.applyDaemonSpec(spec, runtimeSource, &sudoApproved, &sudoPrompted)
-				if err != nil {
-					return err
-				}
-				if err := a.reconcileDaemonRuntime(installedSpec); err != nil {
-					return err
-				}
-			} else {
-				agentRuntimePath, err := a.store.PrepareRuntimeBinary(runtimeSource)
-				if err != nil {
-					return err
-				}
-				spec.RuntimeBinaryPath = agentRuntimePath
-				if _, err := a.applySpec(a.store, spec); err != nil {
-					return err
-				}
+			runtimePath, err := a.store.PrepareRuntimeBinary(runtimeSource)
+			if err != nil {
+				return err
+			}
+			spec.RuntimeBinaryPath = runtimePath
+			if _, err := a.applySpec(spec); err != nil {
+				return err
 			}
 			_, err = fmt.Fprintf(a.stdout, "added %s\n", spec.Name)
 			return err
@@ -295,9 +246,8 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 }
 
 func (a *App) printAddPlan(spec job.Spec) error {
-	store := a.storeForTarget(spec.Target)
-	spec.RuntimeBinaryPath = store.RuntimeBinaryPath()
-	prepared, _, err := store.PrepareInstall(spec)
+	spec.RuntimeBinaryPath = a.store.RuntimeBinaryPath()
+	prepared, _, err := a.store.PrepareInstall(spec)
 	if err != nil {
 		return err
 	}
@@ -310,23 +260,17 @@ func (a *App) printAddPlan(spec job.Spec) error {
 	if _, err := fmt.Fprintf(a.stdout, "- write plist: %s\n", prepared.PlistPath); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(a.stdout, "- write metadata: %s\n", store.MetadataPathForSpec(prepared)); err != nil {
+	if _, err := fmt.Fprintf(a.stdout, "- write metadata: %s\n", a.store.MetadataPathForSpec(prepared)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(a.stdout, "- create log files: %s, %s\n", prepared.StdoutPath, prepared.StderrPath); err != nil {
 		return err
 	}
-	if prepared.Target == job.TargetAgent {
-		if _, err := fmt.Fprintf(a.stdout, "- install runtime binary: %s\n", prepared.RuntimeBinaryPath); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(a.stdout, "- load launchd job: %s\n", prepared.Label); err != nil {
-			return err
-		}
-	} else {
-		if _, err := fmt.Fprintln(a.stdout, "- may require sudo for daemon-owned files"); err != nil {
-			return err
-		}
+	if _, err := fmt.Fprintf(a.stdout, "- install runtime binary: %s\n", prepared.RuntimeBinaryPath); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.stdout, "- load launchd job: %s\n", prepared.Label); err != nil {
+		return err
 	}
 	_, err = fmt.Fprintln(a.stdout, "dry run: no changes made")
 	return err

@@ -22,11 +22,10 @@ login and boot jobs, which launchd starts only once at load time.`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			managed, err := a.loadManagedSpec(name)
+			spec, err := a.loadManagedSpec(name)
 			if err != nil {
 				return err
 			}
-			spec := managed.spec
 
 			printText, printErr := a.runner.Print(spec)
 			if printErr != nil {
@@ -39,7 +38,7 @@ login and boot jobs, which launchd starts only once at load time.`,
 			if spec.LastStartedAt != nil && spec.LastFinishedAt == nil && strings.Contains(printText, "state = running") {
 				now := time.Now()
 				record := job.ExecutionRecord{StartedAt: *spec.LastStartedAt, FinishedAt: &now, Error: "killed"}
-				if err := managed.store.RecordExecutionFinish(spec.Name, record); err != nil {
+				if err := a.store.RecordExecutionFinish(spec.Name, record); err != nil {
 					return fmt.Errorf("record interrupted run: %w", err)
 				}
 			}

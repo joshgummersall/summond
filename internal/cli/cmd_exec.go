@@ -23,9 +23,6 @@ func (a *App) environmentFilePath(spec job.Spec) string {
 	if spec.EnvironmentFilePath != "" {
 		return spec.EnvironmentFilePath
 	}
-	if spec.Target == job.TargetDaemon {
-		return a.daemonStore.EnvFilePath()
-	}
 	return a.store.EnvFilePath()
 }
 
@@ -103,23 +100,9 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			a.logger.Debug("exec start", "name", name)
-			managed, err := a.loadManagedSpec(name)
+			spec, err := a.loadManagedSpec(name)
 			if err != nil {
-				if errors.Is(err, os.ErrNotExist) && a.geteuid != nil && a.geteuid() == 0 && os.Getenv("SUDO_USER") != "" {
-					return fmt.Errorf("read job metadata: %w (running with sudo uses root-managed jobs; if %s is an agent job, re-run without sudo: summond exec %s)", os.ErrNotExist, name, name)
-				}
 				return err
-			}
-			spec := managed.spec
-			euid := 0
-			if a.geteuid != nil {
-				euid = a.geteuid()
-			}
-			if spec.Target == job.TargetDaemon && euid != 0 {
-				return fmt.Errorf("daemon jobs are owned by root; re-run as: sudo summond exec %s", spec.Name)
-			}
-			if spec.Target != job.TargetDaemon && euid == 0 {
-				return fmt.Errorf("agent jobs run as the logged-in user; re-run without sudo: summond exec %s", spec.Name)
 			}
 			// A job launched by launchd for an IOKit event must consume the
 			// event, or launchd relaunches it every ThrottleInterval forever.
@@ -129,7 +112,7 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 				a.logger.Debug("consumed iokit matching event", "delivered", delivered)
 			}
 			if !spec.Concurrency {
-				unlock, acquired, err := managed.store.TryLockExecution(spec.Name)
+				unlock, acquired, err := a.store.TryLockExecution(spec.Name)
 				if err != nil {
 					return err
 				}
@@ -140,7 +123,7 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 				defer unlock()
 			}
 
-			exitCode, runErr, err := a.runAndRecord(spec, managed.store)
+			exitCode, runErr, err := a.runAndRecord(spec)
 			if err != nil {
 				return err
 			}
@@ -152,13 +135,14 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 	}
 }
 
-// runAndRecord runs spec with retries and records the run in store. runErr is
+// runAndRecord runs spec with retries and records the run in the store. runErr is
 // the job's own failure; err is a failure to record state.
 //
 // Termination signals are trapped while the job runs, so a stop from launchd
 // (restart, kill, logout) still records the run as finished instead of leaving
 // it "running" forever. Signals are forwarded to the job and stop retries.
-func (a *App) runAndRecord(spec job.Spec, store *state.Store) (exitCode int, runErr error, err error) {
+func (a *App) runAndRecord(spec job.Spec) (exitCode int, runErr error, err error) {
+	store := a.store
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer signal.Stop(sigs)
@@ -236,7 +220,7 @@ func (a *App) executeSpec(spec job.Spec, changedPaths []string, attempt int, sig
 	cmd.Env = mergeEnvironment(cmd.Env, map[string]string{
 		"SUMMOND_JOB_NAME":      spec.Name,
 		"SUMMOND_JOB_LABEL":     spec.Label,
-		"SUMMOND_STATE_DIR":     a.storeForTarget(spec.Target).JobDirForSpec(spec),
+		"SUMMOND_STATE_DIR":     a.store.JobDirForSpec(spec),
 		"SUMMOND_CHANGED_PATHS": strings.Join(changedPaths, ":"),
 		"SUMMOND_ATTEMPT":       fmt.Sprintf("%d", attempt),
 	})

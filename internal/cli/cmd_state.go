@@ -22,11 +22,11 @@ scripting based on run history.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			a.logger.Debug("state start", "name", name)
-			managed, err := a.loadManagedSpec(name)
+			spec, err := a.loadManagedSpec(name)
 			if err != nil {
 				return err
 			}
-			data, err := os.ReadFile(managed.store.MetadataPathForSpec(managed.spec))
+			data, err := os.ReadFile(a.store.MetadataPathForSpec(spec))
 			if err != nil {
 				return fmt.Errorf("read job metadata: %w", err)
 			}

@@ -17,7 +17,7 @@ func (a *App) newRemoveCommand() *cobra.Command {
 		Short: "Remove a managed job and all state",
 		Long: `Remove a managed job, booting it out of launchd and deleting its plist, logs, and persisted state.
 
-Daemon jobs are owned by root and may prompt for sudo to remove system-owned files.
+summond removes agent jobs; sudo summond removes daemon jobs.
 Use 'summond list' to see job names.`,
 		Example: `  summond remove my-job
   summond remove --dry-run my-job`,
@@ -25,17 +25,17 @@ Use 'summond list' to see job names.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 			a.logger.Debug("remove start", "name", name)
-			managed, err := a.loadManagedSpec(name)
+			spec, err := a.loadManagedSpec(name)
 			if err != nil {
 				return err
 			}
 			if dryRun {
-				return a.printRemovePlan(managed)
+				return a.printRemovePlan(spec)
 			}
-			if err := a.removeManagedSpec(managed); err != nil {
+			if err := a.removeManagedSpec(spec); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(a.stdout, "removed %s\n", managed.spec.Name)
+			_, err = fmt.Fprintf(a.stdout, "removed %s\n", spec.Name)
 			return err
 
 		},
@@ -44,41 +44,17 @@ Use 'summond list' to see job names.`,
 	return cmd
 }
 
-func (a *App) removeManagedSpec(managed managedSpec) error {
-	spec := managed.spec
-	needsSudo := false
-	if err := a.runner.Bootout(spec); err != nil && spec.Target == job.TargetDaemon {
-		needsSudo = true
-	}
-	if _, err := managed.store.Remove(spec.Name); err != nil {
-		if spec.Target == job.TargetDaemon && errors.Is(err, os.ErrPermission) {
-			needsSudo = true
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
-	if needsSudo {
-		approved, promptErr := a.confirmWithDefault("removing daemon jobs requires sudo. Retry with sudo? [Y/n]: ", true)
-		if promptErr != nil {
-			return promptErr
-		}
-		if approved {
-			return a.removeDaemonSpecWithSudo(spec)
-		}
+// removeManagedSpec boots spec out of launchd and deletes its plist and
+// state. A bootout failure is ignored because the job may not be loaded.
+func (a *App) removeManagedSpec(spec job.Spec) error {
+	_ = a.runner.Bootout(spec)
+	if _, err := a.store.Remove(spec.Name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
 	return nil
 }
 
-func (a *App) removeDaemonSpecWithSudo(spec job.Spec) error {
-	return a.priv.RemoveDaemonArtifactsWithSudo(
-		[]string{spec.PlistPath},
-		managedCleanupPaths(a.daemonStore, spec),
-		[]string{a.daemonStore.JobDirForSpec(spec)},
-	)
-}
-
-func (a *App) printRemovePlan(managed managedSpec) error {
-	spec := managed.spec
+func (a *App) printRemovePlan(spec job.Spec) error {
 	if _, err := fmt.Fprintln(a.stdout, "remove will:"); err != nil {
 		return err
 	}
@@ -88,18 +64,13 @@ func (a *App) printRemovePlan(managed managedSpec) error {
 	if _, err := fmt.Fprintf(a.stdout, "- remove managed plist: %s\n", spec.PlistPath); err != nil {
 		return err
 	}
-	for _, path := range managedCleanupPaths(managed.store, spec) {
+	for _, path := range managedCleanupPaths(a.store, spec) {
 		if _, err := fmt.Fprintf(a.stdout, "- remove managed state/log: %s\n", path); err != nil {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(a.stdout, "- remove managed job directory: %s\n", managed.store.JobDirForSpec(spec)); err != nil {
+	if _, err := fmt.Fprintf(a.stdout, "- remove managed job directory: %s\n", a.store.JobDirForSpec(spec)); err != nil {
 		return err
-	}
-	if spec.Target == job.TargetDaemon {
-		if _, err := fmt.Fprintln(a.stdout, "- may require sudo for daemon-owned files"); err != nil {
-			return err
-		}
 	}
 	_, err := fmt.Fprintln(a.stdout, "dry run: no changes made")
 	return err

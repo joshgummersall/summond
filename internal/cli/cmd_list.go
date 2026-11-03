@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"text/tabwriter"
 
-	"github.com/joshgummersall/summond/internal/job"
 	"github.com/spf13/cobra"
 )
 
@@ -29,16 +28,12 @@ Use --json to output a JSON array of job objects instead of the table.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a.logger.Debug("list start")
-			managedSpecs, err := a.listManagedJobs()
+			specs, err := a.listManagedJobs()
 			if err != nil {
 				return err
 			}
 
 			if jsonOutput {
-				specs := make([]job.Spec, 0, len(managedSpecs))
-				for _, managed := range managedSpecs {
-					specs = append(specs, managed.spec)
-				}
 				data, err := json.MarshalIndent(specs, "", "  ")
 				if err != nil {
 					return fmt.Errorf("marshal jobs: %w", err)
@@ -47,7 +42,7 @@ Use --json to output a JSON array of job objects instead of the table.`,
 				return err
 			}
 
-			if len(managedSpecs) == 0 {
+			if len(specs) == 0 {
 				_, err = fmt.Fprintln(a.stdout, "no managed jobs")
 				return err
 			}
@@ -55,8 +50,7 @@ Use --json to output a JSON array of job objects instead of the table.`,
 			if _, err := fmt.Fprintln(writer, "NAME\tTARGET\tSCHEDULE\tSTATUS"); err != nil {
 				return err
 			}
-			for _, managed := range managedSpecs {
-				spec := managed.spec
+			for _, spec := range specs {
 				_, err := fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", spec.Name, spec.Target, describeTriggerOrSchedule(spec), describeLastRunStatus(spec))
 				if err != nil {
 					return err

@@ -27,12 +27,12 @@ The job state directory contains the job's metadata JSON, log symlinks, and runt
   eval $(summond cd my-job)`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			managed, err := a.loadManagedSpec(args[0])
+			spec, err := a.loadManagedSpec(args[0])
 			if err != nil {
 				return err
 			}
 
-			dir, err := managed.store.JobDir(managed.spec.Name)
+			dir, err := a.store.JobDir(spec.Name)
 			if err != nil {
 				return err
 			}

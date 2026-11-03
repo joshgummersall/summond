@@ -12,19 +12,11 @@ import (
 	"strings"
 
 	"github.com/joshgummersall/summond/internal/bootstrap"
-	"github.com/joshgummersall/summond/internal/state"
 	"github.com/spf13/cobra"
 )
 
-func (a *App) envStore(daemon bool) *state.Store {
-	if daemon {
-		return a.daemonStore
-	}
-	return a.store
-}
-
-func (a *App) ensureEnvFile(store *state.Store) (string, error) {
-	path := store.EnvFilePath()
+func (a *App) ensureEnvFile() (string, error) {
+	path := a.store.EnvFilePath()
 	if _, err := os.Stat(path); err == nil {
 		return path, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -36,44 +28,31 @@ func (a *App) ensureEnvFile(store *state.Store) (string, error) {
 	return path, nil
 }
 
+// writeEnvFileContents replaces the env file atomically. The file holds
+// secrets, so it is always written with mode 0600.
 func (a *App) writeEnvFileContents(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && !errors.Is(err, os.ErrPermission) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	// Use a private temp directory (0700) so no other local user can race the
-	// subsequent sudo-copy by swapping the file between our write and the
-	// privileged install.
-	tmpDir, err := os.MkdirTemp("", "summond-env-*")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(tmpDir)
-	tmp, err := os.CreateTemp(tmpDir, "env-*.json")
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
 	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		if errors.Is(err, os.ErrPermission) {
-			approved, promptErr := a.confirmWithDefault("writing daemon env file requires sudo. Retry with sudo? [Y/n]: ", true)
-			if promptErr != nil {
-				return promptErr
-			}
-			if !approved {
-				return err
-			}
-			return a.priv.WriteFileWithSudo(tmpPath, path)
-		}
-		return err
-	}
-	return nil
+	return os.Rename(tmpPath, path)
 }
 
 func readEnvJSON(data []byte) (map[string]string, error) {
@@ -146,12 +125,12 @@ func (a *App) newEnvCommand() *cobra.Command {
 Variables are stored in a JSON file and injected into every job at runtime before the
 job command runs. Use 'set', 'get', and 'list' to manipulate the environment non-interactively.
 
-By default, operates on the agent env file. Use --daemon to target the daemon env file
-(stored in /Library/Application Support/summond/env.json).`,
+summond uses the agent env file in ~/Library/Application Support/summond/env.json.
+sudo summond uses the daemon env file in /Library/Application Support/summond/env.json.`,
 		Example: `  summond env set API_KEY=abc123
   summond env get API_KEY
   summond env list
-  summond env --daemon set SVC_TOKEN=xyz`,
+  sudo summond env set SVC_TOKEN=xyz`,
 	}
 	cmd.AddCommand(
 		a.newEnvSetCommand(),
@@ -163,7 +142,6 @@ By default, operates on the agent env file. Use --daemon to target the daemon en
 }
 
 func (a *App) newEnvSetCommand() *cobra.Command {
-	var daemon bool
 	cmd := &cobra.Command{
 		Use:   "set KEY=VALUE",
 		Short: "Set an environment variable",
@@ -173,7 +151,7 @@ If KEY already exists its value is updated in place. Otherwise a new entry is ap
 Keys must match [A-Za-z_][A-Za-z0-9_]*.`,
 		Example: `  summond env set API_KEY=abc123
   summond env set PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
-  summond env set --daemon SVC_TOKEN=xyz`,
+  sudo summond env set SVC_TOKEN=xyz`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value, err := parseKeyValue(args[0])
@@ -181,7 +159,7 @@ Keys must match [A-Za-z_][A-Za-z0-9_]*.`,
 				return err
 			}
 
-			path, err := a.ensureEnvFile(a.envStore(daemon))
+			path, err := a.ensureEnvFile()
 			if err != nil {
 				return err
 			}
@@ -210,12 +188,10 @@ Keys must match [A-Za-z_][A-Za-z0-9_]*.`,
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&daemon, "daemon", false, "operate on the daemon env file instead of the agent env file")
 	return cmd
 }
 
 func (a *App) newEnvGetCommand() *cobra.Command {
-	var daemon bool
 	cmd := &cobra.Command{
 		Use:     "get KEY",
 		Short:   "Print the value of an environment variable",
@@ -224,7 +200,7 @@ func (a *App) newEnvGetCommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key := args[0]
 
-			path, err := a.ensureEnvFile(a.envStore(daemon))
+			path, err := a.ensureEnvFile()
 			if err != nil {
 				return err
 			}
@@ -248,12 +224,10 @@ func (a *App) newEnvGetCommand() *cobra.Command {
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&daemon, "daemon", false, "operate on the daemon env file instead of the agent env file")
 	return cmd
 }
 
 func (a *App) newEnvRemoveCommand() *cobra.Command {
-	var daemon bool
 	cmd := &cobra.Command{
 		Use:   "remove KEY",
 		Short: "Remove an environment variable",
@@ -261,11 +235,11 @@ func (a *App) newEnvRemoveCommand() *cobra.Command {
 
 Returns an error if the key does not exist.`,
 		Example: `  summond env remove API_KEY
-  summond env remove --daemon SVC_TOKEN`,
+  sudo summond env remove SVC_TOKEN`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key := args[0]
-			path, err := a.ensureEnvFile(a.envStore(daemon))
+			path, err := a.ensureEnvFile()
 			if err != nil {
 				return err
 			}
@@ -292,19 +266,17 @@ Returns an error if the key does not exist.`,
 			return err
 		},
 	}
-	cmd.Flags().BoolVar(&daemon, "daemon", false, "operate on the daemon env file instead of the agent env file")
 	return cmd
 }
 
 func (a *App) newEnvListCommand() *cobra.Command {
-	var daemon bool
 	cmd := &cobra.Command{
 		Use:     "list",
 		Short:   "List all environment variables",
 		Example: `  summond env list`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			path, err := a.ensureEnvFile(a.envStore(daemon))
+			path, err := a.ensureEnvFile()
 			if err != nil {
 				return err
 			}
@@ -329,6 +301,5 @@ func (a *App) newEnvListCommand() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&daemon, "daemon", false, "operate on the daemon env file instead of the agent env file")
 	return cmd
 }

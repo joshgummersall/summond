@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/joshgummersall/summond/internal/state"
 )
 
 type fakeInstaller struct {
@@ -27,10 +25,6 @@ func (f *fakeInstaller) Install(src, dst string) error {
 
 func (f *fakeInstaller) InstallWithSudo(src, dst string) error {
 	f.sudoCalls = append(f.sudoCalls, [2]string{src, dst})
-	return f.sudoErr
-}
-
-func (f *fakeInstaller) MkdirAllWithSudo(path string) error {
 	return f.sudoErr
 }
 
@@ -57,10 +51,7 @@ func TestInitCreatesFilesAndInstalls(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 	installer := &fakeInstaller{}
-	manager := NewManager(state.PathSet{
-		Agent:        state.Paths{Home: filepath.Join(dir, "state")},
-		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
-	}, installer)
+	manager := NewManager(filepath.Join(dir, "state"), filepath.Join(dir, "newsyslog.d"), installer)
 
 	result, err := manager.Init(Options{})
 	if err != nil {
@@ -95,6 +86,13 @@ func TestInitCreatesFilesAndInstalls(t *testing.T) {
 	if !strings.Contains(string(envData), "/opt/homebrew/bin") || !strings.Contains(string(envData), "/usr/local/bin") {
 		t.Fatalf("unexpected env file: %q", string(envData))
 	}
+	envInfo, err := os.Stat(result.EnvPath)
+	if err != nil {
+		t.Fatalf("Stat(env) error = %v", err)
+	}
+	if mode := envInfo.Mode().Perm(); mode != 0o600 {
+		t.Fatalf("env mode = %o, want 600", mode)
+	}
 	if !result.NewsyslogInstalled {
 		t.Fatal("expected newsyslog installed")
 	}
@@ -116,10 +114,7 @@ func TestInitReturnsPermissionErrorForRetry(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 	installer := &fakeInstaller{err: &PermissionError{Err: errors.New("permission denied")}}
-	manager := NewManager(state.PathSet{
-		Agent:        state.Paths{Home: filepath.Join(dir, "state")},
-		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
-	}, installer)
+	manager := NewManager(filepath.Join(dir, "state"), filepath.Join(dir, "newsyslog.d"), installer)
 
 	result, err := manager.Init(Options{})
 	if err == nil {
@@ -176,8 +171,8 @@ func TestRenderEnvFileContainsDefaultPath(t *testing.T) {
 }
 
 func TestRenderNewsyslogPointsAtManagedLogs(t *testing.T) {
-	text := renderNewsyslog(filepath.Join("/tmp", "summond-agent"), filepath.Join("/tmp", "summond-daemon"))
-	if !strings.Contains(text, "/tmp/summond-agent/logs/*.log") || !strings.Contains(text, "/tmp/summond-daemon/logs/*.log") {
+	text := renderNewsyslog(filepath.Join("/tmp", "summond-agent"))
+	if !strings.Contains(text, "/tmp/summond-agent/logs/*.log") {
 		t.Fatalf("unexpected newsyslog content: %q", text)
 	}
 }
@@ -230,10 +225,7 @@ func TestUninstallRemovesFilesAndInstalledConfig(t *testing.T) {
 		_ = os.Chdir(prevWD)
 	}()
 	installer := &fakeInstaller{}
-	manager := NewManager(state.PathSet{
-		Agent:        state.Paths{Home: filepath.Join(dir, "state")},
-		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
-	}, installer)
+	manager := NewManager(filepath.Join(dir, "state"), filepath.Join(dir, "newsyslog.d"), installer)
 
 	if _, err := manager.Install(Options{SkipNewsyslog: true}); err != nil {
 		t.Fatalf("Install() error = %v", err)
@@ -271,10 +263,7 @@ func TestInstallAndUninstallUseCurrentWorkingDirectoryForConfig(t *testing.T) {
 	}()
 
 	installer := &fakeInstaller{}
-	manager := NewManager(state.PathSet{
-		Agent:        state.Paths{Home: filepath.Join(dir, "state")},
-		NewsyslogDir: filepath.Join(dir, "newsyslog.d"),
-	}, installer)
+	manager := NewManager(filepath.Join(dir, "state"), filepath.Join(dir, "newsyslog.d"), installer)
 
 	result, err := manager.Install(Options{SkipNewsyslog: true})
 	if err != nil {

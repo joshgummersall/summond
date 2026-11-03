@@ -62,8 +62,8 @@ func TestRestartRecordsInterruptedRunAsKilled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadManagedSpec() error = %v", err)
 	}
-	if managed.spec.LastFinishedAt == nil || managed.spec.LastError != "killed" {
-		t.Fatalf("spec = %+v", managed.spec)
+	if managed.LastFinishedAt == nil || managed.LastError != "killed" {
+		t.Fatalf("spec = %+v", managed)
 	}
 	if !containsString(runner.kickstarted, "watcher") {
 		t.Fatalf("kickstarted = %v", runner.kickstarted)

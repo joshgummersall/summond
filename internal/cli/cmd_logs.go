@@ -36,11 +36,10 @@ Before each run, summond rotates a log larger than 5 MiB: it copies the log to
 			if lineCount < 0 {
 				return errors.New("logs requires -n >= 0")
 			}
-			managed, err := a.loadManagedSpec(name)
+			spec, err := a.loadManagedSpec(name)
 			if err != nil {
 				return err
 			}
-			spec := managed.spec
 			type logTarget struct {
 				logTailTarget
 				offset int64

@@ -4,37 +4,49 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/joshgummersall/summond/internal/job"
 )
 
-func TestDiscoverPathSetUsesFixedPlatformPaths(t *testing.T) {
+func TestDiscoverPathsUsesUserHomeForNonRoot(t *testing.T) {
 	current, err := user.Current()
 	if err != nil {
 		t.Fatalf("Current() error = %v", err)
 	}
-
-	paths, err := DiscoverPathSet()
+	uid, err := strconv.Atoi(current.Uid)
 	if err != nil {
-		t.Fatalf("DiscoverPathSet() error = %v", err)
+		t.Fatalf("Atoi(%q) error = %v", current.Uid, err)
+	}
+	if uid == 0 {
+		t.Skip("test needs a non-root user")
 	}
 
-	if paths.Agent.Home != filepath.Join(current.HomeDir, "Library", "Application Support", "summond") {
-		t.Fatalf("Agent.Home = %q", paths.Agent.Home)
+	paths, err := DiscoverPaths(uid)
+	if err != nil {
+		t.Fatalf("DiscoverPaths() error = %v", err)
 	}
-	if paths.Agent.LaunchDir != filepath.Join(current.HomeDir, "Library", "LaunchAgents") {
-		t.Fatalf("Agent.LaunchDir = %q", paths.Agent.LaunchDir)
+	if paths.Home != filepath.Join(current.HomeDir, "Library", "Application Support", "summond") {
+		t.Fatalf("Home = %q", paths.Home)
 	}
-	if paths.Daemon.Home != "/Library/Application Support/summond" {
-		t.Fatalf("Daemon.Home = %q", paths.Daemon.Home)
+	if paths.LaunchDir != filepath.Join(current.HomeDir, "Library", "LaunchAgents") {
+		t.Fatalf("LaunchDir = %q", paths.LaunchDir)
 	}
-	if paths.Daemon.LaunchDir != "/Library/LaunchDaemons" {
-		t.Fatalf("Daemon.LaunchDir = %q", paths.Daemon.LaunchDir)
+}
+
+func TestDiscoverPathsUsesSystemPathsForRoot(t *testing.T) {
+	t.Setenv("SUDO_USER", "someone")
+	paths, err := DiscoverPaths(0)
+	if err != nil {
+		t.Fatalf("DiscoverPaths() error = %v", err)
 	}
-	if paths.NewsyslogDir != "/etc/newsyslog.d" {
-		t.Fatalf("NewsyslogDir = %q", paths.NewsyslogDir)
+	if paths.Home != "/Library/Application Support/summond" {
+		t.Fatalf("Home = %q", paths.Home)
+	}
+	if paths.LaunchDir != "/Library/LaunchDaemons" {
+		t.Fatalf("LaunchDir = %q", paths.LaunchDir)
 	}
 }
 

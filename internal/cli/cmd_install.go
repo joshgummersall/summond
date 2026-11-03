@@ -38,10 +38,7 @@ func (a *App) printInstallPlan(opts bootstrap.Options) error {
 	if _, err := fmt.Fprintf(a.stdout, "- %s install marker: %s\n", installMarkerAction, installMarkerPath); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(a.stdout, "- manage agent state under: %s\n", a.store.Paths().Home); err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(a.stdout, "- manage daemon state under: %s\n", a.daemonStore.Paths().Home); err != nil {
+	if _, err := fmt.Fprintf(a.stdout, "- manage %s state under: %s\n", a.scopeTarget(), a.store.Paths().Home); err != nil {
 		return err
 	}
 	if opts.SkipNewsyslog {
@@ -105,8 +102,8 @@ func (a *App) newInstallCommand() *cobra.Command {
 
 Install creates the following files and directories:
   - summond.toml      starter config in the current directory (skipped if it already exists, unless --overwrite)
-  - ~/.summond/       agent job state directory
-  - /var/db/summond/  daemon job state directory
+  - state directory   ~/Library/Application Support/summond for agents (summond install),
+                      /Library/Application Support/summond for daemons (sudo summond install)
   - newsyslog config  log rotation config installed to /etc/newsyslog.d/ (requires sudo)
 
 Run 'summond apply' after install to load jobs from summond.toml.
@@ -140,16 +137,13 @@ Run 'summond uninstall' to remove all managed jobs and state.`,
 				a.logger.Debug("install failed", "error", err)
 				var permissionErr *bootstrap.PermissionError
 				if errors.As(err, &permissionErr) && !skipNewsyslog {
-					approved, promptErr := a.confirmWithDefault("system setup requires sudo (newsyslog + daemon state). Retry with sudo? [Y/n]: ", true)
+					approved, promptErr := a.confirmWithDefault("installing the newsyslog config requires sudo. Retry with sudo? [Y/n]: ", true)
 					if promptErr != nil {
 						return promptErr
 					}
 					if approved {
 						if retryErr := a.boot.InstallNewsyslogWithSudo(&result); retryErr != nil {
 							return retryErr
-						}
-						if !result.DaemonStateInitialized {
-							_ = a.boot.InitDaemonStateWithSudo(&result)
 						}
 						return a.printInstallSummary(result)
 					}
@@ -167,18 +161,6 @@ Run 'summond uninstall' to remove all managed jobs and state.`,
 					return summaryErr
 				}
 				return err
-			}
-			// If daemon state wasn't initialized (requires sudo for /Library paths), prompt and retry.
-			if !result.DaemonStateInitialized {
-				approved, promptErr := a.confirmWithDefault("daemon state directory requires sudo. Initialize now? [Y/n]: ", true)
-				if promptErr != nil {
-					return promptErr
-				}
-				if approved {
-					if initErr := a.boot.InitDaemonStateWithSudo(&result); initErr != nil {
-						a.logger.Debug("daemon state init failed", "error", initErr)
-					}
-				}
 			}
 			a.logger.Info("install completed")
 			return a.printInstallSummary(result)

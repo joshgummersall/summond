@@ -80,13 +80,8 @@ func TestUninstallPermissionDeniedPromptsForNewsyslogCleanup(t *testing.T) {
 		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
-	daemonStore := state.NewStore(state.Paths{
-		Home:      filepath.Join(home, "managed-daemon"),
-		LaunchDir: filepath.Join(home, "LaunchDaemons"),
-	})
 	installer := &fakeBootstrapInstaller{}
-	app := NewApp(strings.NewReader("y\ny\ny\n"), &bytes.Buffer{}, store, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: store.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, installer))
-	app.priv = &fakePrivilegedOperator{}
+	app := NewApp(strings.NewReader("y\ny\ny\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths().Home, filepath.Join(home, "newsyslog.d"), installer))
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 
@@ -103,7 +98,7 @@ func TestUninstallPermissionDeniedPromptsForNewsyslogCleanup(t *testing.T) {
 	if len(installer.sudoCalls) != 1 {
 		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
 	}
-	if got := stdout.String(); !strings.Contains(got, "Proceed with uninstall? [y/N]: ") || !strings.Contains(got, "some system-owned files require sudo to remove. Retry with sudo? [Y/n]: ") {
+	if got := stdout.String(); !strings.Contains(got, "Proceed with uninstall? [y/N]: ") || !strings.Contains(got, "removing the newsyslog config requires sudo. Retry with sudo? [Y/n]: ") {
 		t.Fatalf("unexpected output: %q", got)
 	}
 }
@@ -124,13 +119,8 @@ func TestUninstallCancelSkipsChanges(t *testing.T) {
 		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
-	daemonStore := state.NewStore(state.Paths{
-		Home:      filepath.Join(home, "managed-daemon"),
-		LaunchDir: filepath.Join(home, "LaunchDaemons"),
-	})
 	installer := &fakeBootstrapInstaller{}
-	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, daemonStore, &fakeRunner{}, bootstrap.NewManager(state.PathSet{Agent: store.Paths(), Daemon: daemonStore.Paths(), NewsyslogDir: filepath.Join(home, "newsyslog.d")}, installer))
-	app.priv = &fakePrivilegedOperator{}
+	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths().Home, filepath.Join(home, "newsyslog.d"), installer))
 	var stdout bytes.Buffer
 	app.stdout = &stdout
 

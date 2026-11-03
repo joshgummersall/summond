@@ -2,12 +2,10 @@ package cli
 
 import (
 	"bufio"
-	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"slices"
 	"sort"
 	"strings"
@@ -38,51 +36,39 @@ type App struct {
 	stdout       io.Writer
 	stderr       io.Writer
 	store        *state.Store
-	daemonStore  *state.Store
 	runner       launchd.Runner
 	boot         *bootstrap.Manager
-	priv         privilegedOperator
 	logger       *slog.Logger
 	promptReader *bufio.Reader
 	geteuid      func() int
 }
 
-type privilegedOperator interface {
-	InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string) error
-	RemoveDaemonArtifactsWithSudo(plistPaths []string, cleanupPaths []string, extraPaths []string) error
-	RemovePathWithSudo(path string) error
-	BootoutDaemonWithSudo(plistPath string) error
-	WriteFileWithSudo(src, dst string) error
-}
-
-type osPrivilegedOperator struct{}
-
-func NewApp(stdin io.Reader, stdout io.Writer, store *state.Store, daemonStore *state.Store, runner launchd.Runner, boot *bootstrap.Manager) *App {
+// NewApp builds an App for one scope. store and runner must belong to the
+// scope that the effective UID selects; see scopeTarget.
+func NewApp(stdin io.Reader, stdout io.Writer, store *state.Store, runner launchd.Runner, boot *bootstrap.Manager) *App {
 	return &App{
-		stdin:       stdin,
-		stdout:      stdout,
-		stderr:      io.Discard,
-		store:       store,
-		daemonStore: daemonStore,
-		runner:      runner,
-		boot:        boot,
-		priv:        osPrivilegedOperator{},
-		geteuid:     os.Geteuid,
+		stdin:   stdin,
+		stdout:  stdout,
+		stderr:  io.Discard,
+		store:   store,
+		runner:  runner,
+		boot:    boot,
+		geteuid: os.Geteuid,
 	}
 }
 
 func Run(args []string, stdout io.Writer) error {
-	paths, err := state.DiscoverPathSet()
+	euid := os.Geteuid()
+	paths, err := state.DiscoverPaths(euid)
 	if err != nil {
 		return err
 	}
 	app := NewApp(
 		os.Stdin,
 		stdout,
-		state.NewStore(paths.Agent),
-		state.NewStore(paths.Daemon),
-		launchd.LaunchCtl{},
-		bootstrap.NewManager(paths, bootstrap.OSInstaller{}),
+		state.NewStore(paths),
+		launchd.LaunchCtl{Domain: launchd.DomainFor(euid)},
+		bootstrap.NewManager(paths.Home, bootstrap.DefaultNewsyslogDir, bootstrap.OSInstaller{}),
 	)
 	app.stderr = os.Stderr
 	return app.run(args)
@@ -195,64 +181,56 @@ func (a *App) verifyLoadedJob(spec job.Spec) error {
 	return nil
 }
 
-type managedSpec struct {
-	spec  job.Spec
-	store *state.Store
+// scopeTarget returns the job target this process manages: daemons as root,
+// agents otherwise.
+func (a *App) scopeTarget() job.Target {
+	if a.geteuid() == 0 {
+		return job.TargetDaemon
+	}
+	return job.TargetAgent
 }
 
-func (a *App) storeForTarget(target job.Target) *state.Store {
+// scopeMismatchError explains how to manage a job whose target belongs to
+// the other scope.
+func scopeMismatchError(target job.Target, command string) error {
 	if target == job.TargetDaemon {
-		return a.daemonStore
+		return fmt.Errorf("daemon jobs are managed as root; run: sudo summond %s", command)
 	}
-	return a.store
+	return fmt.Errorf("agent jobs are managed without sudo; run: summond %s", command)
 }
 
-func (a *App) listManagedJobs() ([]managedSpec, error) {
-	specs := []managedSpec{}
-	agentSpecs, err := a.store.List()
+func (a *App) listManagedJobs() ([]job.Spec, error) {
+	specs, err := a.store.List()
 	if err != nil {
 		return nil, err
-	}
-	for _, spec := range agentSpecs {
-		specs = append(specs, managedSpec{spec: spec, store: a.store})
-	}
-	daemonSpecs, err := a.daemonStore.List()
-	if err != nil {
-		return nil, err
-	}
-	for _, spec := range daemonSpecs {
-		specs = append(specs, managedSpec{spec: spec, store: a.daemonStore})
 	}
 	sort.Slice(specs, func(i, j int) bool {
-		if specs[i].spec.Group == specs[j].spec.Group && specs[i].spec.Name == specs[j].spec.Name {
-			return specs[i].spec.Target < specs[j].spec.Target
+		if specs[i].Group != specs[j].Group {
+			return specs[i].Group < specs[j].Group
 		}
-		if specs[i].spec.Group != specs[j].spec.Group {
-			return specs[i].spec.Group < specs[j].spec.Group
-		}
-		return specs[i].spec.Name < specs[j].spec.Name
+		return specs[i].Name < specs[j].Name
 	})
 	return specs, nil
 }
 
-func (a *App) loadManagedSpec(name string) (managedSpec, error) {
+func (a *App) loadManagedSpec(name string) (job.Spec, error) {
 	specs, err := a.listManagedJobs()
 	if err != nil {
-		return managedSpec{}, err
+		return job.Spec{}, err
 	}
-	var matches []managedSpec
-	for _, managed := range specs {
-		if managed.spec.Name == name || managed.spec.ManagedKey() == name {
-			matches = append(matches, managed)
+	var matches []job.Spec
+	for _, spec := range specs {
+		if spec.Name == name || spec.ManagedKey() == name {
+			matches = append(matches, spec)
 		}
 	}
 	switch len(matches) {
 	case 0:
-		return managedSpec{}, fmt.Errorf("read job metadata: %w", os.ErrNotExist)
+		return job.Spec{}, fmt.Errorf("read job metadata: %w", os.ErrNotExist)
 	case 1:
 		return matches[0], nil
 	default:
-		return managedSpec{}, fmt.Errorf("duplicate managed job name %q across groups or targets; use a unique group", name)
+		return job.Spec{}, fmt.Errorf("duplicate managed job name %q across groups; use a unique group", name)
 	}
 }
 
@@ -344,93 +322,4 @@ func appendIfMissing(values []string, value string) []string {
 		return values
 	}
 	return append(values, value)
-}
-
-func runSudoScript(script string, args ...string) error {
-	var stderr bytes.Buffer
-	commandArgs := append([]string{"/bin/sh", "-c", script, "summond-sudo"}, args...)
-	cmd := exec.Command("sudo", commandArgs...)
-	cmd.Stderr = &stderr
-	cmd.Stdin = os.Stdin
-	if err := cmd.Run(); err != nil {
-		if stderr.Len() > 0 {
-			return fmt.Errorf("%w: %s", err, stderr.String())
-		}
-		return err
-	}
-	return nil
-}
-
-func (osPrivilegedOperator) InstallDaemonSpecWithSudo(dirs []string, runtimeSource string, runtimeDest string, plistSource string, plistDest string, metadataSource string, metadataDest string) error {
-	script := `
-set -e
-dir_count="$1"
-shift 1
-i=0
-while [ "$i" -lt "$dir_count" ]; do
-  install -d -m 0755 "$1"
-  shift
-  i=$((i + 1))
-done
-runtime_source="$1"
-runtime_dest="$2"
-plist_source="$3"
-plist_dest="$4"
-metadata_source="$5"
-metadata_dest="$6"
-install -m 0755 "$runtime_source" "$runtime_dest"
-install -m 0644 "$plist_source" "$plist_dest"
-install -m 0644 "$metadata_source" "$metadata_dest"
-launchctl bootout system "$plist_dest" >/dev/null 2>&1 || true
-launchctl bootstrap system "$plist_dest"
-`
-	args := []string{fmt.Sprintf("%d", len(dirs))}
-	args = append(args, dirs...)
-	args = append(args, runtimeSource, runtimeDest, plistSource, plistDest, metadataSource, metadataDest)
-	return runSudoScript(script, args...)
-}
-
-func (osPrivilegedOperator) RemoveDaemonArtifactsWithSudo(plistPaths []string, cleanupPaths []string, extraPaths []string) error {
-	script := `
-plist_count="$1"
-cleanup_count="$2"
-extra_count="$3"
-shift 3
-i=0
-while [ "$i" -lt "$plist_count" ]; do
-  launchctl bootout system "$1" >/dev/null 2>&1 || true
-  rm -rf "$1"
-  shift
-  i=$((i + 1))
-done
-i=0
-while [ "$i" -lt "$cleanup_count" ]; do
-  rm -rf "$1"
-  shift
-  i=$((i + 1))
-done
-i=0
-while [ "$i" -lt "$extra_count" ]; do
-  rm -rf "$1"
-  shift
-  i=$((i + 1))
-done
-`
-	args := []string{fmt.Sprintf("%d", len(plistPaths)), fmt.Sprintf("%d", len(cleanupPaths)), fmt.Sprintf("%d", len(extraPaths))}
-	args = append(args, plistPaths...)
-	args = append(args, cleanupPaths...)
-	args = append(args, extraPaths...)
-	return runSudoScript(script, args...)
-}
-
-func (osPrivilegedOperator) RemovePathWithSudo(path string) error {
-	return runSudoScript(`rm -rf "$1"`, path)
-}
-
-func (osPrivilegedOperator) BootoutDaemonWithSudo(plistPath string) error {
-	return runSudoScript(`launchctl bootout system "$1"`, plistPath)
-}
-
-func (osPrivilegedOperator) WriteFileWithSudo(src, dst string) error {
-	return runSudoScript(`install -m 0644 "$1" "$2"`, src, dst)
 }
