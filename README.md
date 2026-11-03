@@ -24,7 +24,9 @@ Jobs run from a copy of summond in Application Support, so they keep running aft
 brew uninstall --zap summond
 ```
 
-Or run `summond uninstall` before `brew uninstall`. Homebrew runs a cask's plain uninstall steps on every upgrade too, so only `--zap` removes jobs.
+Zap runs `summond uninstall` twice: once as you, for agent jobs, and once with `sudo`, for daemon jobs. It also removes the `newsyslog` config that summond v1 installed.
+
+Or run `summond uninstall` (agents) and `sudo summond uninstall` (daemons) before `brew uninstall`. Each run removes one scope. Homebrew runs a cask's plain uninstall steps on every upgrade too, so only `--zap` removes jobs.
 
 ## How it works
 
