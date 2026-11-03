@@ -20,6 +20,10 @@ func (a *App) newApplyCommand() *cobra.Command {
 
 If [file] is omitted, reads ./summond.toml.
 
+The top-level 'target' key sets the target of every job in the file: "agent" (the
+default) or "daemon". Apply agent configs with 'summond apply' and daemon configs with
+'sudo summond apply'; a config for the other scope is an error.
+
 Jobs are identified by their name within a group. The group defaults to a hash of the
 config file path, or the 'group' key at the top of the config file. Apply only manages
 jobs in groups present in the config — jobs in other groups are never pruned.
@@ -47,10 +51,14 @@ Exits with code 1 if any job fails to apply, even if other jobs succeeded.`,
 			if !installed {
 				return errors.New("apply requires install to be run first")
 			}
-			specs, err := config.LoadFile(filePath)
+			file, err := config.Load(filePath)
 			if err != nil {
 				return err
 			}
+			if file.Target != a.scopeTarget() {
+				return scopeMismatchError(file.Target, "apply "+filePath)
+			}
+			specs := file.Specs
 			a.logger.Debug("loaded config", "path", filePath, "jobs", len(specs))
 			orphanedSpecs, err := a.orphanedManagedJobs(specs)
 			if err != nil {
@@ -70,10 +78,6 @@ Exits with code 1 if any job fails to apply, even if other jobs succeeded.`,
 			applied := 0
 			var failures []string
 			for _, spec := range specs {
-				if spec.Target != a.scopeTarget() {
-					failures = append(failures, fmt.Sprintf("%s: %v", spec.Name, scopeMismatchError(spec.Target, "apply "+filePath)))
-					continue
-				}
 				spec.EnvironmentFilePath = a.store.EnvFilePath()
 				spec.RuntimeBinaryPath = runtimePath
 				if _, err := a.applySpec(spec); err != nil {
@@ -255,12 +259,6 @@ func (a *App) printApplyPlan(specs []job.Spec, orphanedSpecs []job.Spec, prune b
 	}
 	changes := 0
 	for _, spec := range specs {
-		if spec.Target != a.scopeTarget() {
-			if _, err := fmt.Fprintf(a.stdout, "- skip %s job: %s (%v)\n", spec.Target, spec.Name, scopeMismatchError(spec.Target, "apply")); err != nil {
-				return err
-			}
-			continue
-		}
 		action, err := a.describeApplyAction(spec)
 		if err != nil {
 			return err

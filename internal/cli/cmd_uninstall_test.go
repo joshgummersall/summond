@@ -32,7 +32,6 @@ func TestUninstallRemovesManagedArtifacts(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["cleanup"]`,
-		`target = "agent"`,
 		`schedule = "hourly"`,
 		"minute = 5",
 	}, "\n")

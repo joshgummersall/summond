@@ -185,7 +185,20 @@ summond rotates these logs itself. Before each run, a log larger than 5 MiB is c
 
 ## Agents and daemons
 
-`summond` manages LaunchAgents for the current user. `sudo summond` manages system-wide LaunchDaemons, with its own state and env file under `/Library/Application Support/summond`. A job with `target = "daemon"` applies only under `sudo summond apply`.
+`summond` manages LaunchAgents for the current user. `sudo summond` manages system-wide LaunchDaemons, with its own state and env file under `/Library/Application Support/summond`.
+
+Each config file targets one scope. Set `target` at the top of the file, before any `[jobs]` table. It applies to every job in the file and defaults to `"agent"`:
+
+```toml
+target = "daemon"
+
+[jobs.nightly-backup]
+command  = "/usr/local/bin/backup"
+schedule = "daily"
+hour     = 2
+```
+
+Apply agent configs with `summond apply` and daemon configs with `sudo summond apply`. Applying a config for the other scope is an error, so a stray `sudo` never turns agent jobs into root daemons. Keep agent and daemon jobs in separate files; a `target` inside a job table is rejected. See `summond.toml` and `summond.daemon.toml` in this repo for examples.
 
 ## Retry and backoff
 

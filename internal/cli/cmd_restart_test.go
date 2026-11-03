@@ -17,7 +17,6 @@ func applyLoginJob(t *testing.T, app *App) {
 		"[jobs.watcher]",
 		`command = "/bin/echo"`,
 		`args = ["watch"]`,
-		`target = "agent"`,
 		`schedule = "login"`,
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
