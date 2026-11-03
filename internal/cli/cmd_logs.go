@@ -22,8 +22,8 @@ By default, only output from the most recent execution is shown. Use -n to show
 the last N lines of the full log file instead. Use -f to stream new output as it
 is appended, similar to 'tail -f'. Press Ctrl-C to stop following.
 
-Log files are managed by newsyslog and rotated automatically. If the job has never
-run, the log files may not exist yet.`,
+Before each run, summond rotates a log larger than 5 MiB: it copies the log to
+<log>.1 and truncates it. If the job has never run, the log files may not exist yet.`,
 		Example: `  summond logs my-job
   summond logs my-job -n 100
   summond logs my-job -f`,

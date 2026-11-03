@@ -179,7 +179,9 @@ summond restart cleanup       # restart through launchd (useful for login jobs)
 summond state cleanup         # full execution history as JSON
 ```
 
-Stdout and stderr go to `~/Library/Application Support/summond/logs/` and are rotated by macOS's native `newsyslog`. No third-party log management needed.
+Stdout and stderr go to `stdout.log` and `stderr.log` in the job's directory under `jobs/` in the summond state directory. `summond cd <job>` takes you there.
+
+summond rotates these logs itself. Before each run, a log larger than 5 MiB is copied to `stdout.log.1` or `stderr.log.1` (replacing the older copy) and then truncated. summond keeps one old copy per log. It truncates in place instead of renaming, so launchd keeps writing to the same file.
 
 ## Agents and daemons
 
