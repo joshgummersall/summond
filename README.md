@@ -45,7 +45,7 @@ MODE = "nightly"
 summond apply
 ```
 
-That's it. Summond generates and loads the launchd plist, creates log files, configures `newsyslog` rotation, and tracks execution history. When you delete a job from the config, `summond apply --prune` removes it cleanly.
+That's it. There is no separate setup step: Summond creates its state directory on first use, generates and loads the launchd plist, creates and rotates log files, and tracks execution history. When you delete a job from the config, `summond apply --prune` removes it cleanly.
 
 `command`, `args`, `shell_command`, `working_dir`, `watch_paths`, and `env` values all support `$VAR`/`${VAR}` expansion, resolved against summond's own environment when you run `apply`. Referencing an unset variable is an error rather than silently resolving to an empty string:
 

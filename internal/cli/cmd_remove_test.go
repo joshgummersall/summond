@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/joshgummersall/summond/internal/bootstrap"
 	"github.com/joshgummersall/summond/internal/job"
 	"github.com/joshgummersall/summond/internal/state"
 )
@@ -184,15 +183,10 @@ func TestApplyPrunePromptCancelsWithoutFlag(t *testing.T) {
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
 	runner := &fakeRunner{}
-	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, runner, bootstrap.NewManager(store.Paths().Home, filepath.Join(home, "newsyslog.d"), &fakeBootstrapInstaller{}))
+	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, runner)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
-	if err := os.MkdirAll(store.Paths().Home, 0o755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(store.Paths().Home, ".installed"), []byte("installed\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	app.geteuid = func() int { return 501 }
 
 	configPath := filepath.Join(home, "current.toml")
 	if err := os.WriteFile(configPath, []byte("group = \"tests\"\n\n[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {

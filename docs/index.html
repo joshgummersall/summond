@@ -123,8 +123,9 @@ minute   = 0
 MODE = "nightly"</code></pre>
     <pre><code>summond apply</code></pre>
     <p>
-      That's it. Summond generates and loads the launchd plist, creates log files, configures
-      <code>newsyslog</code> rotation, and tracks execution history. When you delete a job from
+      That's it. There is no separate setup step: Summond creates its state directory on first
+      use, generates and loads the launchd plist, creates and rotates log files, and tracks
+      execution history. When you delete a job from
       the config, <code>summond apply --prune</code> removes it cleanly.
     </p>
 
