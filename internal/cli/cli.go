@@ -89,6 +89,9 @@ func (a *App) newRootCommand() *cobra.Command {
 		SilenceErrors: true,
 		Long: `summond manages friendly launchd jobs with native LaunchAgents and LaunchDaemons.
 
+summond manages agent jobs for the current user. sudo summond manages daemon jobs.
+Every command acts on one scope only and never prompts for sudo on its own.
+
 Exit codes:
   0   success
   1   error (bad arguments, job not found, command failed, etc.)

@@ -202,6 +202,12 @@ hour     = 2
 
 Apply agent configs with `summond apply` and daemon configs with `sudo summond apply`. Applying a config for the other scope is an error, so a stray `sudo` never turns agent jobs into root daemons. Keep agent and daemon jobs in separate files; a `target` inside a job table is rejected. See `summond.toml` and `summond.daemon.toml` in this repo for examples.
 
+Every command follows the same rule: `summond add`, `list`, `env`, `logs`, `uninstall`, and the rest act on agent jobs, and the same commands under `sudo` act on daemon jobs. For example, `sudo summond add backup --schedule boot -- /usr/local/bin/backup` adds a daemon job, and `sudo summond list` lists daemon jobs. No command switches scope or prompts for `sudo` on its own.
+
+Under `sudo`, `apply` expands `$VAR` references against root's environment, so `$HOME` may not be your home directory. Use absolute paths in daemon configs.
+
+See [ADR 1](docs/adr/0001-sudo-selects-daemon-scope.md) for the reasoning.
+
 ## Retry and backoff
 
 Jobs that exit non-zero can be automatically retried with exponential backoff:
@@ -267,7 +273,8 @@ Or via `summond add --concurrency`.
 ## Shared environment
 
 ```sh
-summond env set API_KEY=secret   # injected into every job at runtime
+summond env set API_KEY=secret        # injected into every agent job at runtime
+sudo summond env set API_KEY=secret   # injected into every daemon job at runtime
 ```
 
-Per-job `[jobs.name.env]` values are merged on top.
+Each scope has its own env file, `env.json` in its state directory, written with mode 0600. Per-job `[jobs.name.env]` values are merged on top.
