@@ -35,6 +35,28 @@ homebrew_casks:
       post:
         install_steps: |
           run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{ .StagedPath }}"]
+          if_path_exists "Library/Application Support/summond", base: :home do
+            run "{{ "{{" }}HOMEBREW_PREFIX{{ "}}" }}/bin/summond",
+                args:           ["refresh-runtime"],
+                must_succeed:   false,
+                writable_paths: ["Library/Application Support/summond"],
+                writable_base:  :home
+          end
+          if_path_exists "/Library/Application Support/summond" do
+            run "{{ "{{" }}HOMEBREW_PREFIX{{ "}}" }}/bin/summond",
+                args:         ["refresh-runtime"],
+                sudo:         true,
+                must_succeed: false
+          end
+    # Jobs run from a copy of summond in each scope's state directory. After
+    # install or upgrade, refresh-runtime replaces that copy so jobs run the
+    # new version. Each step runs only if its scope has state, so machines
+    # without daemon jobs never see a sudo prompt. A failed refresh (for
+    # example, sudo with no terminal) does not fail the upgrade; the next
+    # apply in that scope refreshes the copy. Unprivileged steps run in a
+    # sandbox with a temporary HOME, so home paths use base: :home rather
+    # than "~". summond finds the home directory from the user database, not
+    # $HOME. Sudo steps run outside the sandbox.
     caveats: |
       Jobs keep running after `brew uninstall`. To remove every job, log, and
       state directory, run `summond uninstall` (agents) and
