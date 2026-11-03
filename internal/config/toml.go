@@ -16,6 +16,7 @@ import (
 )
 
 type fileConfig struct {
+	Target  string               `toml:"target"`
 	Group   string               `toml:"group"`
 	Windows map[string]rawWindow `toml:"windows"`
 	Jobs    map[string]rawJob    `toml:"jobs"`
@@ -46,7 +47,6 @@ type rawUSB struct {
 
 type rawJob struct {
 	Label                   string            `toml:"label"`
-	Target                  string            `toml:"target"`
 	Command                 string            `toml:"command"`
 	Args                    []string          `toml:"args"`
 	ShellCommand            string            `toml:"shell_command"`
@@ -70,33 +70,50 @@ type rawJob struct {
 	USB                     *rawUSB           `toml:"usb"`
 }
 
+// File is a loaded config file. Target applies to every job in the file.
+type File struct {
+	Target job.Target
+	Specs  []job.Spec
+}
+
+// LoadFile returns the jobs in the config file at path.
 func LoadFile(path string) ([]job.Spec, error) {
-	absPath, err := filepath.Abs(path)
+	file, err := Load(path)
 	if err != nil {
 		return nil, err
 	}
+	return file.Specs, nil
+}
+
+// Load reads the config file at path. The top-level target, which defaults
+// to agent, sets the target of every job in the file.
+func Load(path string) (File, error) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return File{}, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return File{}, err
 	}
 
 	var cfg fileConfig
 	meta, err := toml.Decode(string(data), &cfg)
 	if err != nil {
-		return nil, err
+		return File{}, err
 	}
 	if undecoded := meta.Undecoded(); len(undecoded) > 0 {
-		keys := make([]string, 0, len(undecoded))
-		for _, key := range undecoded {
-			keys = append(keys, key.String())
-		}
-		sort.Strings(keys)
-		return nil, fmt.Errorf("unknown config key(s): %s", strings.Join(keys, ", "))
+		return File{}, unknownKeysError(undecoded)
+	}
+
+	target, err := parseTarget(cfg.Target)
+	if err != nil {
+		return File{}, err
 	}
 
 	windows, err := resolveWindows(cfg.Windows)
 	if err != nil {
-		return nil, err
+		return File{}, err
 	}
 
 	names := make([]string, 0, len(cfg.Jobs))
@@ -114,22 +131,53 @@ func LoadFile(path string) ([]job.Spec, error) {
 	for _, name := range names {
 		spec, err := cfg.Jobs[name].toSpec(name, group)
 		if err != nil {
-			return nil, fmt.Errorf("job %s: %w", name, err)
+			return File{}, fmt.Errorf("job %s: %w", name, err)
 		}
+		spec.Target = target
 		if window, ok := windows[spec.Schedule.Window]; ok {
 			spec.Schedule.WindowStartHour = window.start
 			spec.Schedule.WindowEndHour = window.end
 			spec.Schedule.WindowSet = true
 		}
 		if err := resolvePaths(&spec, baseDir); err != nil {
-			return nil, fmt.Errorf("job %s: %w", spec.Name, err)
+			return File{}, fmt.Errorf("job %s: %w", spec.Name, err)
 		}
 		if err := spec.Normalize(); err != nil {
-			return nil, fmt.Errorf("job %s: %w", spec.Name, err)
+			return File{}, fmt.Errorf("job %s: %w", spec.Name, err)
 		}
 		specs = append(specs, spec)
 	}
-	return specs, nil
+	return File{Target: target, Specs: specs}, nil
+}
+
+func parseTarget(raw string) (job.Target, error) {
+	switch target := job.Target(raw); target {
+	case "", job.TargetAgent:
+		return job.TargetAgent, nil
+	case job.TargetDaemon:
+		return target, nil
+	default:
+		return "", fmt.Errorf("invalid target %q (must be agent or daemon)", raw)
+	}
+}
+
+// unknownKeysError lists keys the config does not define. A per-job target,
+// which v1 configs used, gets a hint because target is now a file-level key.
+func unknownKeysError(undecoded []toml.Key) error {
+	keys := make([]string, 0, len(undecoded))
+	jobTarget := false
+	for _, key := range undecoded {
+		keys = append(keys, key.String())
+		if len(key) == 3 && key[0] == "jobs" && key[2] == "target" {
+			jobTarget = true
+		}
+	}
+	sort.Strings(keys)
+	err := fmt.Errorf("unknown config key(s): %s", strings.Join(keys, ", "))
+	if jobTarget {
+		return fmt.Errorf("%w (target applies to the whole file: move it to the top, before any [jobs] table)", err)
+	}
+	return err
 }
 
 var windowKinds = map[string]job.WindowKind{
@@ -173,7 +221,6 @@ func (r rawJob) toSpec(name string, group string) (job.Spec, error) {
 		Name:         name,
 		Group:        group,
 		Label:        r.Label,
-		Target:       job.Target(r.Target),
 		Command:      r.Command,
 		Args:         r.Args,
 		ShellCommand: r.ShellCommand,

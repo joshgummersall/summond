@@ -3,7 +3,10 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/joshgummersall/summond/internal/job"
 )
 
 func TestLoadFile(t *testing.T) {
@@ -13,7 +16,6 @@ func TestLoadFile(t *testing.T) {
 [jobs.backup]
 command = "/bin/echo"
 args = ["backup", "now"]
-target = "agent"
 schedule = "weekly"
 weekday = 2
 hour = 1
@@ -76,7 +78,6 @@ func TestLoadFileResolvesRelativeWatchPaths(t *testing.T) {
 [jobs.watcher]
 command = "/bin/echo"
 args = ["watch"]
-target = "agent"
 trigger = "on_change"
 watch_paths = ["../data/input.txt", "/tmp/absolute.txt"]
 `)
@@ -110,7 +111,6 @@ func TestLoadFileRespectsExplicitWorkingDir(t *testing.T) {
 [jobs.worker]
 command = "/bin/echo"
 args = ["work"]
-target = "agent"
 schedule = "hourly"
 minute = 5
 working_dir = "/tmp/custom-working-dir"
@@ -137,7 +137,6 @@ brew update
 brew upgrade
 brew cleanup
 """
-target = "agent"
 schedule = "weekly"
 `)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
@@ -161,7 +160,6 @@ func TestLoadFilePreservesCommandForRuntimeResolution(t *testing.T) {
 [jobs.chezmoi-update]
 command = "chezmoi"
 args = ["update"]
-target = "agent"
 schedule = "daily"
 
 [jobs.chezmoi-update.env]
@@ -186,7 +184,6 @@ func TestLoadFileParsesAbandonProcessGroup(t *testing.T) {
 [jobs.launcher]
 command = "/bin/echo"
 args = ["launch"]
-target = "agent"
 schedule = "login"
 abandon_process_group = true
 `)
@@ -209,7 +206,6 @@ func TestLoadFileParsesNestedRetry(t *testing.T) {
 [jobs.flaky]
 command = "/bin/echo"
 args = ["retry"]
-target = "agent"
 schedule = "login"
 
 [jobs.flaky.retry]
@@ -242,7 +238,6 @@ func TestLoadFileParsesNestedWatch(t *testing.T) {
 [jobs.watcher2]
 command = "/bin/echo"
 args = ["watch"]
-target = "agent"
 trigger = "on_change"
 
 [jobs.watcher2.watch]
@@ -488,5 +483,80 @@ trigger = "on_usb_attach"
 	}
 	if _, err := LoadFile(path); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestLoadTopLevelTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		header string
+		want   job.Target
+	}{
+		{"default", "", job.TargetAgent},
+		{"agent", `target = "agent"`, job.TargetAgent},
+		{"daemon", `target = "daemon"`, job.TargetDaemon},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "summond.toml")
+			data := tc.header + "\n[jobs.a]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\n\n[jobs.b]\ncommand = \"/bin/echo\"\nschedule = \"hourly\"\n"
+			if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			file, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if file.Target != tc.want {
+				t.Fatalf("Target = %q, want %q", file.Target, tc.want)
+			}
+			if len(file.Specs) != 2 {
+				t.Fatalf("len(Specs) = %d, want 2", len(file.Specs))
+			}
+			for _, spec := range file.Specs {
+				if spec.Target != tc.want {
+					t.Fatalf("%s Target = %q, want %q", spec.Name, spec.Target, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidTarget(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "summond.toml")
+	if err := os.WriteFile(path, []byte("target = \"system\"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	_, err := Load(path)
+	if err == nil || !strings.Contains(err.Error(), `invalid target "system"`) {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
+func TestLoadRejectsPerJobTargetWithHint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "summond.toml")
+	data := "[jobs.a]\ncommand = \"/bin/echo\"\ntarget = \"daemon\"\nschedule = \"daily\"\n"
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load() error = nil")
+	}
+	for _, want := range []string{"unknown config key(s): jobs.a.target", "move it to the top"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Load() error = %v, want %q", err, want)
+		}
+	}
+}
+
+func TestLoadUnknownKeyWithoutTargetHasNoHint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "summond.toml")
+	data := "[jobs.a]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nbogus = 1\n"
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	_, err := Load(path)
+	if err == nil || strings.Contains(err.Error(), "move it to the top") {
+		t.Fatalf("Load() error = %v", err)
 	}
 }

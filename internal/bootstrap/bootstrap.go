@@ -356,7 +356,8 @@ func renderConfig() string {
 # interval_minutes = 30
 
 # Daemon note
-# summond manages agents; sudo summond manages daemons (use target = "daemon").
+# summond manages agents; sudo summond manages daemons. For daemons, put
+# target = "daemon" at the top of a separate config file.
 # Managed stdout/stderr log paths are assigned automatically.
 `) + "\n"
 }

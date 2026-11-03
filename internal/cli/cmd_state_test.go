@@ -18,7 +18,6 @@ func TestStatePrintsStateJSON(t *testing.T) {
 		"[jobs.watcher]",
 		`command = "/bin/echo"`,
 		`args = ["watch"]`,
-		`target = "agent"`,
 		`trigger = "on_change"`,
 		`watch_paths = ["/tmp/watch.txt"]`,
 	}, "\n")
@@ -51,7 +50,6 @@ func TestStatePrintsShellCommandJSON(t *testing.T) {
 		"echo hello",
 		"echo world",
 		`"""`,
-		`target = "agent"`,
 		`schedule = "login"`,
 	}, "\n")
 	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
@@ -81,7 +79,6 @@ func TestStateShowsNoRecentRunsBeforeExecution(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["clean"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
@@ -112,7 +109,6 @@ func TestStateShowsRecentRunsAfterExecution(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["clean"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",

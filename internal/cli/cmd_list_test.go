@@ -18,7 +18,6 @@ func TestListOutputsTSV(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["clean"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",

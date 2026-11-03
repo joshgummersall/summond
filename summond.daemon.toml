@@ -1,0 +1,51 @@
+# Daemon jobs. Apply with: sudo summond apply summond.daemon.toml
+target = "daemon"
+
+[jobs.daemon-boot]
+schedule = "boot"
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-hourly]
+schedule = "hourly"
+minute = 45
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-daily]
+schedule = "daily"
+hour = 4
+minute = 0
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-weekly]
+schedule = "weekly"
+weekday = 3
+hour = 5
+minute = 30
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-interval]
+schedule = "interval"
+interval_minutes = 10
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-calendar]
+schedule = "calendar"
+month = 1
+day = 1
+hour = 0
+minute = 0
+shell_command = "echo $SUMMOND_JOB_NAME && env"
+
+[jobs.daemon-on-change]
+trigger = "on_change"
+shell_command = """
+echo $SUMMOND_JOB_NAME && env
+if [ -n "$SUMMOND_CHANGED_PATHS" ]; then
+  for path in ${SUMMOND_CHANGED_PATHS//:/ }; do
+    stat "$path"
+  done
+fi
+"""
+
+[jobs.daemon-on-change.watch]
+paths = ["/tmp/summond"]

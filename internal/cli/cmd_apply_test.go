@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,7 +49,6 @@ func TestApplyConfig(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["clean"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
@@ -91,7 +91,6 @@ func TestApplyDryRunPrintsPlanWithoutApplying(t *testing.T) {
 	data := strings.Join([]string{
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
@@ -138,7 +137,6 @@ func TestApplyDefaultsToSummondTomlInWorkingDirectory(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["clean"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
@@ -170,7 +168,6 @@ func TestApplyFailsWhenBootstrapFails(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["clean"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
@@ -211,7 +208,6 @@ func TestApplyRollbackRestoresPreviousSpecOnFailure(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["old"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
@@ -234,7 +230,6 @@ func TestApplyRollbackRestoresPreviousSpecOnFailure(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["new"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
@@ -269,7 +264,6 @@ func TestApplyRollbackRemovesNewSpecOnFailure(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["clean"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
@@ -300,7 +294,6 @@ func TestApplySkipsBootoutWhenServiceIsMissing(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["clean"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
@@ -335,7 +328,6 @@ func TestApplyFailsWhenBootoutFails(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["clean"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
@@ -372,7 +364,6 @@ func TestApplyFailsWhenVerificationFails(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["clean"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
@@ -403,7 +394,6 @@ func TestApplyUsesChecksumForVerificationWhenAvailable(t *testing.T) {
 		"[jobs.cleanup]",
 		`command = "/bin/echo"`,
 		`args = ["clean"]`,
-		`target = "agent"`,
 		`schedule = "daily"`,
 		"hour = 3",
 		"minute = 45",
@@ -681,47 +671,84 @@ func TestApplyWithPruneReportsNoJobsToPrune(t *testing.T) {
 	}
 }
 
-func TestApplyRejectsJobsOutsideScope(t *testing.T) {
+func TestApplyRejectsConfigForOtherScope(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		app     func(*testing.T) *App
-		target  string
+		header  string
 		wantErr string
 	}{
-		{"daemon job in agent scope", newTestApp, "daemon", "daemon jobs are managed as root; run: sudo summond apply"},
-		{"agent job in daemon scope", newDaemonTestApp, "agent", "agent jobs are managed without sudo; run: summond apply"},
+		{"daemon config in agent scope", newTestApp, `target = "daemon"`, "daemon jobs are managed as root; run: sudo summond apply"},
+		{"agent config in daemon scope", newDaemonTestApp, `target = "agent"`, "agent jobs are managed without sudo; run: summond apply"},
+		{"default config in daemon scope", newDaemonTestApp, "", "agent jobs are managed without sudo; run: summond apply"},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			app := tc.app(t)
-			var stdout bytes.Buffer
-			app.stdout = &stdout
-			runner := app.runner.(*fakeRunner)
+		for _, dryRun := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s dry-run=%t", tc.name, dryRun), func(t *testing.T) {
+				app := tc.app(t)
+				var stdout bytes.Buffer
+				app.stdout = &stdout
+				runner := app.runner.(*fakeRunner)
 
-			configPath := filepath.Join(testHome(t), "summond.toml")
-			data := strings.Join([]string{
-				"[jobs.cleanup]",
-				`command = "/bin/echo"`,
-				`target = "` + tc.target + `"`,
-				`schedule = "daily"`,
-			}, "\n")
-			if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
-				t.Fatalf("WriteFile() error = %v", err)
-			}
+				configPath := filepath.Join(testHome(t), "summond.toml")
+				data := strings.Join([]string{
+					tc.header,
+					"[jobs.cleanup]",
+					`command = "/bin/echo"`,
+					`schedule = "daily"`,
+				}, "\n")
+				if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
 
-			err := app.run([]string{"apply", configPath})
-			var exitErr ExitError
-			if !errors.As(err, &exitErr) || exitErr.Code != 1 {
-				t.Fatalf("apply error = %v", err)
-			}
-			if got := stdout.String(); !strings.Contains(got, "applied 0 job(s)\n") || !strings.Contains(got, tc.wantErr) {
-				t.Fatalf("stdout = %q", got)
-			}
-			if len(runner.bootstrapped) != 0 {
-				t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
-			}
-			if _, err := app.store.Load("cleanup"); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("Load() error = %v, want not exist", err)
-			}
-		})
+				args := []string{"apply", configPath}
+				if dryRun {
+					args = []string{"apply", "--dry-run", configPath}
+				}
+				err := app.run(args)
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("apply error = %v, want %q", err, tc.wantErr)
+				}
+				if got := stdout.String(); got != "" {
+					t.Fatalf("stdout = %q, want empty", got)
+				}
+				if len(runner.bootstrapped) != 0 {
+					t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
+				}
+				if _, err := app.store.Load("cleanup"); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("Load() error = %v, want not exist", err)
+				}
+			})
+		}
+	}
+}
+
+func TestApplyDaemonConfigInDaemonScope(t *testing.T) {
+	app := newDaemonTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		`target = "daemon"`,
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`schedule = "daily"`,
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := app.run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	if got := stdout.String(); got != "applied 1 job(s)\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+	spec, err := app.store.Load("cleanup")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if spec.Target != job.TargetDaemon {
+		t.Fatalf("Target = %q, want daemon", spec.Target)
 	}
 }
