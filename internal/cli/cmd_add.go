@@ -138,13 +138,6 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 			if opts.schedule == "" {
 				return errors.New("add requires --schedule")
 			}
-			installed, err := a.boot.IsInstalled()
-			if err != nil {
-				return err
-			}
-			if !installed {
-				return errors.New("add requires install to be run first")
-			}
 			wd, err := os.Getwd()
 			if err != nil {
 				return fmt.Errorf("resolve current working directory: %w", err)
@@ -212,11 +205,7 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 			if opts.dryRun {
 				return a.printAddPlan(spec)
 			}
-			runtimeSource, err := os.Executable()
-			if err != nil {
-				return fmt.Errorf("resolve current executable: %w", err)
-			}
-			runtimePath, err := a.store.PrepareRuntimeBinary(runtimeSource)
+			runtimePath, err := a.prepareScope()
 			if err != nil {
 				return err
 			}

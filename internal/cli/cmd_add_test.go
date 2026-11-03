@@ -11,13 +11,19 @@ import (
 	"github.com/joshgummersall/summond/internal/job"
 )
 
-func TestAddFailsWithoutInstall(t *testing.T) {
+func TestAddSetsUpStateOnFirstUse(t *testing.T) {
 	app := newRawTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
-	err := app.run([]string{"add", "echo-job", "--schedule", "daily", "--", "/bin/echo"})
-	if err == nil || err.Error() != "add requires install to be run first" {
+	if err := app.run([]string{"add", "echo-job", "--schedule", "daily", "--", "/bin/echo"}); err != nil {
 		t.Fatalf("add error = %v", err)
+	}
+	assertDefaultEnvFile(t, app.store.EnvFilePath())
+	if _, err := os.Stat(app.store.RuntimeBinaryPath()); err != nil {
+		t.Fatalf("runtime binary: %v", err)
+	}
+	if _, err := app.store.Load("echo-job"); err != nil {
+		t.Fatalf("Load() error = %v", err)
 	}
 }
 

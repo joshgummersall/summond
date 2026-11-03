@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joshgummersall/summond/internal/bootstrap"
 	"github.com/joshgummersall/summond/internal/job"
 	"github.com/joshgummersall/summond/internal/state"
 )
@@ -87,33 +86,6 @@ func (f *fakeRunner) Print(spec job.Spec) (string, error) {
 	return b.String(), nil
 }
 
-type fakeBootstrapInstaller struct {
-	err       error
-	sudoErr   error
-	removeErr error
-	installs  [][2]string
-	sudoCalls [][2]string
-}
-
-func (f *fakeBootstrapInstaller) Install(src, dst string) error {
-	f.installs = append(f.installs, [2]string{src, dst})
-	return f.err
-}
-
-func (f *fakeBootstrapInstaller) InstallWithSudo(src, dst string) error {
-	f.sudoCalls = append(f.sudoCalls, [2]string{src, dst})
-	return f.sudoErr
-}
-
-func (f *fakeBootstrapInstaller) Remove(path string) error {
-	return f.removeErr
-}
-
-func (f *fakeBootstrapInstaller) RemoveWithSudo(path string) error {
-	f.sudoCalls = append(f.sudoCalls, [2]string{"rm", path})
-	return f.sudoErr
-}
-
 type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) {
@@ -153,9 +125,6 @@ func newTestAppAt(t *testing.T, home string) *App {
 	if err := os.MkdirAll(app.store.Paths().Home, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(app.store.Paths().Home, ".installed"), []byte("installed\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 	return app
 }
 
@@ -164,15 +133,15 @@ func newRawTestApp(t *testing.T) *App {
 	return newRawTestAppAt(t, testHome(t))
 }
 
-// newRawTestAppAt returns an app in agent scope rooted at home, without the
-// install marker. Tests set geteuid to 0 for daemon scope.
+// newRawTestAppAt returns an app in agent scope rooted at home, with no
+// summond state on disk yet. Tests set geteuid to 0 for daemon scope.
 func newRawTestAppAt(t *testing.T, home string) *App {
 	t.Helper()
 	store := state.NewStore(state.Paths{
 		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
-	app := NewApp(strings.NewReader(""), ioDiscard{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths().Home, filepath.Join(home, "newsyslog.d"), &fakeBootstrapInstaller{}))
+	app := NewApp(strings.NewReader(""), ioDiscard{}, store, &fakeRunner{})
 	app.geteuid = func() int { return 501 }
 	return app
 }

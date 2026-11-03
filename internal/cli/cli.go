@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joshgummersall/summond/internal/bootstrap"
 	"github.com/joshgummersall/summond/internal/job"
 	"github.com/joshgummersall/summond/internal/launchd"
 	"github.com/joshgummersall/summond/internal/state"
@@ -37,7 +36,6 @@ type App struct {
 	stderr       io.Writer
 	store        *state.Store
 	runner       launchd.Runner
-	boot         *bootstrap.Manager
 	logger       *slog.Logger
 	promptReader *bufio.Reader
 	geteuid      func() int
@@ -45,14 +43,13 @@ type App struct {
 
 // NewApp builds an App for one scope. store and runner must belong to the
 // scope that the effective UID selects; see scopeTarget.
-func NewApp(stdin io.Reader, stdout io.Writer, store *state.Store, runner launchd.Runner, boot *bootstrap.Manager) *App {
+func NewApp(stdin io.Reader, stdout io.Writer, store *state.Store, runner launchd.Runner) *App {
 	return &App{
 		stdin:   stdin,
 		stdout:  stdout,
 		stderr:  io.Discard,
 		store:   store,
 		runner:  runner,
-		boot:    boot,
 		geteuid: os.Geteuid,
 	}
 }
@@ -68,7 +65,6 @@ func Run(args []string, stdout io.Writer) error {
 		stdout,
 		state.NewStore(paths),
 		launchd.LaunchCtl{Domain: launchd.DomainFor(euid)},
-		bootstrap.NewManager(paths.Home, bootstrap.DefaultNewsyslogDir, bootstrap.OSInstaller{}),
 	)
 	app.stderr = os.Stderr
 	return app.run(args)
@@ -107,7 +103,6 @@ Exit codes:
 	root.CompletionOptions.DisableDefaultCmd = true
 
 	root.AddCommand(
-		a.newInstallCommand(),
 		a.newUninstallCommand(),
 		a.newApplyCommand(),
 		a.newAddCommand(),
@@ -179,6 +174,20 @@ func (a *App) verifyLoadedJob(spec job.Spec) error {
 		}
 	}
 	return nil
+}
+
+// prepareScope creates what this scope's jobs need on first use: the env
+// file and the runtime copy of summond that launchd runs. It returns the
+// runtime binary path. There is no separate install step.
+func (a *App) prepareScope() (string, error) {
+	if _, err := a.ensureEnvFile(); err != nil {
+		return "", err
+	}
+	runtimeSource, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve current executable: %w", err)
+	}
+	return a.store.PrepareRuntimeBinary(runtimeSource)
 }
 
 // scopeTarget returns the job target this process manages: daemons as root,

@@ -11,10 +11,15 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/joshgummersall/summond/internal/bootstrap"
 	"github.com/spf13/cobra"
 )
 
+// defaultEnvFile seeds a new env file. launchd starts jobs with a minimal
+// PATH, so the default adds Homebrew and the standard system directories.
+const defaultEnvFile = "{\n  \"PATH\": \"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"\n}\n"
+
+// ensureEnvFile creates the scope's env file with the default contents if it
+// does not exist yet, and returns its path.
 func (a *App) ensureEnvFile() (string, error) {
 	path := a.store.EnvFilePath()
 	if _, err := os.Stat(path); err == nil {
@@ -22,7 +27,7 @@ func (a *App) ensureEnvFile() (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stat env file: %w", err)
 	}
-	if err := a.writeEnvFileContents(path, []byte(bootstrap.RenderEnvFile())); err != nil {
+	if err := a.writeEnvFileContents(path, []byte(defaultEnvFile)); err != nil {
 		return "", fmt.Errorf("write env file: %w", err)
 	}
 	return path, nil

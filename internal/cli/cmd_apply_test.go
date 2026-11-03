@@ -13,28 +13,69 @@ import (
 	"github.com/joshgummersall/summond/internal/job"
 )
 
-func TestApplyFailsWithoutInstall(t *testing.T) {
-	app := newRawTestApp(t)
-	var stdout bytes.Buffer
-	app.stdout = &stdout
-	wd := testHome(t)
-	prevWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd() error = %v", err)
-	}
-	if err := os.Chdir(wd); err != nil {
-		t.Fatalf("Chdir() error = %v", err)
-	}
-	defer func() {
-		_ = os.Chdir(prevWD)
-	}()
-	if err := os.WriteFile("summond.toml", []byte("[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+func TestApplySetsUpStateOnFirstUse(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		euid   int
+		header string
+	}{
+		{"agent", 501, ""},
+		{"daemon", 0, `target = "daemon"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := newRawTestApp(t)
+			app.geteuid = func() int { return tc.euid }
+			var stdout bytes.Buffer
+			app.stdout = &stdout
+			home := app.store.Paths().Home
+			if _, err := os.Stat(home); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("state home exists before apply: %v", err)
+			}
 
-	err = app.run([]string{"apply"})
-	if err == nil || err.Error() != "apply requires install to be run first" {
-		t.Fatalf("apply error = %v", err)
+			configPath := filepath.Join(testHome(t), "summond.toml")
+			data := tc.header + "\n[jobs.cleanup]\ncommand = \"/bin/echo\"\nschedule = \"daily\"\nhour = 3\nminute = 45\n"
+			if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			if err := app.run([]string{"apply", "--dry-run", configPath}); err != nil {
+				t.Fatalf("apply --dry-run error = %v", err)
+			}
+			if _, err := os.Stat(home); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("dry run created state home: %v", err)
+			}
+
+			if err := app.run([]string{"apply", configPath}); err != nil {
+				t.Fatalf("apply error = %v", err)
+			}
+			assertDefaultEnvFile(t, app.store.EnvFilePath())
+			if _, err := os.Stat(app.store.RuntimeBinaryPath()); err != nil {
+				t.Fatalf("runtime binary: %v", err)
+			}
+			if _, err := app.store.Load("cleanup"); err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+		})
+	}
+}
+
+// assertDefaultEnvFile checks that path holds the default env file, which
+// seeds PATH for launchd jobs, with mode 0600.
+func assertDefaultEnvFile(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("env file: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Fatalf("env file mode = %o, want 600", mode)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(data) != defaultEnvFile {
+		t.Fatalf("env file = %q, want default", data)
 	}
 }
 

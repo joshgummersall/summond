@@ -44,13 +44,6 @@ Exits with code 1 if any job fails to apply, even if other jobs succeeded.`,
 			}
 
 			a.logger.Debug("apply start")
-			installed, err := a.boot.IsInstalled()
-			if err != nil {
-				return err
-			}
-			if !installed {
-				return errors.New("apply requires install to be run first")
-			}
 			file, err := config.Load(filePath)
 			if err != nil {
 				return err
@@ -67,11 +60,7 @@ Exits with code 1 if any job fails to apply, even if other jobs succeeded.`,
 			if dryRun {
 				return a.printApplyPlan(specs, orphanedSpecs, prune)
 			}
-			runtimeSource, err := os.Executable()
-			if err != nil {
-				return fmt.Errorf("resolve current executable: %w", err)
-			}
-			runtimePath, err := a.store.PrepareRuntimeBinary(runtimeSource)
+			runtimePath, err := a.prepareScope()
 			if err != nil {
 				return err
 			}

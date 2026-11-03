@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/joshgummersall/summond/internal/bootstrap"
 	"github.com/joshgummersall/summond/internal/state"
 )
 
@@ -42,11 +41,6 @@ func TestUninstallRemovesManagedArtifacts(t *testing.T) {
 		t.Fatalf("apply error = %v", err)
 	}
 	stdout.Reset()
-	app.stdin = strings.NewReader("y\n")
-	if err := app.run([]string{"install", "--skip-newsyslog"}); err != nil {
-		t.Fatalf("install error = %v", err)
-	}
-	stdout.Reset()
 
 	app.stdin = strings.NewReader("y\n")
 	if err := app.run([]string{"uninstall"}); err != nil {
@@ -60,45 +54,6 @@ func TestUninstallRemovesManagedArtifacts(t *testing.T) {
 	}
 	if _, err := os.Stat("summond.toml"); err != nil {
 		t.Fatalf("expected cwd config preserved, stat err = %v", err)
-	}
-}
-
-func TestUninstallPermissionDeniedPromptsForNewsyslogCleanup(t *testing.T) {
-	home := testHome(t)
-	prevWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd() error = %v", err)
-	}
-	if err := os.Chdir(home); err != nil {
-		t.Fatalf("Chdir() error = %v", err)
-	}
-	defer func() {
-		_ = os.Chdir(prevWD)
-	}()
-	store := state.NewStore(state.Paths{
-		Home:      filepath.Join(home, "managed"),
-		LaunchDir: filepath.Join(home, "LaunchAgents"),
-	})
-	installer := &fakeBootstrapInstaller{}
-	app := NewApp(strings.NewReader("y\ny\ny\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths().Home, filepath.Join(home, "newsyslog.d"), installer))
-	var stdout bytes.Buffer
-	app.stdout = &stdout
-
-	if err := app.run([]string{"install", "--skip-newsyslog"}); err != nil {
-		t.Fatalf("install error = %v", err)
-	}
-	installer.removeErr = &bootstrap.PermissionError{Err: os.ErrPermission}
-	stdout.Reset()
-	app.stdin = strings.NewReader("y\ny\n")
-
-	if err := app.run([]string{"uninstall"}); err != nil {
-		t.Fatalf("uninstall error = %v", err)
-	}
-	if len(installer.sudoCalls) != 1 {
-		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
-	}
-	if got := stdout.String(); !strings.Contains(got, "Proceed with uninstall? [y/N]: ") || !strings.Contains(got, "removing the newsyslog config requires sudo. Retry with sudo? [Y/n]: ") {
-		t.Fatalf("unexpected output: %q", got)
 	}
 }
 
@@ -118,24 +73,20 @@ func TestUninstallCancelSkipsChanges(t *testing.T) {
 		Home:      filepath.Join(home, "managed"),
 		LaunchDir: filepath.Join(home, "LaunchAgents"),
 	})
-	installer := &fakeBootstrapInstaller{}
-	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, &fakeRunner{}, bootstrap.NewManager(store.Paths().Home, filepath.Join(home, "newsyslog.d"), installer))
+	app := NewApp(strings.NewReader("n\n"), &bytes.Buffer{}, store, &fakeRunner{})
+	app.geteuid = func() int { return 501 }
 	var stdout bytes.Buffer
 	app.stdout = &stdout
-
-	app.stdin = strings.NewReader("y\n")
-	if err := app.run([]string{"install", "--skip-newsyslog"}); err != nil {
-		t.Fatalf("install error = %v", err)
+	if err := os.MkdirAll(store.Paths().Home, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
 	}
-	installer.removeErr = &bootstrap.PermissionError{Err: os.ErrPermission}
-	stdout.Reset()
 
 	app.stdin = strings.NewReader("n\n")
 	if err := app.run([]string{"uninstall"}); err != nil {
 		t.Fatalf("uninstall error = %v", err)
 	}
-	if len(installer.sudoCalls) != 0 {
-		t.Fatalf("sudoCalls = %#v", installer.sudoCalls)
+	if _, err := os.Stat(store.Paths().Home); err != nil {
+		t.Fatalf("state home removed after cancel: %v", err)
 	}
 	if got := stdout.String(); !strings.Contains(got, "Proceed with uninstall? [y/N]: ") || !strings.Contains(got, "uninstall cancelled\n") {
 		t.Fatalf("unexpected prompt output: %q", got)
