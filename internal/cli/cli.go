@@ -120,6 +120,7 @@ Exit codes:
 		a.newEnvCommand(),
 		a.newCDCommand(),
 		a.newVersionCommand(),
+		a.newRefreshRuntimeCommand(),
 		a.newTUICommand(),
 	)
 

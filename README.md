@@ -16,6 +16,8 @@ Or install from source (requires Go 1.24+):
 go install github.com/joshgummersall/summond/cmd/summond@latest
 ```
 
+Jobs run from a copy of summond in its state directory. After `brew install` or `brew upgrade`, the cask replaces that copy so jobs run the new version. If you have daemon jobs, this step asks for your password. If it can't run (for example, an unattended upgrade with no terminal), the next `summond apply` or `sudo summond apply` replaces the copy.
+
 ## Uninstall
 
 Jobs run from a copy of summond in Application Support, so they keep running after `brew uninstall`. To remove every job, plist, log, and state directory:
