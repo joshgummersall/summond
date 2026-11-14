@@ -51,7 +51,7 @@ summond apply
 
 That's it. There is no separate setup step: Summond creates its state directory on first use, generates and loads the launchd plist, creates and rotates log files, and tracks execution history. When you delete a job from the config, `summond apply --prune` removes it cleanly.
 
-`command`, `args`, `shell_command`, `working_dir`, `watch_paths`, and `env` values all support `$VAR`/`${VAR}` expansion, resolved against summond's own environment when you run `apply`. Referencing an unset variable is an error rather than silently resolving to an empty string:
+`command`, `args`, `working_dir`, `watch_paths`, and `env` values all support `$VAR`/`${VAR}` expansion, resolved against summond's own environment when you run `apply`. Referencing an unset variable is an error rather than silently resolving to an empty string. `shell_command` is not expanded at apply time: bash expands it when the job runs, with the job's `env` and summond's runtime variables such as `$SUMMOND_JOB_NAME` set:
 
 ```toml
 [jobs.cleanup]
@@ -206,7 +206,7 @@ Apply agent configs with `summond apply` and daemon configs with `sudo summond a
 
 Every command follows the same rule: `summond add`, `list`, `env`, `logs`, `uninstall`, and the rest act on agent jobs, and the same commands under `sudo` act on daemon jobs. For example, `sudo summond add backup --schedule boot -- /usr/local/bin/backup` adds a daemon job, and `sudo summond list` lists daemon jobs. No command switches scope or prompts for `sudo` on its own.
 
-Under `sudo`, `apply` expands `$VAR` references against root's environment, so `$HOME` may not be your home directory. Use absolute paths in daemon configs.
+Under `sudo`, `apply` expands `$VAR` references (outside `shell_command`) against root's environment, so `$HOME` may not be your home directory. Use absolute paths in daemon configs.
 
 See [ADR 1](docs/adr/0001-sudo-selects-daemon-scope.md) for the reasoning.
 
