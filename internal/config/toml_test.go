@@ -560,3 +560,40 @@ func TestLoadUnknownKeyWithoutTargetHasNoHint(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 }
+
+func TestLoadFileKeepsShellCommandVariablesForRuntime(t *testing.T) {
+	t.Setenv("SUMMOND_JOB_NAME", "")
+	os.Unsetenv("SUMMOND_JOB_NAME")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "summond.toml")
+	data := []byte(`
+[jobs.demo]
+shell_command = "echo $SUMMOND_JOB_NAME ${SUMMOND_CHANGED_PATHS//:/ }"
+schedule = "hourly"
+`)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	specs, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	want := "echo $SUMMOND_JOB_NAME ${SUMMOND_CHANGED_PATHS//:/ }"
+	if got := specs[0].ShellCommand; got != want {
+		t.Fatalf("ShellCommand = %q, want %q", got, want)
+	}
+}
+
+func TestLoadExampleConfigs(t *testing.T) {
+	for _, name := range []string{"summond.toml", "summond.daemon.toml"} {
+		t.Run(name, func(t *testing.T) {
+			specs, err := LoadFile(filepath.Join("..", "..", name))
+			if err != nil {
+				t.Fatalf("LoadFile(%s) error = %v", name, err)
+			}
+			if len(specs) == 0 {
+				t.Fatalf("LoadFile(%s) returned no jobs", name)
+			}
+		})
+	}
+}

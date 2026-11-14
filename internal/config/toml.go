@@ -355,9 +355,8 @@ func resolvePaths(spec *job.Spec, baseDir string) error {
 	if spec.Command, err = expandEnv(spec.Command); err != nil {
 		return err
 	}
-	if spec.ShellCommand, err = expandEnv(spec.ShellCommand); err != nil {
-		return err
-	}
+	// shell_command is not expanded here: bash expands it when the job runs,
+	// with the job's env and summond's runtime variables (SUMMOND_*) set.
 	for i, arg := range spec.Args {
 		if spec.Args[i], err = expandEnv(arg); err != nil {
 			return err
