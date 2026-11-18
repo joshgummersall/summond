@@ -32,10 +32,7 @@ The job state directory contains the job's metadata JSON, log symlinks, and runt
 				return err
 			}
 
-			dir, err := a.store.JobDir(spec.Name)
-			if err != nil {
-				return err
-			}
+			dir := a.store.JobDirForSpec(spec)
 
 			// Detect whether stdout is a TTY.
 			// If non-TTY (e.g. eval $(summond cd <name>)), print a cd command for the shell to eval.

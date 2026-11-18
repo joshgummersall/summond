@@ -91,7 +91,7 @@ func TestLogsDefaultShowsLastRunOnly(t *testing.T) {
 		t.Fatalf("WriteFile(stderr) error = %v", err)
 	}
 
-	if err := app.store.RecordExecutionStart(spec.Name, time.Now()); err != nil {
+	if err := app.store.RecordExecutionStart(spec.ManagedKey(), time.Now()); err != nil {
 		t.Fatalf("RecordExecutionStart() error = %v", err)
 	}
 

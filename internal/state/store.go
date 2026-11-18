@@ -94,8 +94,10 @@ func (s *Store) PrepareInstall(spec job.Spec) (job.Spec, []byte, error) {
 	return spec, content, nil
 }
 
-func (s *Store) Remove(name string) (job.Spec, error) {
-	spec, err := s.Load(name)
+// Remove deletes the job with managed key key: its plist, locks, and job
+// directory.
+func (s *Store) Remove(key string) (job.Spec, error) {
+	spec, err := s.Load(key)
 	if err != nil {
 		return job.Spec{}, err
 	}
@@ -110,11 +112,9 @@ func (s *Store) Remove(name string) (job.Spec, error) {
 	return spec, nil
 }
 
-func (s *Store) Load(name string) (job.Spec, error) {
-	key, err := s.resolveManagedKey(name)
-	if err != nil {
-		return job.Spec{}, err
-	}
+// Load reads the job with managed key key. It does not match bare job
+// names; resolve those with the specs from List.
+func (s *Store) Load(key string) (job.Spec, error) {
 	return s.readMetadataByKey(key)
 }
 
@@ -152,8 +152,8 @@ func (s *Store) JobsFilePath() string {
 	return s.jobsDir()
 }
 
-func (s *Store) MetadataPath(name string) string {
-	return s.metadataPath(name)
+func (s *Store) MetadataPath(key string) string {
+	return s.metadataPath(key)
 }
 
 func (s *Store) MetadataPathForSpec(spec job.Spec) string {
@@ -162,14 +162,6 @@ func (s *Store) MetadataPathForSpec(spec job.Spec) string {
 
 func (s *Store) Paths() Paths {
 	return s.paths
-}
-
-func (s *Store) JobDir(name string) (string, error) {
-	key, err := s.resolveManagedKey(name)
-	if err != nil {
-		return "", err
-	}
-	return s.jobDir(key), nil
 }
 
 func (s *Store) JobDirForSpec(spec job.Spec) string {
@@ -230,8 +222,8 @@ func (s *Store) PrepareRuntimeBinary(sourcePath string) (string, error) {
 	return targetPath, nil
 }
 
-func (s *Store) RecordExecutionStart(name string, startedAt time.Time) error {
-	return s.updateRuntimeState(name, func(spec *job.Spec) {
+func (s *Store) RecordExecutionStart(key string, startedAt time.Time) error {
+	return s.updateRuntimeState(key, func(spec *job.Spec) {
 		spec.LastStartedAt = &startedAt
 		spec.LastFinishedAt = nil
 		spec.LastExitCode = nil
@@ -252,8 +244,8 @@ func fileSize(path string) int64 {
 	return info.Size()
 }
 
-func (s *Store) RecordExecutionFinish(name string, record job.ExecutionRecord) error {
-	return s.updateRuntimeState(name, func(spec *job.Spec) {
+func (s *Store) RecordExecutionFinish(key string, record job.ExecutionRecord) error {
+	return s.updateRuntimeState(key, func(spec *job.Spec) {
 		spec.LastStartedAt = &record.StartedAt
 		spec.LastFinishedAt = record.FinishedAt
 		spec.LastExitCode = record.ExitCode
@@ -387,9 +379,10 @@ func (s *Store) writeSpec(spec job.Spec, preserveRuntime bool) (job.Spec, error)
 	return spec, nil
 }
 
-func (s *Store) updateRuntimeState(name string, update func(*job.Spec)) error {
-	key, err := s.resolveManagedKey(name)
-	if err != nil {
+func (s *Store) updateRuntimeState(key string, update func(*job.Spec)) error {
+	// Check first, so the metadata lock does not create a directory for a
+	// job that does not exist.
+	if err := s.requireJob(key); err != nil {
 		return err
 	}
 	unlock, err := s.lockMetadata(key)
@@ -467,9 +460,8 @@ func (s *Store) writeMetadataUnlocked(spec job.Spec) error {
 // for the duration of a job run, so an overlapping trigger can detect that a
 // previous run is still in progress. acquired is false (with a nil error) if
 // another process already holds the lock.
-func (s *Store) TryLockExecution(name string) (unlock func(), acquired bool, err error) {
-	key, err := s.resolveManagedKey(name)
-	if err != nil {
+func (s *Store) TryLockExecution(key string) (unlock func(), acquired bool, err error) {
+	if err := s.requireJob(key); err != nil {
 		return nil, false, err
 	}
 	lockPath := filepath.Join(s.jobDir(key), "exec.lock")
@@ -509,34 +501,17 @@ func (s *Store) lockMetadata(key string) (func(), error) {
 	}, nil
 }
 
-func (s *Store) resolveManagedKey(name string) (string, error) {
-	if _, err := os.Stat(s.metadataPath(name)); err == nil {
-		return name, nil
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("read job metadata: %w", err)
+// requireJob returns an error that wraps os.ErrNotExist if no job has
+// managed key key.
+func (s *Store) requireJob(key string) error {
+	if _, err := os.Stat(s.metadataPath(key)); err != nil {
+		return fmt.Errorf("read job metadata: %w", err)
 	}
-	specs, err := s.List()
-	if err != nil {
-		return "", err
-	}
-	var matches []string
-	for _, spec := range specs {
-		if spec.Name == name || spec.ManagedKey() == name {
-			matches = append(matches, spec.ManagedKey())
-		}
-	}
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("read job metadata: %w", os.ErrNotExist)
-	case 1:
-		return matches[0], nil
-	default:
-		return "", fmt.Errorf("duplicate managed job name %q", name)
-	}
+	return nil
 }
 
-func (s *Store) UpdateWatchFingerprints(name string, fingerprints map[string]string) error {
-	return s.updateRuntimeState(name, func(spec *job.Spec) {
+func (s *Store) UpdateWatchFingerprints(key string, fingerprints map[string]string) error {
+	return s.updateRuntimeState(key, func(spec *job.Spec) {
 		spec.WatchFingerprints = fingerprints
 	})
 }

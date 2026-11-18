@@ -170,7 +170,7 @@ func (a *App) orphanedManagedJobs(desiredSpecs []job.Spec) ([]job.Spec, error) {
 
 func (a *App) applySpec(spec job.Spec) (job.Spec, error) {
 	a.logger.Debug("reconciling job", "name", spec.Name, "target", spec.Target, "trigger", spec.Trigger, "schedule", spec.Schedule.Kind)
-	previous, hadPrevious, previousLoaded, err := a.captureApplyState(spec.Name)
+	previous, hadPrevious, previousLoaded, err := a.captureApplyState(spec.ManagedKey())
 	if err != nil {
 		return job.Spec{}, err
 	}
@@ -199,8 +199,8 @@ func (a *App) applySpec(spec job.Spec) (job.Spec, error) {
 	return installed, nil
 }
 
-func (a *App) captureApplyState(name string) (job.Spec, bool, bool, error) {
-	previous, err := a.store.Load(name)
+func (a *App) captureApplyState(key string) (job.Spec, bool, bool, error) {
+	previous, err := a.store.Load(key)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return job.Spec{}, false, false, nil
@@ -239,7 +239,7 @@ func (a *App) rollbackApplyState(installed job.Spec, previous job.Spec, hadPrevi
 		}
 		return nil
 	}
-	if _, err := a.store.Remove(installed.Name); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if _, err := a.store.Remove(installed.ManagedKey()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove failed managed state: %w", err)
 	}
 	return nil
@@ -280,7 +280,7 @@ func (a *App) printApplyPlan(specs []job.Spec, orphanedSpecs []job.Spec, prune b
 }
 
 func (a *App) describeApplyAction(spec job.Spec) (string, error) {
-	if _, err := a.store.Load(spec.Name); err == nil {
+	if _, err := a.store.Load(spec.ManagedKey()); err == nil {
 		return "update", nil
 	} else if errors.Is(err, os.ErrNotExist) {
 		return "create", nil

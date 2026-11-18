@@ -22,7 +22,7 @@ func TestAddSetsUpStateOnFirstUse(t *testing.T) {
 	if _, err := os.Stat(app.store.RuntimeBinaryPath()); err != nil {
 		t.Fatalf("runtime binary: %v", err)
 	}
-	if _, err := app.store.Load("echo-job"); err != nil {
+	if _, err := app.loadManagedSpec("echo-job"); err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 }
@@ -60,7 +60,7 @@ func TestAddInstallsManagedJobFromArgvWithoutConfig(t *testing.T) {
 	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "echo-job" {
 		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
 	}
-	spec, err := app.store.Load("echo-job")
+	spec, err := app.loadManagedSpec("echo-job")
 	if err != nil {
 		t.Fatalf("Load(echo-job) error = %v", err)
 	}
@@ -107,7 +107,7 @@ func TestAddDryRunPrintsPlanWithoutInstalling(t *testing.T) {
 	if len(runner.bootstrapped) != 0 {
 		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
 	}
-	if _, err := app.store.Load("echo-job"); !errors.Is(err, os.ErrNotExist) {
+	if _, err := app.loadManagedSpec("echo-job"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Load(echo-job) error = %v, want not exist", err)
 	}
 }
@@ -124,7 +124,7 @@ func TestAddInstallsManagedJobFromShellStdin(t *testing.T) {
 	if got := stdout.String(); got != "added script-job\n" {
 		t.Fatalf("stdout = %q", got)
 	}
-	spec, err := app.store.Load("script-job")
+	spec, err := app.loadManagedSpec("script-job")
 	if err != nil {
 		t.Fatalf("Load(script-job) error = %v", err)
 	}
@@ -139,7 +139,7 @@ func TestAddCanAbandonProcessGroup(t *testing.T) {
 	if err := app.run([]string{"add", "launcher", "--schedule", "login", "--abandon-process-group", "--", "/bin/echo", "launch"}); err != nil {
 		t.Fatalf("add error = %v", err)
 	}
-	spec, err := app.store.Load("launcher")
+	spec, err := app.loadManagedSpec("launcher")
 	if err != nil {
 		t.Fatalf("Load(launcher) error = %v", err)
 	}
@@ -198,7 +198,7 @@ func TestAddInDaemonScopeInstallsDaemonJob(t *testing.T) {
 	if got := stdout.String(); got != "added daemon-job\n" {
 		t.Fatalf("stdout = %q", got)
 	}
-	spec, err := app.store.Load("daemon-job")
+	spec, err := app.loadManagedSpec("daemon-job")
 	if err != nil {
 		t.Fatalf("Load(daemon-job) error = %v", err)
 	}

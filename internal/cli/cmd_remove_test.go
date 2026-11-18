@@ -152,10 +152,10 @@ func TestRemoveDaemonJobDeletesStaleJobDirectoryFromList(t *testing.T) {
 	started := time.Now().Add(-time.Second).UTC()
 	finished := time.Now().UTC()
 	exitCode := 0
-	if err := app.store.RecordExecutionStart(spec.Name, started); err != nil {
+	if err := app.store.RecordExecutionStart(spec.ManagedKey(), started); err != nil {
 		t.Fatalf("RecordExecutionStart() error = %v", err)
 	}
-	if err := app.store.RecordExecutionFinish(spec.Name, job.ExecutionRecord{
+	if err := app.store.RecordExecutionFinish(spec.ManagedKey(), job.ExecutionRecord{
 		StartedAt:  started,
 		FinishedAt: &finished,
 		ExitCode:   &exitCode,
@@ -215,7 +215,7 @@ func TestApplyPrunePromptCancelsWithoutFlag(t *testing.T) {
 	if containsString(runner.bootedOut, "stale") {
 		t.Fatalf("bootedOut = %#v", runner.bootedOut)
 	}
-	if _, err := store.Load("stale"); err != nil {
+	if _, err := store.Load("tests.stale"); err != nil {
 		t.Fatalf("expected stale metadata to remain, err = %v", err)
 	}
 }

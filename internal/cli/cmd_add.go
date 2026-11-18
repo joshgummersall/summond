@@ -142,11 +142,6 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 			if err != nil {
 				return fmt.Errorf("resolve current working directory: %w", err)
 			}
-			if _, err := a.loadManagedSpec(opts.name); err == nil {
-				return fmt.Errorf("job %q already exists", opts.name)
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
 			spec := job.Spec{
 				Name:                opts.name,
 				Target:              target,
@@ -199,6 +194,13 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 				spec.RetryMaxDelaySeconds = opts.retryMaxDelaySeconds
 			}
 			if err := spec.Normalize(); err != nil {
+				return err
+			}
+			// add creates an ungrouped job, so only a job with the same
+			// managed key conflicts; a same-named job in a group does not.
+			if _, err := a.store.Load(spec.ManagedKey()); err == nil {
+				return fmt.Errorf("job %q already exists", spec.ManagedKey())
+			} else if !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 			spec.EnvironmentFilePath = a.store.EnvFilePath()

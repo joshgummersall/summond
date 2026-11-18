@@ -81,7 +81,7 @@ func (f *fakeRunner) Print(spec job.Spec) (string, error) {
 	b.WriteString(spec.RuntimeBinaryPath)
 	b.WriteString("\n")
 	b.WriteString("exec\n")
-	b.WriteString(spec.Name)
+	b.WriteString(spec.ManagedKey())
 	b.WriteString("\n")
 	return b.String(), nil
 }
