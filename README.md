@@ -279,4 +279,6 @@ summond env set API_KEY=secret        # injected into every agent job at runtime
 sudo summond env set API_KEY=secret   # injected into every daemon job at runtime
 ```
 
-Each scope has its own env file, `env.json` in its state directory, written with mode 0600. Per-job `[jobs.name.env]` values are merged on top.
+Each scope has its own env file, `env.json` in its state directory, written with mode 0600. summond passes it to each job through the process environment, never on the command line, so values do not show in `ps`. Per-job `[jobs.name.env]` values are merged on top, and summond's `SUMMOND_*` variables on top of both.
+
+A missing `env.json` is fine. If the file cannot be read or parsed, or has a key that does not match `[A-Za-z_][A-Za-z0-9_]*`, the run fails before the job starts and is recorded as failed.
