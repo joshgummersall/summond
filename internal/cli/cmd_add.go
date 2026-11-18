@@ -206,6 +206,9 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 			} else if !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
+			if target == job.TargetDaemon {
+				warnUnsafeDaemonJobs(a.stderr, []job.Spec{spec})
+			}
 			spec.EnvironmentFilePath = a.store.EnvFilePath()
 			if opts.dryRun {
 				return a.printAddPlan(spec)

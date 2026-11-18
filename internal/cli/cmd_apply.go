@@ -53,6 +53,7 @@ Exits with code 1 if any job fails to apply, even if other jobs succeeded.`,
 			}
 			if a.scopeTarget() == job.TargetDaemon {
 				warnUnsafeDaemonPath(a.stderr, a.store.EnvFilePath())
+				warnUnsafeDaemonJobs(a.stderr, file.Specs)
 			}
 			specs := file.Specs
 			a.logger.Debug("loaded config", "path", filePath, "jobs", len(specs))
