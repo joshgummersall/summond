@@ -18,7 +18,7 @@ func TestAddSetsUpStateOnFirstUse(t *testing.T) {
 	if err := app.run([]string{"add", "echo-job", "--schedule", "daily", "--", "/bin/echo"}); err != nil {
 		t.Fatalf("add error = %v", err)
 	}
-	assertDefaultEnvFile(t, app.store.EnvFilePath())
+	assertDefaultEnvFile(t, app.store.EnvFilePath(), agentDefaultPath)
 	if _, err := os.Stat(app.store.RuntimeBinaryPath()); err != nil {
 		t.Fatalf("runtime binary: %v", err)
 	}

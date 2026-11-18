@@ -1,32 +1,34 @@
 # Daemon jobs. Apply with: sudo summond apply summond.daemon.toml
+# Daemon jobs run as root with PATH=/usr/bin:/bin:/usr/sbin:/sbin by default.
+# Call commands by absolute path.
 target = "daemon"
 
 [jobs.daemon-boot]
 schedule = "boot"
-shell_command = "echo $SUMMOND_JOB_NAME && env"
+shell_command = 'echo "$SUMMOND_JOB_NAME ran at $(/bin/date)"'
 
 [jobs.daemon-hourly]
 schedule = "hourly"
 minute = 45
-shell_command = "echo $SUMMOND_JOB_NAME && env"
+shell_command = 'echo "$SUMMOND_JOB_NAME ran at $(/bin/date)"'
 
 [jobs.daemon-daily]
 schedule = "daily"
 hour = 4
 minute = 0
-shell_command = "echo $SUMMOND_JOB_NAME && env"
+shell_command = 'echo "$SUMMOND_JOB_NAME ran at $(/bin/date)"'
 
 [jobs.daemon-weekly]
 schedule = "weekly"
 weekday = 3
 hour = 5
 minute = 30
-shell_command = "echo $SUMMOND_JOB_NAME && env"
+shell_command = 'echo "$SUMMOND_JOB_NAME ran at $(/bin/date)"'
 
 [jobs.daemon-interval]
 schedule = "interval"
 interval_minutes = 10
-shell_command = "echo $SUMMOND_JOB_NAME && env"
+shell_command = 'echo "$SUMMOND_JOB_NAME ran at $(/bin/date)"'
 
 [jobs.daemon-calendar]
 schedule = "calendar"
@@ -34,15 +36,15 @@ month = 1
 day = 1
 hour = 0
 minute = 0
-shell_command = "echo $SUMMOND_JOB_NAME && env"
+shell_command = 'echo "$SUMMOND_JOB_NAME ran at $(/bin/date)"'
 
 [jobs.daemon-on-change]
 trigger = "on_change"
 shell_command = """
-echo $SUMMOND_JOB_NAME && env
+echo "$SUMMOND_JOB_NAME ran at $(/bin/date)"
 if [ -n "$SUMMOND_CHANGED_PATHS" ]; then
   for path in ${SUMMOND_CHANGED_PATHS//:/ }; do
-    stat "$path"
+    /usr/bin/stat "$path"
   done
 fi
 """

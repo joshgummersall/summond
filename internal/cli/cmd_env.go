@@ -11,12 +11,27 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/joshgummersall/summond/internal/job"
 	"github.com/spf13/cobra"
 )
 
-// defaultEnvFile seeds a new env file. launchd starts jobs with a minimal
-// PATH, so the default adds Homebrew and the standard system directories.
-const defaultEnvFile = "{\n  \"PATH\": \"/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"\n}\n"
+// launchd starts jobs with a minimal PATH, so each scope has a default that a
+// new env file is seeded with and that a job gets when no env source sets
+// PATH. Agent jobs also get the Homebrew directories. Daemon jobs run as root
+// and get only directories that root owns, because a user who can write a
+// PATH directory can plant a command there that the job then runs as root.
+const (
+	agentDefaultPath  = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+	daemonDefaultPath = "/usr/bin:/bin:/usr/sbin:/sbin"
+)
+
+// defaultPath returns the default PATH for this process's scope.
+func (a *App) defaultPath() string {
+	if a.scopeTarget() == job.TargetDaemon {
+		return daemonDefaultPath
+	}
+	return agentDefaultPath
+}
 
 // ensureEnvFile creates the scope's env file with the default contents if it
 // does not exist yet, and returns its path.
@@ -27,7 +42,8 @@ func (a *App) ensureEnvFile() (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stat env file: %w", err)
 	}
-	if err := a.writeEnvFileContents(path, []byte(defaultEnvFile)); err != nil {
+	contents := "{\n  \"PATH\": \"" + a.defaultPath() + "\"\n}\n"
+	if err := a.writeEnvFileContents(path, []byte(contents)); err != nil {
 		return "", fmt.Errorf("write env file: %w", err)
 	}
 	return path, nil
