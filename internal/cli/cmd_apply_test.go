@@ -794,3 +794,55 @@ func TestApplyDaemonConfigInDaemonScope(t *testing.T) {
 		t.Fatalf("Target = %q, want daemon", spec.Target)
 	}
 }
+
+// Daemon state lives under /Library, which every local user can traverse, and
+// holds job env values, commands, and output, so apply makes it owner-only.
+// The state home here already exists with mode 0755, as an earlier version
+// left it.
+func TestApplyInDaemonScopeMakesStateOwnerOnly(t *testing.T) {
+	app := newDaemonTestApp(t)
+	home := app.store.Paths().Home
+	if err := os.Chmod(home, 0o755); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+	configPath := filepath.Join(testHome(t), "summond.toml")
+	data := strings.Join([]string{
+		`target = "daemon"`,
+		"[jobs.cleanup]",
+		`command = "/bin/echo"`,
+		`schedule = "daily"`,
+		`env = { TOKEN = "secret" }`,
+	}, "\n")
+	if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := app.run([]string{"apply", configPath}); err != nil {
+		t.Fatalf("apply error = %v", err)
+	}
+	spec, err := app.store.Load("cleanup")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	for path, want := range map[string]os.FileMode{
+		home:                                0o700,
+		app.store.JobsFilePath():            0o700,
+		app.store.JobDirForSpec(spec):       0o700,
+		app.store.MetadataPathForSpec(spec): 0o600,
+		app.store.MetadataPathForSpec(spec) + ".lock": 0o600,
+		spec.StdoutPath:         0o600,
+		spec.StderrPath:         0o600,
+		spec.PlistPath:          0o600,
+		app.store.EnvFilePath(): 0o600,
+		filepath.Dir(app.store.RuntimeBinaryPath()): 0o755,
+	} {
+		assertPerm(t, path, want)
+	}
+	info, err := os.Stat(app.store.RuntimeBinaryPath())
+	if err != nil {
+		t.Fatalf("Stat(runtime binary) error = %v", err)
+	}
+	if info.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("runtime binary mode = %o, want executable by owner", info.Mode().Perm())
+	}
+}

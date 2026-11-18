@@ -208,6 +208,10 @@ Every command follows the same rule: `summond add`, `list`, `env`, `logs`, `unin
 
 Under `sudo`, `apply` expands `$VAR` references (outside `shell_command`) against root's environment, so `$HOME` may not be your home directory. Use absolute paths in daemon configs.
 
+Only root can read daemon state and logs. In daemon scope, summond makes the state directory, the `jobs` directory, and each job directory mode 0700, and `state.json`, lock files, logs (including the rotated `.1` copies), and the plists in `/Library/LaunchDaemons` mode 0600. `sudo summond apply` tightens files and directories that an earlier version left readable by everyone. Use `sudo summond logs` and `sudo summond state` to read them. Agent state keeps its modes; your home's `~/Library` already keeps other users out.
+
+Put daemon secrets in the daemon env file with `sudo summond env set`, not in a per-job `env` in the config file. summond keeps its own copies of per-job `env` values root-only, but the config file is yours, and any process that runs as you can read it.
+
 Daemon jobs run as root with a default `PATH` of `/usr/bin:/bin:/usr/sbin:/sbin`, which holds only directories that root owns. Homebrew directories such as `/opt/homebrew/bin` are not in it: your user can write to them, so any process that runs as you could plant a command there for a root job to run. Call commands in daemon jobs by absolute path (`/opt/homebrew/bin/jq`, not `jq`). To add a Homebrew directory anyway, do it on purpose with `sudo summond env set PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`. `sudo summond apply` warns about each daemon `PATH` entry that is not owned by root, is writable by group or other, or is empty or relative.
 
 See [ADR 1](docs/adr/0001-sudo-selects-daemon-scope.md) for the reasoning.

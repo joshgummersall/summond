@@ -151,7 +151,7 @@ func (a *App) runAndRecord(spec job.Spec) (exitCode int, runErr error, err error
 
 	changedPaths, newFingerprints := watchChanges(spec, store)
 	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
-		if err := rotateLog(path, logRotateMaxBytes); err != nil {
+		if err := rotateLog(path, logRotateMaxBytes, store.Paths().FileMode()); err != nil {
 			a.logger.Debug("rotate job log", "path", path, "error", err)
 		}
 	}
@@ -308,9 +308,14 @@ var logRotateMaxBytes int64 = 5 << 20
 // truncates path to zero when it is larger than max. It copies and truncates
 // instead of renaming so that a file launchd already opened (O_APPEND, via the
 // plist) keeps writing to path, and teeToLog still sees it as the same file.
-func rotateLog(path string, max int64) error {
+// Both files end up with no permission bits that mode does not allow, so a
+// daemon log stays owner-only after rotation.
+func rotateLog(path string, max int64, mode os.FileMode) error {
 	if path == "" {
 		return nil
+	}
+	if err := state.Tighten(path, mode); err != nil {
+		return err
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -353,7 +358,7 @@ func (a *App) teeToLog(w io.Writer, path string) (io.Writer, func()) {
 	if path == "" {
 		return w, noop
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, a.store.Paths().FileMode())
 	if err != nil {
 		a.logger.Debug("open job log", "path", path, "error", err)
 		return w, noop

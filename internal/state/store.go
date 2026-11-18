@@ -20,6 +20,48 @@ import (
 type Paths struct {
 	Home      string
 	LaunchDir string
+	// Private makes the scope's state, logs, and plists owner-only. Daemon
+	// scope sets it: its files live under /Library, which every local user
+	// can traverse, and they hold job env values, commands, and output.
+	Private bool
+}
+
+// DirMode is the mode of the scope's state directory, jobs directory, and job
+// directories.
+func (p Paths) DirMode() os.FileMode {
+	if p.Private {
+		return 0o700
+	}
+	return 0o755
+}
+
+// FileMode is the mode of the scope's plists, state.json, lock files, and
+// logs.
+func (p Paths) FileMode() os.FileMode {
+	if p.Private {
+		return 0o600
+	}
+	return 0o644
+}
+
+// Tighten clears the permission bits of path that mode does not allow. It
+// never adds bits, so it leaves agent state that already has the expected
+// mode as it is. It skips a missing path and does not follow symlinks.
+func Tighten(path string, mode os.FileMode) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil
+	}
+	if perm := info.Mode().Perm(); perm&^mode != 0 {
+		return os.Chmod(path, perm&mode)
+	}
+	return nil
 }
 
 type Store struct {
@@ -38,6 +80,7 @@ func DiscoverPaths(euid int) (Paths, error) {
 		return Paths{
 			Home:      filepath.Join(string(filepath.Separator), "Library", "Application Support", "summond"),
 			LaunchDir: filepath.Join(string(filepath.Separator), "Library", "LaunchDaemons"),
+			Private:   true,
 		}, nil
 	}
 	current, err := user.LookupId(strconv.Itoa(euid))
@@ -61,8 +104,14 @@ func (s *Store) Install(spec job.Spec) (job.Spec, error) {
 	if err := s.ensureLogFiles(spec); err != nil {
 		return job.Spec{}, err
 	}
-	if err := os.WriteFile(spec.PlistPath, content, 0o644); err != nil {
+	// The plist holds the job's env values, so it gets the scope's file mode.
+	// launchd needs a daemon plist owned by root and not writable by group or
+	// other; it does not need others to read it.
+	if err := writeFileAtomic(spec.PlistPath, content, s.paths.FileMode()); err != nil {
 		return job.Spec{}, fmt.Errorf("write plist: %w", err)
+	}
+	if err := Tighten(filepath.Join(s.jobDir(spec.ManagedKey()), "exec.lock"), s.paths.FileMode()); err != nil {
+		return job.Spec{}, fmt.Errorf("tighten execution lock file: %w", err)
 	}
 	symlinkPath := filepath.Join(s.jobDir(spec.ManagedKey()), "job.plist")
 	_ = os.Remove(symlinkPath)
@@ -189,6 +238,12 @@ func (s *Store) PrepareRuntimeBinary(sourcePath string) (string, error) {
 		return "", errors.New("runtime binary source path is required")
 	}
 	targetPath := s.runtimeBinaryPath()
+	// Create the state home with the scope's mode first, so MkdirAll below
+	// does not create it with the bin directory's mode. Root can run the
+	// binary through a 0700 home, and only root runs a daemon's copy.
+	if err := os.MkdirAll(s.paths.Home, s.paths.DirMode()); err != nil {
+		return "", fmt.Errorf("create state directory: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 		return "", fmt.Errorf("create runtime binary directory: %w", err)
 	}
@@ -317,15 +372,26 @@ func (s *Store) plistInstallPath(spec job.Spec) string {
 	return filepath.Join(s.paths.LaunchDir, spec.Label+".plist")
 }
 
+// ensureDirs creates the directories a job needs. The state, jobs, and job
+// directories get the scope's directory mode, including ones that already
+// exist. The bin directory and the plist directory keep 0755: launchd and
+// the Homebrew cask run the runtime binary, and /Library/LaunchDaemons is
+// the system's.
 func (s *Store) ensureDirs(spec job.Spec) error {
-	dirs := []string{
+	private := []string{
 		s.paths.Home,
 		s.jobsDir(),
 		s.jobDir(spec.ManagedKey()),
-		filepath.Dir(s.runtimeBinaryPath()),
-		filepath.Dir(spec.PlistPath),
 	}
-	for _, dir := range dirs {
+	for _, dir := range private {
+		if err := os.MkdirAll(dir, s.paths.DirMode()); err != nil {
+			return fmt.Errorf("create directory %s: %w", dir, err)
+		}
+		if err := Tighten(dir, s.paths.DirMode()); err != nil {
+			return fmt.Errorf("tighten directory %s: %w", dir, err)
+		}
+	}
+	for _, dir := range []string{filepath.Dir(s.runtimeBinaryPath()), filepath.Dir(spec.PlistPath)} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create directory %s: %w", dir, err)
 		}
@@ -333,7 +399,19 @@ func (s *Store) ensureDirs(spec job.Spec) error {
 	return nil
 }
 
+// ensureLogFiles creates the job's logs with the scope's file mode, and
+// tightens existing logs and their rotated copies to it.
 func (s *Store) ensureLogFiles(spec job.Spec) error {
+	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
+		if path == "" {
+			continue
+		}
+		for _, p := range []string{path, path + ".1"} {
+			if err := Tighten(p, s.paths.FileMode()); err != nil {
+				return fmt.Errorf("tighten log file %s: %w", p, err)
+			}
+		}
+	}
 	seen := map[string]struct{}{}
 	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
 		if path == "" {
@@ -345,7 +423,7 @@ func (s *Store) ensureLogFiles(spec job.Spec) error {
 		seen[path] = struct{}{}
 		// O_EXCL ensures we create a new file rather than following a
 		// pre-existing symlink that could redirect writes elsewhere.
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL, 0o644)
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL, s.paths.FileMode())
 		if err != nil {
 			if errors.Is(err, os.ErrExist) {
 				continue
@@ -437,28 +515,30 @@ func (s *Store) writeMetadataUnlocked(spec job.Spec) error {
 	if err != nil {
 		return fmt.Errorf("encode job metadata: %w", err)
 	}
-	path := s.metadataPath(spec.ManagedKey())
+	if err := writeFileAtomic(s.metadataPath(spec.ManagedKey()), data, s.paths.FileMode()); err != nil {
+		return fmt.Errorf("write job metadata: %w", err)
+	}
+	return nil
+}
+
+// writeFileAtomic replaces path with data and mode. It writes a temp file,
+// which CreateTemp creates with mode 0600, sets mode, and renames it over
+// path, so the old mode of path never applies to the new data.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("create metadata temp file: %w", err)
+		return err
 	}
 	tmpPath := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+	_, writeErr := tmp.Write(data)
+	closeErr := tmp.Close()
+	if err := errors.Join(writeErr, closeErr, os.Chmod(tmpPath, mode)); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("write job metadata temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("close job metadata temp file: %w", err)
-	}
-	if err := os.Chmod(tmpPath, 0o644); err != nil {
-		_ = os.Remove(tmpPath)
-		return fmt.Errorf("chmod job metadata temp file: %w", err)
+		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		_ = os.Remove(tmpPath)
-		return fmt.Errorf("write job metadata: %w", err)
+		return err
 	}
 	return nil
 }
@@ -473,7 +553,7 @@ func (s *Store) TryLockExecution(name string) (unlock func(), acquired bool, err
 		return nil, false, err
 	}
 	lockPath := filepath.Join(s.jobDir(key), "exec.lock")
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	file, err := s.openLockFile(lockPath)
 	if err != nil {
 		return nil, false, fmt.Errorf("open execution lock file: %w", err)
 	}
@@ -492,10 +572,10 @@ func (s *Store) TryLockExecution(name string) (unlock func(), acquired bool, err
 
 func (s *Store) lockMetadata(key string) (func(), error) {
 	lockPath := s.metadataPath(key) + ".lock"
-	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(lockPath), s.paths.DirMode()); err != nil {
 		return nil, fmt.Errorf("create metadata lock directory: %w", err)
 	}
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	file, err := s.openLockFile(lockPath)
 	if err != nil {
 		return nil, fmt.Errorf("open metadata lock file: %w", err)
 	}
@@ -507,6 +587,20 @@ func (s *Store) lockMetadata(key string) (func(), error) {
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		_ = file.Close()
 	}, nil
+}
+
+// openLockFile opens or creates a lock file with the scope's file mode, and
+// tightens a lock file that an earlier version created.
+func (s *Store) openLockFile(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, s.paths.FileMode())
+	if err != nil {
+		return nil, err
+	}
+	if err := Tighten(path, s.paths.FileMode()); err != nil {
+		file.Close()
+		return nil, err
+	}
+	return file, nil
 }
 
 func (s *Store) resolveManagedKey(name string) (string, error) {
