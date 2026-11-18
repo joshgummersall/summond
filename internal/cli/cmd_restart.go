@@ -38,7 +38,7 @@ login and boot jobs, which launchd starts only once at load time.`,
 			if spec.LastStartedAt != nil && spec.LastFinishedAt == nil && strings.Contains(printText, "state = running") {
 				now := time.Now()
 				record := job.ExecutionRecord{StartedAt: *spec.LastStartedAt, FinishedAt: &now, Error: "killed"}
-				if err := a.store.RecordExecutionFinish(spec.Name, record); err != nil {
+				if err := a.store.RecordExecutionFinish(spec.ManagedKey(), record); err != nil {
 					return fmt.Errorf("record interrupted run: %w", err)
 				}
 			}

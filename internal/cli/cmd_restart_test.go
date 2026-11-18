@@ -48,7 +48,11 @@ func TestRestartKickstartsJob(t *testing.T) {
 func TestRestartRecordsInterruptedRunAsKilled(t *testing.T) {
 	app := newTestApp(t)
 	applyLoginJob(t, app)
-	if err := app.store.RecordExecutionStart("watcher", time.Now().Add(-time.Minute)); err != nil {
+	watcher, err := app.loadManagedSpec("watcher")
+	if err != nil {
+		t.Fatalf("loadManagedSpec() error = %v", err)
+	}
+	if err := app.store.RecordExecutionStart(watcher.ManagedKey(), time.Now().Add(-time.Minute)); err != nil {
 		t.Fatalf("RecordExecutionStart() error = %v", err)
 	}
 	runner := app.runner.(*fakeRunner)

@@ -114,7 +114,7 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 				a.logger.Debug("consumed iokit matching event", "delivered", delivered)
 			}
 			if !spec.Concurrency {
-				unlock, acquired, err := a.store.TryLockExecution(spec.Name)
+				unlock, acquired, err := a.store.TryLockExecution(spec.ManagedKey())
 				if err != nil {
 					return err
 				}
@@ -156,7 +156,7 @@ func (a *App) runAndRecord(spec job.Spec) (exitCode int, runErr error, err error
 		}
 	}
 	startedAt := time.Now()
-	if err := store.RecordExecutionStart(spec.Name, startedAt); err != nil {
+	if err := store.RecordExecutionStart(spec.ManagedKey(), startedAt); err != nil {
 		return 0, nil, err
 	}
 
@@ -194,11 +194,11 @@ func (a *App) runAndRecord(spec job.Spec) (exitCode int, runErr error, err error
 	if runErr != nil {
 		record.Error = runErr.Error()
 	}
-	if err := store.RecordExecutionFinish(spec.Name, record); err != nil {
+	if err := store.RecordExecutionFinish(spec.ManagedKey(), record); err != nil {
 		return exitCode, runErr, err
 	}
 	if runErr == nil && len(newFingerprints) > 0 {
-		_ = store.UpdateWatchFingerprints(spec.Name, newFingerprints)
+		_ = store.UpdateWatchFingerprints(spec.ManagedKey(), newFingerprints)
 	}
 	return exitCode, runErr, nil
 }
@@ -390,7 +390,7 @@ func watchChanges(spec job.Spec, store *state.Store) (changedPaths []string, new
 	for _, p := range spec.WatchPaths {
 		newFingerprints[p] = pathFingerprint(p)
 	}
-	existing, err := store.Load(spec.Name)
+	existing, err := store.Load(spec.ManagedKey())
 	if err != nil || existing.WatchFingerprints == nil {
 		return append([]string(nil), spec.WatchPaths...), newFingerprints
 	}

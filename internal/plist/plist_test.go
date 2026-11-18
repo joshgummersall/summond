@@ -217,3 +217,21 @@ func TestRenderUSBAttachPlist(t *testing.T) {
 		t.Fatalf("unexpected StartCalendarInterval in plist: %s", text)
 	}
 }
+
+func TestRenderPassesManagedKeyToExec(t *testing.T) {
+	data, err := Render(job.Spec{
+		Group:             "G",
+		Name:              "backup",
+		Target:            job.TargetAgent,
+		Command:           "/bin/echo",
+		RuntimeBinaryPath: "/tmp/summond",
+		Schedule:          job.Schedule{Kind: job.ScheduleLogin},
+	})
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	want := "<string>exec</string>\n    <string>G.backup</string>"
+	if !strings.Contains(string(data), want) {
+		t.Fatalf("plist missing %q: %s", want, data)
+	}
+}

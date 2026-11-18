@@ -168,7 +168,7 @@ func (a *App) verifyLoadedJob(spec job.Spec) error {
 	}
 	expected := []string{spec.Label, spec.StdoutPath, spec.StderrPath}
 	expected = append(expected, spec.WatchPaths...)
-	expected = append(expected, spec.RuntimeBinaryPath, "exec", spec.Name)
+	expected = append(expected, spec.RuntimeBinaryPath, "exec", spec.ManagedKey())
 	for _, needle := range expected {
 		if needle == "" {
 			continue
@@ -226,24 +226,41 @@ func (a *App) listManagedJobs() ([]job.Spec, error) {
 	return specs, nil
 }
 
-func (a *App) loadManagedSpec(name string) (job.Spec, error) {
+// loadManagedSpec resolves a job argument from the command line. This is the
+// only place that resolves a bare job name; later store calls use the
+// resolved spec's managed key.
+//
+// An argument equal to a job's managed key selects that job. Managed keys are
+// unique, because each names a state directory, and plists pass the managed
+// key to exec. Otherwise the argument is a bare name: it must match exactly
+// one job, and a name that matches more than one job is an error that lists
+// their managed keys. Plists written before plists used the managed key pass
+// the bare name, so they keep working while the name is unique.
+func (a *App) loadManagedSpec(arg string) (job.Spec, error) {
 	specs, err := a.listManagedJobs()
 	if err != nil {
 		return job.Spec{}, err
 	}
-	var matches []job.Spec
+	var byName []job.Spec
 	for _, spec := range specs {
-		if spec.Name == name || spec.ManagedKey() == name {
-			matches = append(matches, spec)
+		if spec.ManagedKey() == arg {
+			return spec, nil
+		}
+		if spec.Name == arg {
+			byName = append(byName, spec)
 		}
 	}
-	switch len(matches) {
+	switch len(byName) {
 	case 0:
 		return job.Spec{}, fmt.Errorf("read job metadata: %w", os.ErrNotExist)
 	case 1:
-		return matches[0], nil
+		return byName[0], nil
 	default:
-		return job.Spec{}, fmt.Errorf("duplicate managed job name %q across groups; use a unique group", name)
+		keys := make([]string, 0, len(byName))
+		for _, spec := range byName {
+			keys = append(keys, spec.ManagedKey())
+		}
+		return job.Spec{}, fmt.Errorf("job name %q matches %d jobs: %s; use the managed key", arg, len(byName), strings.Join(keys, ", "))
 	}
 }
 

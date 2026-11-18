@@ -53,7 +53,7 @@ func TestApplySetsUpStateOnFirstUse(t *testing.T) {
 			if _, err := os.Stat(app.store.RuntimeBinaryPath()); err != nil {
 				t.Fatalf("runtime binary: %v", err)
 			}
-			if _, err := app.store.Load("cleanup"); err != nil {
+			if _, err := app.loadManagedSpec("cleanup"); err != nil {
 				t.Fatalf("Load() error = %v", err)
 			}
 		})
@@ -111,7 +111,7 @@ func TestApplyConfig(t *testing.T) {
 	if len(runner.bootstrapped) != 1 || runner.bootstrapped[0] != "cleanup" {
 		t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
 	}
-	spec, err := app.store.Load("cleanup")
+	spec, err := app.loadManagedSpec("cleanup")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -153,7 +153,7 @@ func TestApplyDryRunPrintsPlanWithoutApplying(t *testing.T) {
 	if len(runner.bootstrapped) != 0 || len(runner.bootedOut) != 0 {
 		t.Fatalf("runner changed state: bootstrapped=%#v bootedOut=%#v", runner.bootstrapped, runner.bootedOut)
 	}
-	if _, err := app.store.Load("cleanup"); !errors.Is(err, os.ErrNotExist) {
+	if _, err := app.loadManagedSpec("cleanup"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Load(cleanup) error = %v, want not exist", err)
 	}
 }
@@ -232,7 +232,7 @@ func TestApplyFailsWhenBootstrapFails(t *testing.T) {
 	if got := stdout.String(); got != "applied 0 job(s)\nfailed 1 job(s):\n- cleanup: bootstrap failed: launchctl bootstrap failed\n" {
 		t.Fatalf("stdout = %q", got)
 	}
-	if _, err := app.store.Load("cleanup"); !errors.Is(err, os.ErrNotExist) {
+	if _, err := app.loadManagedSpec("cleanup"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Load(cleanup) error = %v, want not exist", err)
 	}
 }
@@ -285,7 +285,7 @@ func TestApplyRollbackRestoresPreviousSpecOnFailure(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("apply error = %v", err)
 	}
-	spec, loadErr := app.store.Load("cleanup")
+	spec, loadErr := app.loadManagedSpec("cleanup")
 	if loadErr != nil {
 		t.Fatalf("Load(cleanup) error = %v", loadErr)
 	}
@@ -319,7 +319,7 @@ func TestApplyRollbackRemovesNewSpecOnFailure(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.Code != 1 {
 		t.Fatalf("apply error = %v", err)
 	}
-	if _, loadErr := app.store.Load("cleanup"); !errors.Is(loadErr, os.ErrNotExist) {
+	if _, loadErr := app.loadManagedSpec("cleanup"); !errors.Is(loadErr, os.ErrNotExist) {
 		t.Fatalf("Load(cleanup) error = %v, want not exist", loadErr)
 	}
 }
@@ -389,7 +389,7 @@ func TestApplyFailsWhenBootoutFails(t *testing.T) {
 	if got := stdout.String(); got != "applied 0 job(s)\nfailed 1 job(s):\n- cleanup: bootout before bootstrap failed: launchctl bootout failed\n" {
 		t.Fatalf("stdout = %q", got)
 	}
-	if _, err := app.store.Load("cleanup"); !errors.Is(err, os.ErrNotExist) {
+	if _, err := app.loadManagedSpec("cleanup"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Load(cleanup) error = %v, want not exist", err)
 	}
 }
@@ -467,10 +467,59 @@ func TestApplyUsesChecksumForVerificationWhenAvailable(t *testing.T) {
 }
 
 func TestApplyPromptsAboutOrphanedManagedJobs(t *testing.T) {
+	app, got := applyWithOrphanedJob(t, "n\n")
+	if !strings.Contains(got, "applied 1 job(s)\n") || !strings.Contains(got, "jobs to prune:\n- sync\n") || !strings.Contains(got, "apply will remove these Summond-managed jobs. Continue? [y/N]: ") || !strings.Contains(got, "prune cancelled\n") {
+		t.Fatalf("stdout = %q", got)
+	}
+	if _, err := app.loadManagedSpec("sync"); err != nil {
+		t.Fatalf("expected sync metadata to remain, err = %v", err)
+	}
+}
+
+func TestApplyPrunePromptDefaultsToNo(t *testing.T) {
+	tests := []struct {
+		name   string
+		stdin  string
+		pruned bool
+	}{
+		{name: "empty answer", stdin: "\n", pruned: false},
+		{name: "end of input", stdin: "", pruned: false},
+		{name: "no", stdin: "n\n", pruned: false},
+		{name: "y", stdin: "y\n", pruned: true},
+		{name: "yes", stdin: "yes\n", pruned: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, got := applyWithOrphanedJob(t, tt.stdin)
+			_, loadErr := app.loadManagedSpec("sync")
+			if tt.pruned {
+				if !strings.Contains(got, "pruned 1 job(s)\n") || strings.Contains(got, "prune cancelled") {
+					t.Fatalf("stdout = %q", got)
+				}
+				if loadErr == nil {
+					t.Fatal("expected sync metadata to be removed")
+				}
+				return
+			}
+			if !strings.Contains(got, "prune cancelled\n") || strings.Contains(got, "pruned") {
+				t.Fatalf("stdout = %q", got)
+			}
+			if loadErr != nil {
+				t.Fatalf("expected sync metadata to remain, err = %v", loadErr)
+			}
+		})
+	}
+}
+
+// applyWithOrphanedJob applies a config with two jobs, then applies a config
+// that drops one of them, answering the prune prompt with stdin. It returns the
+// app and the stdout of the second apply.
+func applyWithOrphanedJob(t *testing.T, stdin string) (*App, string) {
+	t.Helper()
 	app := newTestApp(t)
 	var stdout bytes.Buffer
 	app.stdout = &stdout
-	app.stdin = strings.NewReader("n\n")
+	app.stdin = strings.NewReader(stdin)
 
 	initialConfigPath := filepath.Join(testHome(t), "before.toml")
 	initialData := strings.Join([]string{
@@ -513,13 +562,7 @@ func TestApplyPromptsAboutOrphanedManagedJobs(t *testing.T) {
 	if err := app.run([]string{"apply", updatedConfigPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
-	got := stdout.String()
-	if !strings.Contains(got, "applied 1 job(s)\n") || !strings.Contains(got, "jobs to prune:\n- sync\n") || !strings.Contains(got, "apply will remove these Summond-managed jobs. Continue? [y/N]: ") || !strings.Contains(got, "prune cancelled\n") {
-		t.Fatalf("stdout = %q", got)
-	}
-	if _, err := app.store.Load("sync"); err != nil {
-		t.Fatalf("expected sync metadata to remain, err = %v", err)
-	}
+	return app, stdout.String()
 }
 
 func TestApplyPrunesManagedJobsMissingFromConfigWithFlag(t *testing.T) {
@@ -576,10 +619,10 @@ func TestApplyPrunesManagedJobsMissingFromConfigWithFlag(t *testing.T) {
 	if !containsString(runner.bootedOut, "sync") {
 		t.Fatalf("bootedOut = %#v", runner.bootedOut)
 	}
-	if _, err := app.store.Load("sync"); err == nil {
+	if _, err := app.loadManagedSpec("sync"); err == nil {
 		t.Fatalf("expected sync metadata to be removed")
 	}
-	if _, err := app.store.Load("cleanup"); err != nil {
+	if _, err := app.loadManagedSpec("cleanup"); err != nil {
 		t.Fatalf("expected cleanup metadata to remain, err = %v", err)
 	}
 }
@@ -642,7 +685,7 @@ func TestApplyDryRunWithPruneDoesNotRemoveOrphanedJobs(t *testing.T) {
 	if len(runner.bootedOut) != 0 || len(runner.bootstrapped) != 0 {
 		t.Fatalf("runner changed state: bootedOut=%#v bootstrapped=%#v", runner.bootedOut, runner.bootstrapped)
 	}
-	if _, err := app.store.Load("sync"); err != nil {
+	if _, err := app.loadManagedSpec("sync"); err != nil {
 		t.Fatalf("expected sync metadata to remain, err = %v", err)
 	}
 }
@@ -756,7 +799,7 @@ func TestApplyRejectsConfigForOtherScope(t *testing.T) {
 				if len(runner.bootstrapped) != 0 {
 					t.Fatalf("bootstrapped = %#v", runner.bootstrapped)
 				}
-				if _, err := app.store.Load("cleanup"); !errors.Is(err, os.ErrNotExist) {
+				if _, err := app.loadManagedSpec("cleanup"); !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("Load() error = %v, want not exist", err)
 				}
 			})
@@ -786,7 +829,7 @@ func TestApplyDaemonConfigInDaemonScope(t *testing.T) {
 	if got := stdout.String(); got != "applied 1 job(s)\n" {
 		t.Fatalf("stdout = %q", got)
 	}
-	spec, err := app.store.Load("cleanup")
+	spec, err := app.loadManagedSpec("cleanup")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -820,7 +863,7 @@ func TestApplyInDaemonScopeMakesStateOwnerOnly(t *testing.T) {
 	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
-	spec, err := app.store.Load("cleanup")
+	spec, err := app.loadManagedSpec("cleanup")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
