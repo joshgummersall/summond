@@ -506,7 +506,7 @@ func (m tuiModel) View() string {
 	var lines []string
 	lines = append(lines, body)
 	if m.statusMsg != "" {
-		lines = append(lines, m.statusMsg)
+		lines = append(lines, sanitizeContent(m.statusMsg))
 	}
 	lines = append(lines, help)
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
