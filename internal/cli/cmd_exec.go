@@ -26,34 +26,36 @@ func (a *App) environmentFilePath(spec job.Spec) string {
 	return a.store.EnvFilePath()
 }
 
-func jsonEnvPreamble(path string) string {
+// loadSharedEnv reads the shared env file at path. A missing file (or an empty
+// path) yields no variables. A file that cannot be read or parsed, or that has
+// a key env set would reject, is an error, so the job does not run with a
+// partial environment.
+func loadSharedEnv(path string) (map[string]string, error) {
 	if path == "" {
-		return ""
+		return nil, nil
 	}
 	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return ""
+		return nil, fmt.Errorf("read env file %s: %w", path, err)
 	}
 	env, err := readEnvJSON(data)
 	if err != nil {
-		return ""
+		return nil, fmt.Errorf("parse env file %s: %w", path, err)
 	}
 	keys := make([]string, 0, len(env))
 	for k := range env {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	var sb strings.Builder
 	for _, k := range keys {
-		fmt.Fprintf(&sb, "export %s=%s\n", k, shellQuote(env[k]))
+		if !isValidEnvKey(k) {
+			return nil, fmt.Errorf("env file %s: invalid key %q: must match [A-Za-z_][A-Za-z0-9_]*", path, k)
+		}
 	}
-	return sb.String()
-}
-
-// shellQuote wraps s in POSIX single quotes so it is safe to use in a shell
-// command. Single quotes inside the value are escaped as '\”.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	return env, nil
 }
 
 func mergeEnvironment(base []string, overrides map[string]string) []string {
@@ -201,22 +203,26 @@ func (a *App) runAndRecord(spec job.Spec) (exitCode int, runErr error, err error
 	return exitCode, runErr, nil
 }
 
-// executeSpec runs one attempt of the job. Signals that arrive on sigs while
-// the job runs are forwarded to it; the last one is returned as received so
-// the caller can stop retrying.
-func (a *App) executeSpec(spec job.Spec, changedPaths []string, attempt int, sigs <-chan os.Signal) (exitCode int, received os.Signal, err error) {
+// jobCommand builds the bash command for one attempt of the job. The shared
+// env file, the job's own env on top of it, and the SUMMOND_* variables on top
+// of both go into the process environment, never into the arguments, so no
+// value shows in ps.
+func (a *App) jobCommand(spec job.Spec, changedPaths []string, attempt int) (*exec.Cmd, error) {
+	shared, err := loadSharedEnv(a.environmentFilePath(spec))
+	if err != nil {
+		return nil, err
+	}
 	var cmd *exec.Cmd
-	envFilePath := a.environmentFilePath(spec)
-	envPreamble := jsonEnvPreamble(envFilePath)
 	if spec.ShellCommand != "" {
-		cmd = exec.Command("/bin/bash", "-c", shellPreamble+envPreamble+spec.ShellCommand)
+		cmd = exec.Command("/bin/bash", "-c", shellPreamble+spec.ShellCommand)
 	} else {
-		args := []string{"-c", shellPreamble + envPreamble + `exec "$@"`, "bash", spec.Command}
+		args := []string{"-c", shellPreamble + `exec "$@"`, "bash", spec.Command}
 		args = append(args, spec.Args...)
 		cmd = exec.Command("/bin/bash", args...)
 	}
 	cmd.Dir = spec.WorkingDir
-	cmd.Env = mergeEnvironment(nil, spec.Environment)
+	cmd.Env = mergeEnvironment(nil, shared)
+	cmd.Env = mergeEnvironment(cmd.Env, spec.Environment)
 	cmd.Env = mergeEnvironment(cmd.Env, map[string]string{
 		"SUMMOND_JOB_NAME":      spec.Name,
 		"SUMMOND_JOB_LABEL":     spec.Label,
@@ -224,6 +230,17 @@ func (a *App) executeSpec(spec job.Spec, changedPaths []string, attempt int, sig
 		"SUMMOND_CHANGED_PATHS": strings.Join(changedPaths, ":"),
 		"SUMMOND_ATTEMPT":       fmt.Sprintf("%d", attempt),
 	})
+	return cmd, nil
+}
+
+// executeSpec runs one attempt of the job. Signals that arrive on sigs while
+// the job runs are forwarded to it; the last one is returned as received so
+// the caller can stop retrying.
+func (a *App) executeSpec(spec job.Spec, changedPaths []string, attempt int, sigs <-chan os.Signal) (exitCode int, received os.Signal, err error) {
+	cmd, err := a.jobCommand(spec, changedPaths, attempt)
+	if err != nil {
+		return 1, nil, err
+	}
 	stdout, closeStdout := a.teeToLog(a.stdout, spec.StdoutPath)
 	defer closeStdout()
 	stderr, closeStderr := a.teeToLog(a.stderr, spec.StderrPath)

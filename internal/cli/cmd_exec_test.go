@@ -538,3 +538,185 @@ func TestExecRotationKeepsLaunchdLogFile(t *testing.T) {
 		t.Fatalf("stdout log.1 = %q", got)
 	}
 }
+
+// writeEnvFile writes content to a new env file and returns its path.
+func writeEnvFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "env.json")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	return path
+}
+
+func envMap(env []string) map[string]string {
+	m := map[string]string{}
+	for _, item := range env {
+		k, v, _ := strings.Cut(item, "=")
+		m[k] = v
+	}
+	return m
+}
+
+func TestJobCommandMergesSharedJobAndSummondEnv(t *testing.T) {
+	app := newTestApp(t)
+	envPath := writeEnvFile(t, `{"PATH": "/shared/bin", "TOKEN": "shared", "ONLY_SHARED": "s", "SUMMOND_JOB_NAME": "bogus"}`)
+	cmd, err := app.jobCommand(job.Spec{
+		Name:                "merge",
+		Command:             "/usr/bin/true",
+		EnvironmentFilePath: envPath,
+		Environment:         map[string]string{"PATH": "/job/bin", "TOKEN": "job"},
+	}, nil, 0)
+	if err != nil {
+		t.Fatalf("jobCommand() error = %v", err)
+	}
+	got := envMap(cmd.Env)
+	for key, want := range map[string]string{
+		"PATH":             "/job/bin",
+		"TOKEN":            "job",
+		"ONLY_SHARED":      "s",
+		"SUMMOND_JOB_NAME": "merge",
+		"SUMMOND_ATTEMPT":  "0",
+	} {
+		if got[key] != want {
+			t.Errorf("env %s = %q, want %q", key, got[key], want)
+		}
+	}
+}
+
+func TestJobCommandKeepsSharedEnvOutOfArgs(t *testing.T) {
+	const secret = "s3cr3t-value"
+	app := newTestApp(t)
+	envPath := writeEnvFile(t, `{"API_KEY": "`+secret+`", "PATH": "/usr/bin:/bin"}`)
+	specs := map[string]job.Spec{
+		"command":       {Name: "c", Command: "/bin/echo", Args: []string{"hi"}, EnvironmentFilePath: envPath},
+		"shell_command": {Name: "s", ShellCommand: "echo hi", EnvironmentFilePath: envPath},
+	}
+	for name, spec := range specs {
+		t.Run(name, func(t *testing.T) {
+			cmd, err := app.jobCommand(spec, nil, 0)
+			if err != nil {
+				t.Fatalf("jobCommand() error = %v", err)
+			}
+			for _, arg := range cmd.Args {
+				if strings.Contains(arg, secret) || strings.Contains(arg, "API_KEY") {
+					t.Fatalf("argument %q leaks the shared env", arg)
+				}
+			}
+			if !strings.HasPrefix(cmd.Args[2], shellPreamble) {
+				t.Fatalf("script %q does not start with %q", cmd.Args[2], shellPreamble)
+			}
+			if envMap(cmd.Env)["API_KEY"] != secret {
+				t.Fatalf("API_KEY missing from cmd.Env")
+			}
+		})
+	}
+}
+
+func TestExecuteSpecMissingEnvFileIsFine(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	exitCode, _, err := app.executeSpec(job.Spec{
+		Name:                "missing",
+		Command:             "/bin/echo",
+		Args:                []string{"ok"},
+		EnvironmentFilePath: filepath.Join(t.TempDir(), "nope.json"),
+	}, nil, 0, nil)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("executeSpec() = %d, %v", exitCode, err)
+	}
+	if got := stdout.String(); got != "ok\n" {
+		t.Fatalf("stdout = %q", got)
+	}
+}
+
+func TestExecuteSpecShellCommandSeesAllEnv(t *testing.T) {
+	app := newTestApp(t)
+	var stdout bytes.Buffer
+	app.stdout = &stdout
+	envPath := writeEnvFile(t, `{"PATH": "/usr/bin:/bin", "SHARED": "from-file", "TOKEN": "shared"}`)
+	exitCode, _, err := app.executeSpec(job.Spec{
+		Name:                "shelly",
+		ShellCommand:        `printf '%s|%s|%s|%s' "$SHARED" "$TOKEN" "$SUMMOND_JOB_NAME" "$SUMMOND_ATTEMPT"`,
+		EnvironmentFilePath: envPath,
+		Environment:         map[string]string{"TOKEN": "job"},
+	}, nil, 2, nil)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("executeSpec() = %d, %v", exitCode, err)
+	}
+	if got, want := stdout.String(), "from-file|job|shelly|2"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+// A bad env file must fail the run before the job starts, and the failure
+// must be recorded so 'summond list' shows it.
+func TestExecFailsOnBadEnvFile(t *testing.T) {
+	cases := map[string]struct {
+		content string
+		mode    os.FileMode
+		want    string
+	}{
+		"invalid key": {content: `{"PATH": "/usr/bin:/bin", "BAD-KEY": "x"}`, mode: 0o600, want: `"BAD-KEY"`},
+		"shell key":   {content: `{"X;touch /tmp/pwn": "x"}`, mode: 0o600, want: `"X;touch /tmp/pwn"`},
+		"malformed":   {content: `{not json`, mode: 0o600, want: "parse env file"},
+		"unreadable":  {content: `{}`, mode: 0o000, want: "read env file"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if tc.mode == 0 && os.Geteuid() == 0 {
+				t.Skip("root can read a mode 0000 file")
+			}
+			home := testHome(t)
+			marker := filepath.Join(home, "ran")
+			app := newTestAppAt(t, home)
+			app.stdout = &bytes.Buffer{}
+			app.stderr = &bytes.Buffer{}
+			configPath := filepath.Join(home, "summond.toml")
+			data := strings.Join([]string{
+				"[jobs.badenv]",
+				`command = "/usr/bin/touch"`,
+				fmt.Sprintf("args = [%q]", marker),
+				`schedule = "daily"`,
+				"hour = 3",
+				"minute = 45",
+			}, "\n")
+			if err := os.WriteFile(configPath, []byte(data), 0o644); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			if err := app.run([]string{"apply", configPath}); err != nil {
+				t.Fatalf("apply error = %v", err)
+			}
+			envPath := app.store.EnvFilePath()
+			if err := os.WriteFile(envPath, []byte(tc.content), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			if err := os.Chmod(envPath, tc.mode); err != nil {
+				t.Fatalf("Chmod() error = %v", err)
+			}
+
+			err := app.run([]string{"exec", "badenv"})
+			var exitErr ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code == 0 {
+				t.Fatalf("exec error = %#v, want non-zero ExitError", err)
+			}
+			if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), envPath) {
+				t.Fatalf("exec error = %q, want it to name %s and %s", err, tc.want, envPath)
+			}
+			if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
+				t.Fatalf("job ran despite bad env file")
+			}
+			spec, loadErr := app.store.Load("badenv")
+			if loadErr != nil {
+				t.Fatalf("Load() error = %v", loadErr)
+			}
+			if spec.LastFinishedAt == nil || spec.RunCount != 1 || spec.FailureCount != 1 {
+				t.Fatalf("run not recorded as failed: %+v", spec)
+			}
+			if !strings.Contains(spec.LastError, tc.want) {
+				t.Fatalf("LastError = %q, want %s", spec.LastError, tc.want)
+			}
+		})
+	}
+}
