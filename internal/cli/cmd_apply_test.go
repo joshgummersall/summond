@@ -15,12 +15,13 @@ import (
 
 func TestApplySetsUpStateOnFirstUse(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		euid   int
-		header string
+		name     string
+		euid     int
+		header   string
+		wantPath string
 	}{
-		{"agent", 501, ""},
-		{"daemon", 0, `target = "daemon"`},
+		{"agent", 501, "", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"},
+		{"daemon", 0, `target = "daemon"`, "/usr/bin:/bin:/usr/sbin:/sbin"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newRawTestApp(t)
@@ -48,7 +49,7 @@ func TestApplySetsUpStateOnFirstUse(t *testing.T) {
 			if err := app.run([]string{"apply", configPath}); err != nil {
 				t.Fatalf("apply error = %v", err)
 			}
-			assertDefaultEnvFile(t, app.store.EnvFilePath())
+			assertDefaultEnvFile(t, app.store.EnvFilePath(), tc.wantPath)
 			if _, err := os.Stat(app.store.RuntimeBinaryPath()); err != nil {
 				t.Fatalf("runtime binary: %v", err)
 			}
@@ -59,9 +60,9 @@ func TestApplySetsUpStateOnFirstUse(t *testing.T) {
 	}
 }
 
-// assertDefaultEnvFile checks that path holds the default env file, which
-// seeds PATH for launchd jobs, with mode 0600.
-func assertDefaultEnvFile(t *testing.T, path string) {
+// assertDefaultEnvFile checks that path holds a default env file that seeds
+// PATH for launchd jobs with wantPath, with mode 0600.
+func assertDefaultEnvFile(t *testing.T, path, wantPath string) {
 	t.Helper()
 	info, err := os.Stat(path)
 	if err != nil {
@@ -74,8 +75,8 @@ func assertDefaultEnvFile(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
-	if string(data) != defaultEnvFile {
-		t.Fatalf("env file = %q, want default", data)
+	if want := "{\n  \"PATH\": \"" + wantPath + "\"\n}\n"; string(data) != want {
+		t.Fatalf("env file = %q, want %q", data, want)
 	}
 }
 

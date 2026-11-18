@@ -203,10 +203,10 @@ func (a *App) runAndRecord(spec job.Spec) (exitCode int, runErr error, err error
 	return exitCode, runErr, nil
 }
 
-// jobCommand builds the bash command for one attempt of the job. The shared
-// env file, the job's own env on top of it, and the SUMMOND_* variables on top
-// of both go into the process environment, never into the arguments, so no
-// value shows in ps.
+// jobCommand builds the bash command for one attempt of the job. The scope's
+// default PATH, the shared env file on top of it, the job's own env on top of
+// that, and the SUMMOND_* variables on top of all go into the process
+// environment, never into the arguments, so no value shows in ps.
 func (a *App) jobCommand(spec job.Spec, changedPaths []string, attempt int) (*exec.Cmd, error) {
 	shared, err := loadSharedEnv(a.environmentFilePath(spec))
 	if err != nil {
@@ -221,7 +221,10 @@ func (a *App) jobCommand(spec job.Spec, changedPaths []string, attempt int) (*ex
 		cmd = exec.Command("/bin/bash", args...)
 	}
 	cmd.Dir = spec.WorkingDir
-	cmd.Env = mergeEnvironment(nil, shared)
+	// The scope's default PATH comes first, so the job has an explicit PATH
+	// even when no env source sets one, and bash never uses its built-in.
+	cmd.Env = mergeEnvironment(nil, map[string]string{"PATH": a.defaultPath()})
+	cmd.Env = mergeEnvironment(cmd.Env, shared)
 	cmd.Env = mergeEnvironment(cmd.Env, spec.Environment)
 	cmd.Env = mergeEnvironment(cmd.Env, map[string]string{
 		"SUMMOND_JOB_NAME":      spec.Name,

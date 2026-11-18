@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -593,6 +594,17 @@ func TestLoadExampleConfigs(t *testing.T) {
 			}
 			if len(specs) == 0 {
 				t.Fatalf("LoadFile(%s) returned no jobs", name)
+			}
+			if name != "summond.daemon.toml" {
+				return
+			}
+			// Daemon logs must not hold the environment, which carries the
+			// shared env file's secrets.
+			printsEnv := regexp.MustCompile(`(^|[\s;&|(])(env|printenv)(\s*($|[;&|)]))`)
+			for _, spec := range specs {
+				if printsEnv.MatchString(spec.ShellCommand) {
+					t.Errorf("job %s prints the environment: %q", spec.Name, spec.ShellCommand)
+				}
 			}
 		})
 	}

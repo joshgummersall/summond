@@ -51,6 +51,9 @@ Exits with code 1 if any job fails to apply, even if other jobs succeeded.`,
 			if file.Target != a.scopeTarget() {
 				return scopeMismatchError(file.Target, "apply "+filePath)
 			}
+			if a.scopeTarget() == job.TargetDaemon {
+				warnUnsafeDaemonPath(a.stderr, a.store.EnvFilePath())
+			}
 			specs := file.Specs
 			a.logger.Debug("loaded config", "path", filePath, "jobs", len(specs))
 			orphanedSpecs, err := a.orphanedManagedJobs(specs)

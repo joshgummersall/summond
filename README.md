@@ -208,6 +208,8 @@ Every command follows the same rule: `summond add`, `list`, `env`, `logs`, `unin
 
 Under `sudo`, `apply` expands `$VAR` references (outside `shell_command`) against root's environment, so `$HOME` may not be your home directory. Use absolute paths in daemon configs.
 
+Daemon jobs run as root with a default `PATH` of `/usr/bin:/bin:/usr/sbin:/sbin`, which holds only directories that root owns. Homebrew directories such as `/opt/homebrew/bin` are not in it: your user can write to them, so any process that runs as you could plant a command there for a root job to run. Call commands in daemon jobs by absolute path (`/opt/homebrew/bin/jq`, not `jq`). To add a Homebrew directory anyway, do it on purpose with `sudo summond env set PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin`. `sudo summond apply` warns about each daemon `PATH` entry that is not owned by root, is writable by group or other, or is empty or relative.
+
 See [ADR 1](docs/adr/0001-sudo-selects-daemon-scope.md) for the reasoning.
 
 ## Retry and backoff
@@ -280,5 +282,7 @@ sudo summond env set API_KEY=secret   # injected into every daemon job at runtim
 ```
 
 Each scope has its own env file, `env.json` in its state directory, written with mode 0600. summond passes it to each job through the process environment, never on the command line, so values do not show in `ps`. Per-job `[jobs.name.env]` values are merged on top, and summond's `SUMMOND_*` variables on top of both.
+
+summond creates `env.json` on first use with a default `PATH`: `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin` for agent jobs and `/usr/bin:/bin:/usr/sbin:/sbin` for daemon jobs. summond never rewrites an existing `env.json`, so a daemon `env.json` from an earlier version keeps its Homebrew directories until you change it; `sudo summond apply` warns about them. If neither `env.json` nor the job's own env sets `PATH`, the job gets its scope's default `PATH`.
 
 A missing `env.json` is fine. If the file cannot be read or parsed, or has a key that does not match `[A-Za-z_][A-Za-z0-9_]*`, the run fails before the job starts and is recorded as failed.
