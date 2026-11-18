@@ -59,7 +59,7 @@ the run is recorded as successful; otherwise it is marked as failed.`,
 				}
 			}
 
-			if err := a.store.RecordExecutionFinish(spec.Name, record); err != nil {
+			if err := a.store.RecordExecutionFinish(spec.ManagedKey(), record); err != nil {
 				return fmt.Errorf("reconcile state: %w", err)
 			}
 			return nil

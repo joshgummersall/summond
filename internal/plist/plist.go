@@ -82,7 +82,7 @@ func writeProgram(buf *bytes.Buffer, spec job.Spec) {
 	buf.WriteString("  <array>\n")
 	writeArrayString(buf, spec.RuntimeBinaryPath)
 	writeArrayString(buf, "exec")
-	writeArrayString(buf, spec.Name)
+	writeArrayString(buf, spec.ManagedKey())
 	buf.WriteString("  </array>\n")
 }
 

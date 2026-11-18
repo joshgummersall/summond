@@ -570,6 +570,7 @@ func (s Spec) SpecChecksum() (string, error) {
 		StderrPath              string      `json:"stderr_path,omitempty"`
 		PlistPath               string      `json:"plist_path,omitempty"`
 		RuntimeBinaryPath       string      `json:"runtime_binary_path,omitempty"`
+		ExecArgument            string      `json:"exec_argument"`
 	}
 
 	keys := make([]string, 0, len(s.Environment))
@@ -608,6 +609,9 @@ func (s Spec) SpecChecksum() (string, error) {
 		StderrPath:              s.StderrPath,
 		PlistPath:               s.PlistPath,
 		RuntimeBinaryPath:       s.RuntimeBinaryPath,
+		// The plist passes the managed key to exec. Covering it here keeps a
+		// loaded definition from before that change from passing verification.
+		ExecArgument: s.ManagedKey(),
 	})
 	if err != nil {
 		return "", err
