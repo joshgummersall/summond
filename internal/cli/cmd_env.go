@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/x/term"
 	"github.com/joshgummersall/summond/internal/job"
 	"github.com/spf13/cobra"
 )
@@ -84,19 +85,49 @@ func readEnvJSON(data []byte) (map[string]string, error) {
 	return env, nil
 }
 
-func parseKeyValue(arg string) (key, value string, err error) {
-	idx := strings.IndexByte(arg, '=')
-	if idx < 0 {
-		return "", "", fmt.Errorf("invalid argument %q: expected KEY=VALUE", arg)
-	}
-	key = arg[:idx]
+// parseSetArg parses the argument to env set, KEY=VALUE or KEY. hasValue
+// reports whether the argument carried a value, which may be empty.
+func parseSetArg(arg string) (key, value string, hasValue bool, err error) {
+	key, value, hasValue = strings.Cut(arg, "=")
 	if key == "" {
-		return "", "", fmt.Errorf("invalid argument %q: key must not be empty", arg)
+		return "", "", false, fmt.Errorf("invalid argument %q: key must not be empty", arg)
 	}
 	if !isValidEnvKey(key) {
-		return "", "", fmt.Errorf("invalid key %q: must match [A-Za-z_][A-Za-z0-9_]*", key)
+		return "", "", false, fmt.Errorf("invalid key %q: must match [A-Za-z_][A-Za-z0-9_]*", key)
 	}
-	return key, arg[idx+1:], nil
+	return key, value, hasValue, nil
+}
+
+// readEnvValue reads the value for key from stdin, so that a secret stays
+// out of shell history and ps. A terminal gets a prompt on stderr with echo
+// off. Other input is read to EOF and loses one trailing "\n" or "\r\n". An
+// empty value is an error; KEY= on the command line stores one on purpose.
+func (a *App) readEnvValue(key string) (string, error) {
+	var value string
+	if f, ok := a.stdin.(*os.File); ok && term.IsTerminal(f.Fd()) {
+		if _, err := fmt.Fprintf(a.stderr, "Value for %s (input hidden): ", key); err != nil {
+			return "", err
+		}
+		data, err := term.ReadPassword(f.Fd())
+		fmt.Fprintln(a.stderr)
+		if err != nil {
+			return "", fmt.Errorf("read value for %s: %w", key, err)
+		}
+		value = string(data)
+	} else {
+		data, err := io.ReadAll(a.stdin)
+		if err != nil {
+			return "", fmt.Errorf("read value for %s from stdin: %w", key, err)
+		}
+		value = string(data)
+		if trimmed, ok := strings.CutSuffix(value, "\n"); ok {
+			value = strings.TrimSuffix(trimmed, "\r")
+		}
+	}
+	if value == "" {
+		return "", fmt.Errorf("empty value for %s: use %s= to store an empty value", key, key)
+	}
+	return value, nil
 }
 
 func isValidEnvKey(key string) bool {
@@ -148,10 +179,10 @@ job command runs. Use 'set', 'get', and 'list' to manipulate the environment non
 
 summond uses the agent env file in ~/Library/Application Support/summond/env.json.
 sudo summond uses the daemon env file in /Library/Application Support/summond/env.json.`,
-		Example: `  summond env set API_KEY=abc123
+		Example: `  summond env set API_KEY
   summond env get API_KEY
   summond env list
-  sudo summond env set SVC_TOKEN=xyz`,
+  sudo summond env set SVC_TOKEN`,
 	}
 	cmd.AddCommand(
 		a.newEnvSetCommand(),
@@ -164,20 +195,31 @@ sudo summond uses the daemon env file in /Library/Application Support/summond/en
 
 func (a *App) newEnvSetCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "set KEY=VALUE",
+		Use:   "set KEY[=VALUE]",
 		Short: "Set an environment variable",
 		Long: `Add or update an environment variable in the shared env file.
 
 If KEY already exists its value is updated in place. Otherwise a new entry is appended.
-Keys must match [A-Za-z_][A-Za-z0-9_]*.`,
-		Example: `  summond env set API_KEY=abc123
-  summond env set PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
-  sudo summond env set SVC_TOKEN=xyz`,
+Keys must match [A-Za-z_][A-Za-z0-9_]*.
+
+Use KEY without =VALUE for secrets, so the value stays out of shell history and ps.
+On a terminal, summond prompts for the value and does not echo it. Otherwise it reads
+the value from stdin and removes one trailing newline. An empty value from stdin is an
+error; use KEY= to store an empty value.`,
+		Example: `  summond env set API_KEY                      # prompt with echo off
+  pbpaste | summond env set API_KEY            # value from stdin
+  sudo summond env set SVC_TOKEN               # daemon scope, prompt with echo off
+  summond env set LOG_LEVEL=debug              # not secret`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			key, value, err := parseKeyValue(args[0])
+			key, value, hasValue, err := parseSetArg(args[0])
 			if err != nil {
 				return err
+			}
+			if !hasValue {
+				if value, err = a.readEnvValue(key); err != nil {
+					return err
+				}
 			}
 
 			path, err := a.ensureEnvFile()
