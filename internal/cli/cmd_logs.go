@@ -112,6 +112,14 @@ type logTailTarget struct {
 	name   string
 }
 
+// tailPath is tail's fixed location on macOS. summond runs it by absolute
+// path because, under sudo, PATH can come from the invoking user.
+const tailPath = "/usr/bin/tail"
+
+func tailCommand(ctx context.Context, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, tailPath, args...)
+}
+
 func (a *App) runTail(target logTailTarget, lineCount int, follow bool) error {
 	return a.runTailContext(context.Background(), target, lineCount, follow)
 }
@@ -119,7 +127,7 @@ func (a *App) runTail(target logTailTarget, lineCount int, follow bool) error {
 func (a *App) runTailContext(ctx context.Context, target logTailTarget, lineCount int, follow bool) error {
 	tailArgs := logsTailArgs(lineCount, follow, target.path)
 	a.logger.Debug("reading log", "path", target.path, "stream", target.name, "follow", follow, "lines", lineCount)
-	cmd := exec.CommandContext(ctx, "tail", tailArgs...)
+	cmd := tailCommand(ctx, tailArgs...)
 	cmd.Stdout = target.output
 	cmd.Stderr = a.stderr
 	return cmd.Run()
@@ -137,7 +145,7 @@ func (a *App) runTailFromOffsetContext(ctx context.Context, target logTailTarget
 	}
 	args = append(args, target.path)
 	a.logger.Debug("reading log from offset", "path", target.path, "stream", target.name, "offset", offset, "follow", follow)
-	cmd := exec.CommandContext(ctx, "tail", args...)
+	cmd := tailCommand(ctx, args...)
 	cmd.Stdout = target.output
 	cmd.Stderr = a.stderr
 	return cmd.Run()

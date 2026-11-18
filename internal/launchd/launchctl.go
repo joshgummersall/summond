@@ -30,25 +30,29 @@ func DomainFor(euid int) string {
 	return fmt.Sprintf("gui/%d", euid)
 }
 
+// launchctlPath is launchctl's fixed location on macOS. summond runs it by
+// absolute path because, under sudo, PATH can come from the invoking user.
+const launchctlPath = "/bin/launchctl"
+
 func (l LaunchCtl) Bootstrap(spec job.Spec) error {
-	return run("launchctl", "bootstrap", l.Domain, spec.PlistPath)
+	return run("bootstrap", l.Domain, spec.PlistPath)
 }
 
 func (l LaunchCtl) Bootout(spec job.Spec) error {
-	return run("launchctl", "bootout", l.Domain, spec.PlistPath)
+	return run("bootout", l.Domain, spec.PlistPath)
 }
 
 func (l LaunchCtl) Kickstart(spec job.Spec) error {
-	return run("launchctl", "kickstart", "-k", l.serviceTarget(spec))
+	return run("kickstart", "-k", l.serviceTarget(spec))
 }
 
 func (l LaunchCtl) Stop(spec job.Spec) error {
-	return run("launchctl", "kill", "TERM", l.serviceTarget(spec))
+	return run("kill", "TERM", l.serviceTarget(spec))
 }
 
 func (l LaunchCtl) Print(spec job.Spec) (string, error) {
 	var stdout, stderr bytes.Buffer
-	cmd := exec.Command("launchctl", "print", l.serviceTarget(spec))
+	cmd := launchctl("print", l.serviceTarget(spec))
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -57,9 +61,13 @@ func (l LaunchCtl) Print(spec job.Spec) (string, error) {
 	return stdout.String(), nil
 }
 
-func run(name string, args ...string) error {
+func launchctl(args ...string) *exec.Cmd {
+	return exec.Command(launchctlPath, args...)
+}
+
+func run(args ...string) error {
 	var stderr bytes.Buffer
-	cmd := exec.Command(name, args...)
+	cmd := launchctl(args...)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		if stderr.Len() > 0 {

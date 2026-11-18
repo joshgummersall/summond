@@ -351,7 +351,16 @@ func batHighlightPlain(src, lang string) string {
 	return batRaw(src, lang)
 }
 
+// tuiGeteuid reports the effective UID to the TUI. Tests replace it.
+var tuiGeteuid = os.Geteuid
+
+// batRaw returns src highlighted by bat, or src unchanged when bat is
+// missing or fails. As root it never runs bat: bat comes from PATH, which
+// normally leads to the user-writable Homebrew prefix.
 func batRaw(src, lang string) string {
+	if tuiGeteuid() == 0 {
+		return src
+	}
 	bat, err := exec.LookPath("bat")
 	if err != nil {
 		return src

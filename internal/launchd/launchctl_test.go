@@ -10,3 +10,10 @@ func TestDomainFor(t *testing.T) {
 		t.Fatalf("DomainFor(501) = %q, want gui/501", got)
 	}
 }
+
+func TestLaunchctlRunsByAbsolutePath(t *testing.T) {
+	cmd := launchctl("print", "system/com.example")
+	if cmd.Args[0] != "/bin/launchctl" || cmd.Path != "/bin/launchctl" {
+		t.Fatalf("launchctl Args[0], Path = %q, %q, want /bin/launchctl", cmd.Args[0], cmd.Path)
+	}
+}

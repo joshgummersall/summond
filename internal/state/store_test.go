@@ -374,6 +374,59 @@ func TestTryLockExecutionCreatesOwnerOnlyLockInDaemonScope(t *testing.T) {
 	assertModes(t, map[string]os.FileMode{filepath.Join(store.JobDirForSpec(spec), "exec.lock"): 0o600})
 }
 
+func TestPrepareRuntimeBinaryUsesFixedMode(t *testing.T) {
+	withUmask(t, 0)
+	for _, sourceMode := range []os.FileMode{0o775, 0o777, 0o700, 0o644} {
+		dir := t.TempDir()
+		source := filepath.Join(dir, "source")
+		if err := os.WriteFile(source, []byte("binary"), sourceMode); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+		if err := os.Chmod(source, sourceMode); err != nil {
+			t.Fatalf("Chmod() error = %v", err)
+		}
+		store := NewStore(Paths{Home: filepath.Join(dir, "state"), Private: true})
+		path, err := store.PrepareRuntimeBinary(source)
+		if err != nil {
+			t.Fatalf("PrepareRuntimeBinary() error = %v", err)
+		}
+		assertModes(t, map[string]os.FileMode{path: 0o755})
+	}
+}
+
+func TestPrepareRuntimeBinaryTightensItsDirectories(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		private bool
+		home    os.FileMode
+	}{
+		{"daemon", true, 0o700},
+		{"agent", false, 0o755},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withUmask(t, 0)
+			dir := t.TempDir()
+			source := filepath.Join(dir, "source")
+			if err := os.WriteFile(source, []byte("binary"), 0o755); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			store := NewStore(Paths{Home: filepath.Join(dir, "state"), Private: tc.private})
+			bin := filepath.Dir(store.RuntimeBinaryPath())
+			// Directories that an earlier run left writable by every user.
+			if err := os.MkdirAll(bin, 0o777); err != nil {
+				t.Fatalf("MkdirAll() error = %v", err)
+			}
+			if _, err := store.PrepareRuntimeBinary(source); err != nil {
+				t.Fatalf("PrepareRuntimeBinary() error = %v", err)
+			}
+			assertModes(t, map[string]os.FileMode{
+				store.Paths().Home: tc.home,
+				bin:                0o755,
+			})
+		})
+	}
+}
+
 func TestStoreLooksUpJobsByExactManagedKey(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(Paths{
