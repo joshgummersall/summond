@@ -196,6 +196,9 @@ time-of-day range instead of the full day: morning (05:00-11:59), afternoon
 			if err := spec.Normalize(); err != nil {
 				return err
 			}
+			if err := a.checkCollisionsWithManagedJobs([]job.Spec{spec}); err != nil {
+				return err
+			}
 			// add creates an ungrouped job, so only a job with the same
 			// managed key conflicts; a same-named job in a group does not.
 			if _, err := a.store.Load(spec.ManagedKey()); err == nil {

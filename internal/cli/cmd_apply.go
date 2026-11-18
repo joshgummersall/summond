@@ -56,6 +56,9 @@ Exits with code 1 if any job fails to apply, even if other jobs succeeded.`,
 			}
 			specs := file.Specs
 			a.logger.Debug("loaded config", "path", filePath, "jobs", len(specs))
+			if err := a.checkCollisionsWithManagedJobs(specs); err != nil {
+				return err
+			}
 			orphanedSpecs, err := a.orphanedManagedJobs(specs)
 			if err != nil {
 				return err
@@ -143,6 +146,17 @@ func (a *App) pruneManagedSpecs(pruneSpecs []job.Spec, autoApprove bool) (int, e
 		}
 	}
 	return len(pruneSpecs), nil
+}
+
+// checkCollisionsWithManagedJobs checks desired against itself and against
+// every managed job in the store, in all groups. It runs before any write, so
+// a config with a collision changes nothing.
+func (a *App) checkCollisionsWithManagedJobs(desired []job.Spec) error {
+	existing, err := a.listManagedJobs()
+	if err != nil {
+		return err
+	}
+	return checkJobCollisions(desired, existing)
 }
 
 func (a *App) orphanedManagedJobs(desiredSpecs []job.Spec) ([]job.Spec, error) {
