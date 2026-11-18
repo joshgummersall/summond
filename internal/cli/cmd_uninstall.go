@@ -59,7 +59,7 @@ This is a destructive operation. Run 'summond list' first to see what will be re
 				return err
 			}
 			if !yes {
-				approved, err := a.confirmWithDefault("Proceed with uninstall? [y/N]: ", false)
+				approved, err := a.confirm("Proceed with uninstall? [y/N]: ")
 				if err != nil {
 					return err
 				}
