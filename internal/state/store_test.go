@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -225,5 +226,45 @@ func TestRecordExecutionUpdatesMetadata(t *testing.T) {
 	}
 	if len(loaded.RecentRuns) != 1 || loaded.RecentRuns[0].Error != "exit status 125" {
 		t.Fatalf("unexpected recent runs: %+v", loaded.RecentRuns)
+	}
+}
+
+func TestStoreLooksUpJobsByExactManagedKey(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(Paths{
+		Home:      filepath.Join(dir, "state"),
+		LaunchDir: filepath.Join(dir, "LaunchAgents"),
+	})
+	spec, err := store.Install(job.Spec{
+		Group:    "G",
+		Name:     "backup",
+		Target:   job.TargetAgent,
+		Command:  "/bin/echo",
+		Schedule: job.Schedule{Kind: job.ScheduleLogin},
+	})
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	if _, err := store.Load("G.backup"); err != nil {
+		t.Fatalf("Load(G.backup) error = %v", err)
+	}
+	if _, err := store.Load("backup"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Load(backup) error = %v, want not exist", err)
+	}
+	if err := store.RecordExecutionStart("backup", time.Now()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("RecordExecutionStart(backup) error = %v, want not exist", err)
+	}
+	if _, _, err := store.TryLockExecution("backup"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("TryLockExecution(backup) error = %v, want not exist", err)
+	}
+	if _, err := store.Remove("backup"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Remove(backup) error = %v, want not exist", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "state", "jobs", "backup")); !os.IsNotExist(err) {
+		t.Fatalf("lookup by bare name created a job directory, stat err = %v", err)
+	}
+	if _, err := os.Stat(store.MetadataPathForSpec(spec)); err != nil {
+		t.Fatalf("G.backup metadata missing after bare-name calls: %v", err)
 	}
 }

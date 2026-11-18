@@ -76,7 +76,7 @@ func TestExecRecordsSuccessfulRun(t *testing.T) {
 	if got := stdout.String(); got != "clean\n" {
 		t.Fatalf("stdout = %q", got)
 	}
-	spec, err := app.store.Load("cleanup")
+	spec, err := app.loadManagedSpec("cleanup")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -114,7 +114,7 @@ func TestExecRecordsFailingRun(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.Code != 7 {
 		t.Fatalf("exec error = %#v", err)
 	}
-	spec, loadErr := app.store.Load("failer")
+	spec, loadErr := app.loadManagedSpec("failer")
 	if loadErr != nil {
 		t.Fatalf("Load() error = %v", loadErr)
 	}
@@ -145,7 +145,7 @@ func TestExecInDaemonScopeRunsDaemonJob(t *testing.T) {
 	if err := app.run([]string{"exec", spec.Name}); err != nil {
 		t.Fatalf("exec error = %v", err)
 	}
-	loaded, err := app.store.Load(spec.Name)
+	loaded, err := app.loadManagedSpec(spec.Name)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -229,7 +229,7 @@ func TestExecWritesOutputToLogFiles(t *testing.T) {
 	if got := stderr.String(); got != "err\n" {
 		t.Fatalf("stderr = %q", got)
 	}
-	spec, err := app.store.Load("logger")
+	spec, err := app.loadManagedSpec("logger")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -262,7 +262,7 @@ func TestExecDoesNotDuplicateWhenStdoutIsLogFile(t *testing.T) {
 	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
-	spec, err := app.store.Load("logger")
+	spec, err := app.loadManagedSpec("logger")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -348,7 +348,7 @@ func TestExecRecordsRunStoppedBySIGTERM(t *testing.T) {
 				t.Fatalf("exit code = %d", got)
 			}
 
-			spec, err := app.store.Load("sleeper")
+			spec, err := app.loadManagedSpec("sleeper")
 			if err != nil {
 				t.Fatalf("Load() error = %v", err)
 			}
@@ -403,7 +403,7 @@ func applyEchoJob(t *testing.T, app *App) job.Spec {
 	if err := app.run([]string{"apply", configPath}); err != nil {
 		t.Fatalf("apply error = %v", err)
 	}
-	spec, err := app.store.Load("rotator")
+	spec, err := app.loadManagedSpec("rotator")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -459,7 +459,7 @@ func TestExecRotatesLogsOverCap(t *testing.T) {
 		}
 	}
 
-	spec, err := app.store.Load("rotator")
+	spec, err := app.loadManagedSpec("rotator")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -499,7 +499,7 @@ func TestExecLeavesLogsUnderCap(t *testing.T) {
 	if _, err := os.Stat(spec.StdoutPath + ".1"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Stat(.1) error = %v, want not exist", err)
 	}
-	spec, err := app.store.Load("rotator")
+	spec, err := app.loadManagedSpec("rotator")
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
@@ -707,7 +707,7 @@ func TestExecFailsOnBadEnvFile(t *testing.T) {
 			if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
 				t.Fatalf("job ran despite bad env file")
 			}
-			spec, loadErr := app.store.Load("badenv")
+			spec, loadErr := app.loadManagedSpec("badenv")
 			if loadErr != nil {
 				t.Fatalf("Load() error = %v", loadErr)
 			}

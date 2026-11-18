@@ -48,7 +48,7 @@ Use 'summond list' to see job names.`,
 // state. A bootout failure is ignored because the job may not be loaded.
 func (a *App) removeManagedSpec(spec job.Spec) error {
 	_ = a.runner.Bootout(spec)
-	if _, err := a.store.Remove(spec.Name); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if _, err := a.store.Remove(spec.ManagedKey()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil
