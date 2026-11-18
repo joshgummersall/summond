@@ -413,8 +413,11 @@ func (s *Store) ensureLogFiles(spec job.Spec) error {
 			continue
 		}
 		seen[path] = struct{}{}
-		// O_EXCL ensures we create a new file rather than following a
-		// pre-existing symlink that could redirect writes elsewhere.
+		// Create the log file only if nothing exists at the path. O_EXCL
+		// keeps this open from following a symlink, but an existing entry,
+		// symlink or not, is left as is, and later writers (launchd and
+		// summond exec) follow it. The job directory is writable only by its
+		// owner, so only the owner can place an entry there.
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL, s.paths.FileMode())
 		if err != nil {
 			if errors.Is(err, os.ErrExist) {

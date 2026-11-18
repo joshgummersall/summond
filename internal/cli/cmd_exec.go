@@ -110,7 +110,7 @@ Exits with the job's exit code. A non-zero exit means the job itself failed, not
 			// event, or launchd relaunches it every ThrottleInterval forever.
 			// Skip for manual runs (parent is a shell, not launchd).
 			if spec.Trigger == job.TriggerUSBAttach && os.Getppid() == 1 {
-				delivered := xpcevent.ConsumeStream("com.apple.iokit.matching", 3*time.Second)
+				delivered := xpcevent.ConsumeIOKitMatching(3 * time.Second)
 				a.logger.Debug("consumed iokit matching event", "delivered", delivered)
 			}
 			if !spec.Concurrency {

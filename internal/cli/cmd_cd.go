@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -20,11 +21,11 @@ its working directory set to the job's state directory. Exit the shell to return
 
 When stdout is not a terminal (e.g. inside $(...) or eval), prints a cd command instead:
 
-  eval $(summond cd my-job)
+  eval "$(summond cd my-job)"
 
 The job state directory contains the job's metadata JSON, log symlinks, and runtime files.`,
 		Example: `  summond cd my-job
-  eval $(summond cd my-job)`,
+  eval "$(summond cd my-job)"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			spec, err := a.loadManagedSpec(args[0])
@@ -35,7 +36,7 @@ The job state directory contains the job's metadata JSON, log symlinks, and runt
 			dir := a.store.JobDirForSpec(spec)
 
 			// Detect whether stdout is a TTY.
-			// If non-TTY (e.g. eval $(summond cd <name>)), print a cd command for the shell to eval.
+			// If non-TTY (e.g. eval "$(summond cd <name>)"), print a cd command for the shell to eval.
 			// If TTY (interactive), spawn a subshell in the job directory.
 			info, err := os.Stdout.Stat()
 			if err != nil {
@@ -43,7 +44,7 @@ The job state directory contains the job's metadata JSON, log symlinks, and runt
 			}
 			isTTY := (info.Mode() & os.ModeCharDevice) != 0
 			if !isTTY {
-				_, err := fmt.Fprintf(a.stdout, "cd %s\n", dir)
+				_, err := fmt.Fprintln(a.stdout, cdCommand(dir))
 				return err
 			}
 
@@ -68,4 +69,11 @@ The job state directory contains the job's metadata JSON, log symlinks, and runt
 			return nil
 		},
 	}
+}
+
+// cdCommand returns a shell command that changes to dir. The path is
+// single-quoted so that spaces (such as in "Application Support") and other
+// shell metacharacters survive eval.
+func cdCommand(dir string) string {
+	return "cd -- '" + strings.ReplaceAll(dir, "'", `'\''`) + "'"
 }
