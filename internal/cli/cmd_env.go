@@ -54,7 +54,7 @@ func (a *App) ensureEnvFile() (string, error) {
 // secrets, so it is always written with mode 0600.
 func (a *App) writeEnvFileContents(path string, data []byte) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, a.store.Paths().DirMode()); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")

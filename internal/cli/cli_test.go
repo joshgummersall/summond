@@ -116,6 +116,9 @@ func newDaemonTestApp(t *testing.T) *App {
 	t.Helper()
 	app := newTestApp(t)
 	app.geteuid = func() int { return 0 }
+	paths := app.store.Paths()
+	paths.Private = true
+	app.store = state.NewStore(paths)
 	return app
 }
 

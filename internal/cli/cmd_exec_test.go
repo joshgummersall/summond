@@ -508,6 +508,101 @@ func TestExecLeavesLogsUnderCap(t *testing.T) {
 	}
 }
 
+func installDaemonEchoJob(t *testing.T, app *App) job.Spec {
+	t.Helper()
+	spec, err := app.store.Install(job.Spec{
+		Name:     "rotator",
+		Target:   job.TargetDaemon,
+		Command:  "/bin/sh",
+		Args:     []string{"-c", "echo out; echo err >&2"},
+		Schedule: job.Schedule{Kind: job.ScheduleBoot},
+	})
+	if err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	return spec
+}
+
+func assertPerm(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat(%s) error = %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Errorf("mode of %s = %o, want %o", path, got, want)
+	}
+}
+
+func TestExecInDaemonScopeCreatesOwnerOnlyLogs(t *testing.T) {
+	old := syscall.Umask(0o022)
+	t.Cleanup(func() { syscall.Umask(old) })
+	app := newDaemonTestApp(t)
+	app.stdout = &bytes.Buffer{}
+	app.stderr = &bytes.Buffer{}
+	spec := installDaemonEchoJob(t, app)
+	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("Remove() error = %v", err)
+		}
+	}
+
+	if err := app.run([]string{"exec", "rotator"}); err != nil {
+		t.Fatalf("exec error = %v", err)
+	}
+	assertPerm(t, spec.StdoutPath, 0o600)
+	assertPerm(t, spec.StderrPath, 0o600)
+	assertPerm(t, filepath.Join(app.store.JobDirForSpec(spec), "exec.lock"), 0o600)
+}
+
+func TestExecInDaemonScopeRotationKeepsLogsOwnerOnly(t *testing.T) {
+	setLogRotateMax(t, 8)
+	app := newDaemonTestApp(t)
+	app.stdout = &bytes.Buffer{}
+	app.stderr = &bytes.Buffer{}
+	spec := installDaemonEchoJob(t, app)
+	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
+		if err := os.WriteFile(path, []byte("old log over cap\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+	}
+	// A log that an earlier version left readable by every user.
+	if err := os.Chmod(spec.StderrPath, 0o644); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+
+	if err := app.run([]string{"exec", "rotator"}); err != nil {
+		t.Fatalf("exec error = %v", err)
+	}
+	for _, path := range []string{spec.StdoutPath, spec.StderrPath} {
+		if got := readFile(t, path+".1"); got != "old log over cap\n" {
+			t.Fatalf("%s.1 = %q", path, got)
+		}
+		assertPerm(t, path, 0o600)
+		assertPerm(t, path+".1", 0o600)
+	}
+}
+
+func TestExecInAgentScopeRotationKeepsLogMode(t *testing.T) {
+	setLogRotateMax(t, 8)
+	app := newTestApp(t)
+	app.stdout = &bytes.Buffer{}
+	app.stderr = &bytes.Buffer{}
+	spec := applyEchoJob(t, app)
+	if err := os.WriteFile(spec.StdoutPath, []byte("old log over cap\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Chmod(spec.StdoutPath, 0o644); err != nil {
+		t.Fatalf("Chmod() error = %v", err)
+	}
+
+	if err := app.run([]string{"exec", "rotator"}); err != nil {
+		t.Fatalf("exec error = %v", err)
+	}
+	assertPerm(t, spec.StdoutPath, 0o644)
+	assertPerm(t, spec.StdoutPath+".1", 0o644)
+}
+
 // launchd opens the log with O_APPEND before exec starts. After rotation the
 // same open file must still be the log, so output lands in the truncated file
 // once, without a duplicate from teeToLog.
