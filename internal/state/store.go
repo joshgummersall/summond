@@ -239,15 +239,19 @@ func (s *Store) PrepareRuntimeBinary(sourcePath string) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 		return "", fmt.Errorf("create runtime binary directory: %w", err)
 	}
+	// launchd runs this copy as root in daemon scope, so no group or other
+	// user may write to the directories that hold it.
+	if err := Tighten(s.paths.Home, s.paths.DirMode()); err != nil {
+		return "", fmt.Errorf("tighten state directory: %w", err)
+	}
+	if err := Tighten(filepath.Dir(targetPath), 0o755); err != nil {
+		return "", fmt.Errorf("tighten runtime binary directory: %w", err)
+	}
 	source, err := os.Open(sourcePath)
 	if err != nil {
 		return "", fmt.Errorf("open runtime binary source: %w", err)
 	}
 	defer source.Close()
-	info, err := source.Stat()
-	if err != nil {
-		return "", fmt.Errorf("stat runtime binary source: %w", err)
-	}
 	tmp, err := os.CreateTemp(filepath.Dir(targetPath), filepath.Base(targetPath)+".tmp-*")
 	if err != nil {
 		return "", fmt.Errorf("create runtime binary temp file: %w", err)
@@ -262,11 +266,9 @@ func (s *Store) PrepareRuntimeBinary(sourcePath string) (string, error) {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("close runtime binary temp file: %w", err)
 	}
-	mode := info.Mode() & os.ModePerm
-	if mode&0o111 == 0 {
-		mode = 0o755
-	}
-	if err := os.Chmod(tmpPath, mode); err != nil {
+	// Use a fixed mode, not the source's: a group-writable source would make
+	// the binary that launchd runs as root writable by the admin group.
+	if err := os.Chmod(tmpPath, 0o755); err != nil {
 		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("chmod runtime binary temp file: %w", err)
 	}

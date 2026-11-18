@@ -169,7 +169,7 @@ Keybindings:
 | `r` | Force refresh |
 | `q` / `ctrl+c` | Quit |
 
-Shell commands and plist XML are syntax-highlighted if [`bat`](https://github.com/sharkdp/bat) is installed, with graceful fallback to plain text.
+Shell commands and plist XML are syntax-highlighted if [`bat`](https://github.com/sharkdp/bat) is installed, with graceful fallback to plain text. Under `sudo`, the TUI shows plain text and does not run `bat`.
 
 ## Logs, status, and execution history
 
