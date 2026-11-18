@@ -281,9 +281,14 @@ Or via `summond add --concurrency`.
 ## Shared environment
 
 ```sh
-summond env set API_KEY=secret        # injected into every agent job at runtime
-sudo summond env set API_KEY=secret   # injected into every daemon job at runtime
+summond env set API_KEY                   # agent jobs: prompts for the value, echo off
+sudo summond env set API_KEY              # daemon jobs: prompts for the value, echo off
+pbpaste | summond env set API_KEY         # agent jobs: reads the value from stdin
+pbpaste | sudo summond env set API_KEY    # daemon jobs: reads the value from stdin
+summond env set LOG_LEVEL=debug           # not secret: value on the command line
 ```
+
+Set secrets with `KEY` alone, not `KEY=VALUE`, so the value stays out of shell history and `ps`. On a terminal, summond prompts for the value and does not echo it. Otherwise it reads the value from stdin and removes one trailing newline (`\n` or `\r\n`). An empty value from stdin is an error; `KEY=` stores an empty value on purpose. Every value set is injected into each job of its scope at runtime.
 
 Each scope has its own env file, `env.json` in its state directory, written with mode 0600. summond passes it to each job through the process environment, never on the command line, so values do not show in `ps`. Per-job `[jobs.name.env]` values are merged on top, and summond's `SUMMOND_*` variables on top of both.
 
