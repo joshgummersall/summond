@@ -145,7 +145,9 @@ func isValidEnvKey(key string) bool {
 	return len(key) > 0
 }
 
-func (a *App) confirmWithDefault(prompt string, defaultYes bool) (bool, error) {
+// confirm prints a [y/N] prompt and reports whether the answer is y or yes.
+// An empty answer or end of input means no.
+func (a *App) confirm(prompt string) (bool, error) {
 	_, err := fmt.Fprint(a.stdout, prompt)
 	if err != nil {
 		return false, err
@@ -158,14 +160,7 @@ func (a *App) confirmWithDefault(prompt string, defaultYes bool) (bool, error) {
 		return false, err
 	}
 	answer := strings.TrimSpace(strings.ToLower(line))
-	if answer == "" {
-		return defaultYes && err == nil, nil
-	}
 	return answer == "y" || answer == "yes", nil
-}
-
-func (a *App) confirm(prompt string) (bool, error) {
-	return a.confirmWithDefault(prompt, true)
 }
 
 func (a *App) newEnvCommand() *cobra.Command {
